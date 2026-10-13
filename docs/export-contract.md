@@ -275,6 +275,68 @@ states why it is empty, so **a missing measurement is never mistaken for a zero*
 `manifest.decimation` records strategy, `kept`, `of` and `seed`, and
 `render.show_decimation_ratio` is `const: true`. A thinned plot states what it dropped.
 
+## 12. Depletion and interference (proposed, not yet implemented)
+
+Nothing in this section exists in the pipeline, the schemas or the viewers yet. It records
+the method so it is built on purpose rather than rediscovered.
+
+### Depletion
+
+When the spatial matcher (`match_targets_spatial_in_cube`) annotates an ion, its spectra
+go into the database and the ion **leaves the working ion list**. Each later pass searches
+only what earlier passes did not explain. The remainder is the result: what is left
+after depletion is what the library cannot yet account for, and how fast it shrinks pass
+by pass is itself a measure of coverage.
+
+In the ledger this is one more event, `depleted`, carrying the pass number and the
+annotation that explained the ion. The flight animation can then replay depletion: the
+cloud fills, then annotated ions leave pass by pass until only the unexplained remain.
+
+### Streaming the isotope patterns with the matches
+
+Every match already passes through the isotope envelope. Stream it alongside the match,
+**scan by scan across the elution**, not as one summed envelope:
+
+- **Expected envelope from composition, not averagine.** Once an ion is annotated its
+  sequence is known, so its elemental composition, and therefore its exact isotope
+  distribution, is known. Averagine is only for ions without an identity.
+- **Residual per isotope.** Observed `rel` against expected, for k = 0, 1, 2.
+- **Variation across the peak.** The isotope ratios of a clean ion hold constant from
+  the leading edge of the elution to the tail. A ratio that drifts across the peak means
+  something else is entering and leaving the window during it.
+
+That locates interferences. An interferer that elutes even slightly earlier or later than
+the target distorts the envelope at the edges of the peak, and the scan-by-scan ratio
+shows exactly where it starts and stops.
+
+### When the interference is invisible in MS1
+
+If the interferer begins and ends with the target, and there is not enough resolution in
+m/z or drift to separate them, MS1 cannot tell them apart. The ratios can be constant
+across the peak, and the summed envelope may even sit close to theory. **The only hope
+then is the product ions:**
+
+- **Unexplained fragments.** Peaks in the experimental MS2 that the target's ladder does
+  not explain, but that are consistent with another precursor in the same window.
+- **Fragment ratios that depart from the library.** A co-isolated precursor adds its
+  own fragments and distorts relative intensities.
+- **`ar1_sum` falls.** `ar1 = I_product / I_precursor`. If the precursor intensity
+  includes an interferer, the denominator is inflated and every one of the target's ar1
+  values drops together, so `ar1_sum` reads low against the library. Section 6's
+  loading-invariance is what makes that drop meaningful instead of noise.
+
+### What the export would need (for discussion)
+
+- `events[].stage`: add `depleted` (with pass number and explaining annotation).
+- On the ion record, an `isotope_fit` block: expected basis (`composition` or
+  `averagine`), residual per isotope, and the coefficient of variation of each isotope
+  ratio across the scans of the peak.
+- On the ion record, an `interference` block: none / MS1 envelope / MS1 profile /
+  product ion, with the evidence that raised it.
+- From the pipeline, the per-scan isotope intensities captured while the matches stream
+  (`n_consecutive_scans` already says how many scans there are). This is the one input
+  nothing exports today.
+
 ## 11. Open questions
 
 - `ion_uid` hashes `source_file`. Re-converting a raw file to a new path mints new uids.
