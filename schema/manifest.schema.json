@@ -255,6 +255,31 @@
           "default": []
         }
       }
+    },
+    "quant": {
+      "type": "object",
+      "description": "How the quant columns should be labelled. The viewer needs this to decide whether a panel may say concentration or must say relative abundance.",
+      "additionalProperties": false,
+      "properties": {
+        "metric": {
+          "enum": [
+            "top3avg"
+          ],
+          "default": "top3avg"
+        },
+        "absolute_standard_declared": {
+          "type": "boolean",
+          "default": false,
+          "description": "True only when the method declared a known-amount spike-in. False or absent means every quant panel is labelled relative abundance."
+        },
+        "normalizations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      }
     }
   }
 }

@@ -1,0 +1,1113 @@
+<title>ARiA Ion Panels</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: instrument console — fixed evidence rail at left, panels stacked right, in familiarity order. */
+:root{
+  color-scheme: dark;
+  --bg:#0d1013; --surface:#141a1f; --surface-2:#1a2228; --surface-3:#212b32;
+  --line:rgba(255,255,255,.09); --line-2:rgba(255,255,255,.17);
+  --fg:#e8edf1; --fg-2:#9aa8b2; --fg-3:#6b7a85;
+  --accent:#3987e5;
+  --ion-b:#3987e5; --ion-y:#e66767; --ion-none:#6b7a85;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s-other:#8a97a1;
+  --good:#199e70; --warn:#c98500; --crit:#e66767;
+  --font-ui:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  --font-mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){
+    color-scheme: light;
+    --bg:#fcfcfb; --surface:#ffffff; --surface-2:#f4f5f3; --surface-3:#eceee9;
+    --line:rgba(0,0,0,.11); --line-2:rgba(0,0,0,.2);
+    --fg:#0b0b0b; --fg-2:#52514e; --fg-3:#7b7a76;
+    --accent:#2a78d6;
+    --ion-b:#2a78d6; --ion-y:#e34948; --ion-none:#7b7a76;
+    --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s-other:#6e6d69;
+    --good:#1baf7a; --warn:#eda100; --crit:#e34948;
+  }
+}
+:root[data-theme="light"]{
+  color-scheme: light;
+  --bg:#fcfcfb; --surface:#ffffff; --surface-2:#f4f5f3; --surface-3:#eceee9;
+  --line:rgba(0,0,0,.11); --line-2:rgba(0,0,0,.2);
+  --fg:#0b0b0b; --fg-2:#52514e; --fg-3:#7b7a76;
+  --accent:#2a78d6;
+  --ion-b:#2a78d6; --ion-y:#e34948; --ion-none:#7b7a76;
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s-other:#6e6d69;
+  --good:#1baf7a; --warn:#eda100; --crit:#e34948;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font-ui);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+table{border-collapse:collapse}
+
+/* ---------- header ---------- */
+.bar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  padding:11px 16px;background:var(--surface);border-bottom:1px solid var(--line)}
+.bar h1{margin:0;font-size:14px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;white-space:nowrap}
+.bar .spacer{flex:1}
+.badge{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.06em;padding:3px 7px;border-radius:3px;
+  border:1px solid var(--line-2);color:var(--fg-2);white-space:nowrap}
+.badge.demo{border-color:var(--warn);color:var(--warn)}
+.btn{font-family:var(--font-mono);font-size:11px;letter-spacing:.07em;text-transform:uppercase;padding:6px 11px;
+  border:1px solid var(--line-2);border-radius:3px;color:var(--fg-2)}
+.btn:hover{color:var(--fg);border-color:var(--accent)}
+.btn.on{background:var(--accent);border-color:var(--accent);color:#061016;font-weight:600}
+
+/* ---------- shell ---------- */
+.shell{display:grid;grid-template-columns:270px minmax(0,1fr);gap:1px;background:var(--line);min-height:0}
+.rail{background:var(--bg);padding-block:0;overflow-y:auto;min-width:0}
+.main{background:var(--bg);min-width:0;padding:16px;display:flex;flex-direction:column;gap:16px}
+@media (max-width:860px){
+  .shell{display:flex;flex-direction:column}
+  .rail{max-height:none}
+  .main{order:-1}
+}
+
+/* ---------- rail ---------- */
+.sh{display:flex;align-items:center;gap:8px;padding:13px 16px 7px;font-family:var(--font-mono);font-size:10px;
+  letter-spacing:.17em;text-transform:uppercase;color:var(--fg-3)}
+.sh::after{content:'';flex:1;height:1px;background:var(--line)}
+.rail-note{padding:0 16px 10px;font-size:11.5px;color:var(--fg-3)}
+.ionbtn{display:grid;grid-template-columns:7px 1fr auto;align-items:center;gap:9px;width:100%;text-align:left;
+  padding:7px 16px;border-left:2px solid transparent}
+.ionbtn:hover{background:var(--surface-2)}
+.ionbtn.sel{background:var(--surface-2);border-left-color:var(--accent)}
+.ionbtn .dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+.ionbtn .seq{font-family:var(--font-mono);font-size:11.5px;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.ionbtn.sel .seq{font-weight:600}
+.ionbtn .meta{font-family:var(--font-mono);font-size:10px;color:var(--fg-3);white-space:nowrap}
+.tierchip{font-family:var(--font-mono);font-size:9.5px;letter-spacing:.05em;padding:1px 5px;border-radius:2px;
+  border:1px solid var(--line-2);color:var(--fg-3)}
+.tierchip.ok{border-color:var(--good);color:var(--good)}
+.tierchip.weak{border-color:var(--warn);color:var(--warn)}
+
+/* ---------- panel ---------- */
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.phead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:11px 14px;border-bottom:1px solid var(--line)}
+.phead h2{margin:0;font-size:13.5px;font-weight:600;letter-spacing:.01em}
+.phead .spacer{flex:1}
+.fam{font-family:var(--font-mono);font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;padding:2px 6px;border-radius:2px;
+  border:1px solid var(--line-2);color:var(--fg-3)}
+.fam.conventional{border-color:var(--accent);color:var(--accent)}
+.stat{font-family:var(--font-mono);font-size:9.5px;letter-spacing:.09em;padding:2px 6px;border-radius:2px;font-weight:600}
+.stat.render{background:color-mix(in srgb,var(--good) 18%,transparent);color:var(--good)}
+.stat.partial{background:color-mix(in srgb,var(--warn) 20%,transparent);color:var(--warn)}
+.stat.blank{background:color-mix(in srgb,var(--crit) 18%,transparent);color:var(--crit)}
+.pbody{padding:12px 14px 4px;min-width:0}
+.pfoot{padding:8px 14px 12px;font-size:11.5px;color:var(--fg-3);line-height:1.5}
+.pfoot b{color:var(--fg-2);font-weight:500}
+.readout{display:flex;gap:16px;flex-wrap:wrap;padding:0 14px 10px;font-family:var(--font-mono);font-size:11px;color:var(--fg-3)}
+.readout b{color:var(--fg);font-weight:500;font-variant-numeric:tabular-nums}
+.empty{padding:22px 14px;font-size:12.5px;color:var(--fg-3);line-height:1.6}
+.empty b{color:var(--warn);font-weight:500}
+.chartwrap{position:relative;width:100%;min-width:0;overflow-x:auto}
+.chartwrap svg{display:block;width:100%;min-width:600px;height:auto;overflow:visible}
+.chartwrap canvas{display:block;width:100%}
+.legend{display:flex;gap:14px;flex-wrap:wrap;padding:2px 14px 10px;font-size:11.5px;color:var(--fg-2)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:9px;height:9px;border-radius:2px;display:inline-block}
+.tip{position:absolute;pointer-events:none;z-index:9;background:var(--surface-3);border:1px solid var(--line-2);
+  border-radius:4px;padding:6px 8px;font-family:var(--font-mono);font-size:10.5px;color:var(--fg);
+  line-height:1.5;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,.3)}
+.tip .k{color:var(--fg-3)}
+.dtable{width:100%;font-family:var(--font-mono);font-size:11px;font-variant-numeric:tabular-nums}
+.dtable th{text-align:left;font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--fg-3);
+  font-weight:600;padding:5px 9px;border-bottom:1px solid var(--line)}
+.dtable td{padding:4px 9px;border-bottom:1px solid var(--line);color:var(--fg-2)}
+.tscroll{overflow-x:auto;max-height:320px;overflow-y:auto}
+.vis-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.001ms!important;transition-duration:.001ms!important}}
+</style>
+
+<header class="bar">
+  <h1>ARiA Ion Panels</h1>
+  <span class="badge" id="srcBadge">—</span>
+  <span class="badge demo" id="demoBadge" hidden>demo export</span>
+  <span class="badge" id="decBadge" hidden></span>
+  <div class="spacer"></div>
+  <button class="btn" id="loadBtn">Load export</button>
+  <input type="file" id="fileIn" multiple accept=".json,.jsonl,.txt" class="vis-hidden" aria-label="Export files">
+</header>
+
+<div class="shell" id="shell">
+  <aside class="rail">
+    <div class="sh">Ions</div>
+    <div class="rail-note" id="ionCount">—</div>
+    <div id="ionList"></div>
+    <div class="sh">Proteins</div>
+    <div id="protList"></div>
+    <div class="rail-note" id="loadHint" style="padding-top:10px">
+      Drop an export folder's <code>manifest.json</code>, <code>ions.jsonl</code>,
+      <code>spectra.jsonl</code>, <code>traces.jsonl</code> and <code>proteins.jsonl</code>
+      anywhere on this page, or use Load export.
+    </div>
+  </aside>
+  <main class="main" id="panels"></main>
+</div>
+
+<script>
+(function(){
+'use strict';
+
+/* ==================================================================
+   1. Chemistry — monoisotopic residue masses, used for the demo export
+   ================================================================== */
+var AA={G:57.02146,A:71.03711,S:87.03203,P:97.05276,V:99.06841,T:101.04768,C:103.00919,
+        L:113.08406,I:113.08406,N:114.04293,D:115.02694,Q:128.05858,K:128.09496,E:129.04259,
+        M:131.04049,H:137.05891,F:147.06841,R:156.10111,Y:163.06333,W:186.07931};
+var HYD={W:11,F:10.5,L:9.6,I:8.4,M:5.8,V:5,Y:4,C:2.6,P:1.5,A:.8,T:.4,H:-1.3,G:0,S:-.8,
+         Q:-2,N:-2,E:-3.1,D:-3.6,K:-5.1,R:-4.5};
+var H2O=18.010565, PROTON=1.0072765, NEUTRON=1.0033548;
+
+function pepMass(s){var m=H2O;for(var i=0;i<s.length;i++)m+=AA[s.charAt(i)]||0;return m;}
+function hydIdx(s){var v=0;for(var i=0;i<s.length;i++)v+=HYD[s.charAt(i)]||0;return v/Math.pow(s.length,.62);}
+function hash32(s){var h=2166136261;for(var i=0;i<s.length;i++){h^=s.charCodeAt(i);h=(h*16777619)>>>0;}return h>>>0;}
+function rng(seed){var s=seed>>>0||1;return function(){s^=s<<13;s>>>=0;s^=s>>>17;s^=s<<5;s>>>=0;return s/4294967296;};}
+function clamp(v,a,b){return v<a?a:v>b?b:v;}
+function fmt(v,d){return v==null?'—':Number(v).toFixed(d==null?2:d);}
+function fmtInt(v){return v==null?'—':Number(v).toLocaleString();}
+
+function fragments(seq){
+  var n=seq.length,out=[],s=0,i;
+  for(i=0;i<n-1;i++){s+=AA[seq.charAt(i)];out.push({ion:'b',idx:i+1,mz:s+PROTON});}
+  s=H2O;
+  for(i=n-1;i>0;i--){s+=AA[seq.charAt(i)];out.push({ion:'y',idx:n-i,mz:s+PROTON});}
+  return out;
+}
+
+/* ==================================================================
+   2. Demo export — contract-shaped records
+   Real peptide sequences and the published Amherst Top3 percentiles;
+   spectra, retention times and SeqStart positions are synthetic.
+   ================================================================== */
+var DEMO_PEPTIDES=[
+  {acc:'Q99836',prot:'MYD88_HUMAN',seq:'FITVCDYTNPCTK',       maxInt:19.539, start:171},
+  {acc:'Q99836',prot:'MYD88_HUMAN',seq:'DVLPGTCVWSIASELIEK',  maxInt:1.289,  start:86},
+  {acc:'Q99836',prot:'MYD88_HUMAN',seq:'LGRDDVLLELGPSIEEDCQK',maxInt:0.800,  start:40},
+  {acc:'Q99836',prot:'MYD88_HUMAN',seq:'ECDFQTK',             maxInt:0.751,  start:231},
+  {acc:'Q99836',prot:'MYD88_HUMAN',seq:'DDVLLELGPSIEEDCQK',   maxInt:0.622,  start:43},
+  {acc:'P04406',prot:'G3P_HUMAN',  seq:'GALQNIIPASTGAAK',     maxInt:14.802, start:195},
+  {acc:'P04406',prot:'G3P_HUMAN',  seq:'LISWYDNEFGYSNR',      maxInt:6.411,  start:311},
+  {acc:'P04406',prot:'G3P_HUMAN',  seq:'VPTANVSVVDLTCR',      maxInt:0.843,  start:234},
+  {acc:'P04406',prot:'G3P_HUMAN',  seq:'AAVLDLTCR',           maxInt:0.519,  start:122}
+];
+var DEMO_SAMPLES=[
+  {sample_id:'CH163',vendor:'Bruker',acquisition_method:'diaPASEF',drift_kind:'ion_mobility',has_ims:true,
+   search_engine:'DIA-NN',batch:'amherst-A',sample_class:'HeLa',role:'target',n_proteins:3418,total_signal:1.82e10},
+  {sample_id:'CH164',vendor:'Bruker',acquisition_method:'diaPASEF',drift_kind:'ion_mobility',has_ims:true,
+   search_engine:'DIA-NN',batch:'amherst-A',sample_class:'HeLa',role:'target',n_proteins:3664,total_signal:1.61e10},
+  {sample_id:'CH165',vendor:'Bruker',acquisition_method:'diaPASEF',drift_kind:'ion_mobility',has_ims:true,
+   search_engine:'DIA-NN',batch:'amherst-A',sample_class:'HeLa',role:'target',n_proteins:3512,total_signal:1.74e10}
+];
+/* published percentiles, Amherst cohort */
+var DEMO_PCT={'Q99836':{CH163:65,CH164:94,CH165:35},'P04406':{CH163:8,CH164:44,CH165:93}};
+var DEMO_TOP3={'Q99836':{CH163:5.918,CH164:7.209,CH165:4.402},'P04406':{CH163:3.104,CH164:7.352,CH165:9.871}};
+
+function chargeFor(seq,r){
+  var n=seq.length;
+  if(n<=8) return 2;
+  if(n<=13) return r()<.3?3:2;
+  if(n<=17) return r()<.55?3:2;
+  return 3;
+}
+
+function buildLibrary(seq){
+  var n=seq.length, lib=fragments(seq), r=rng(hash32(seq+'|lib')), i,f,mid,v,mx=0;
+  for(i=0;i<lib.length;i++){
+    f=lib[i];
+    v = f.ion==='y' ? .52+.48*r() : .20+.42*r();
+    mid = 1-Math.abs(f.idx/(n-1)-.5)*1.15;
+    v *= .30+.90*mid;
+    if(f.ion==='y' && seq.charAt(n-f.idx)==='P') v*=1.9;
+    if(f.ion==='b' && seq.charAt(f.idx)==='P') v*=1.6;
+    f.int=v; f.label=f.ion+f.idx;
+  }
+  for(i=0;i<lib.length;i++) mx=Math.max(mx,lib[i].int);
+  for(i=0;i<lib.length;i++) lib[i].int=100*lib[i].int/mx;
+  lib.sort(function(a,b){return a.mz-b.mz;});
+  return lib;
+}
+
+function buildExperimental(seq,z,lib){
+  var r=rng(hash32(seq+'|'+z+'|exp')), exp=[], i, span=0, mx=0;
+  for(i=0;i<lib.length;i++) span=Math.max(span,lib[i].mz);
+  for(i=0;i<lib.length;i++){
+    var f=lib[i], keep=(r()>.14 || f.int>45);
+    if(!keep) continue;
+    exp.push({ion:f.ion,idx:f.idx,label:f.label,mz:f.mz*(1+(r()*2-1)*4e-6),
+              int:f.int*(.58+.84*r()),ppm:(r()*2-1)*5.2});
+  }
+  for(i=0;i<12;i++) exp.push({ion:null,idx:null,label:null,
+    mz:130+(span+40-170)*r(), int:1.1+6.5*r()*r(), ppm:null});
+  for(i=0;i<exp.length;i++) mx=Math.max(mx,exp[i].int);
+  for(i=0;i<exp.length;i++) exp[i].int=100*exp[i].int/mx;
+  exp.sort(function(a,b){return a.mz-b.mz;});
+  /* normalised dot product on sqrt intensities */
+  var byLabel={},num=0,da=0,db=0,matched=0;
+  for(i=0;i<exp.length;i++) if(exp[i].label) byLabel[exp[i].label]=exp[i];
+  for(i=0;i<lib.length;i++){
+    var e=byLabel[lib[i].label], a=Math.sqrt(lib[i].int), b=e?Math.sqrt(e.int):0;
+    num+=a*b; da+=a*a; if(e&&e.int>2.5) matched++;
+  }
+  for(i=0;i<exp.length;i++) db+=exp[i].int;
+  return {peaks:exp, dot:clamp(num/Math.sqrt(da*db),.4,.995), matched:matched};
+}
+
+function isotopePeaks(mz,z,mass){
+  var lam=4.9e-4*mass, w=[1,lam,lam*lam/2], out=[], i;
+  for(i=0;i<3;i++) out.push({mz:mz+i*NEUTRON/z, int:100*w[i]/w[0], exp:100*w[i]/w[0], idx:i});
+  return out;
+}
+
+function buildDemo(){
+  var ions=[], spectra=[], traces=[], proteins=[], uid=0;
+  DEMO_SAMPLES.forEach(function(smp,si){
+    DEMO_PEPTIDES.forEach(function(p){
+      var r=rng(hash32(p.seq+'|'+smp.sample_id));
+      var z=chargeFor(p.seq,r), mass=pepMass(p.seq), mz=(mass+z*PROTON)/z;
+      var rt=3.1+31.5*clamp((hydIdx(p.seq)+6)/18,0,1)+(r()-.5)*1.1;
+      var scale=[0.82,1,0.74][si];
+      var inten=p.maxInt*scale*(.85+.3*r());
+      var id=('0000000'+(hash32(p.seq+smp.sample_id).toString(16))).slice(-8)+('0000000'+(hash32(smp.sample_id+p.seq+z).toString(16))).slice(-8);
+      var lib=buildLibrary(p.seq), ex=buildExperimental(p.seq,z,lib);
+      var ppmList=ex.peaks.filter(function(q){return q.ppm!=null;}).map(function(q){return Math.abs(q.ppm);});
+      var medPpm=ppmList.sort(function(a,b){return a-b;})[Math.floor(ppmList.length/2)]||null;
+      ions.push({
+        ion_uid:id, sample_id:smp.sample_id,
+        coord:{mz:mz, rt_min:rt, charge:z, drift:0.78+0.00042*mz+(r()-.5)*.03,
+               drift_kind:'ion_mobility', one_over_k0:0.78+0.00042*mz, ccs:null},
+        intensity:{matched_intensity:inten, summed_precursor_intensity:inten*1980*(.6+.8*r()),
+                   cluster_rank:1, n_consecutive_scans:3+Math.floor(r()*6)},
+        annotation:{peptide_sequence:p.seq, prot_accession:p.acc, protein_name:p.prot,
+                    seq_start:p.start, mods:null, frag_type:'by'},
+        confidence:{tier:'pass2_confirmed', decoy_controlled:true, ppm_error:medPpm,
+                    score:ex.dot, score_kind:'dotproduct_sqrt'},
+        provenance:{source_file:'DEMO/'+smp.sample_id+'.d', vendor:smp.vendor,
+                    acquisition_method:smp.acquisition_method, has_ims:true,
+                    search_engine:smp.search_engine, batch:smp.batch, sample_class:smp.sample_class},
+        lineage:{parent_ion_uids:[],cluster_uid:'cl-'+id.slice(0,6),atlas_uid:'atl-'+p.acc+'-'+p.start+'-z'+z},
+        events:[
+          {stage:'detected',at:'2026-10-13T14:02:11Z',tool:'RunConvert',tool_version:'2.1.0',params_hash:'a19f',
+           coord_snapshot:{mz:mz*(1+2.4e-6),rt_min:rt+.014,drift:null},note:null},
+          {stage:'z1_filtered',at:'2026-10-13T14:02:19Z',tool:'RunFilter',tool_version:'2.1.0',params_hash:'77be',coord_snapshot:null,note:'retained, z='+z},
+          {stage:'selected',at:'2026-10-13T14:11:02Z',tool:'pass2_targeting',tool_version:'3.0.1',params_hash:'c4d2',coord_snapshot:null,note:'target '+p.acc},
+          {stage:'identified',at:'2026-10-13T14:19:48Z',tool:'DIA-NN',tool_version:'1.9.1',params_hash:'8e05',coord_snapshot:null,note:'q<0.01'},
+          {stage:'annotated',at:'2026-10-13T14:22:03Z',tool:'match_targets_spatial_in_cube',tool_version:'2026-10-02',
+           params_hash:'b771',coord_snapshot:{mz:mz,rt_min:rt,drift:null},note:'RT recalibrated'},
+          {stage:'clustered',at:'2026-10-13T14:41:55Z',tool:'MergeNCluster',tool_version:'2.1.0',params_hash:'d003',coord_snapshot:null,note:'cluster_rank 1'}
+        ]
+      });
+      spectra.push({ion_uid:id,sample_id:smp.sample_id,kind:'ms2_experimental',precursor_mz:mz,charge:z,
+        scan_id:smp.sample_id+':ms2',collision_energy:32,peaks:ex.peaks.map(function(q){
+          return {mz:q.mz,intensity:q.int,ion:q.label,idx:q.idx,charge:1,ppm_error:q.ppm};}),
+        match:{dot_product:ex.dot,basis:'sqrt_intensity',matched:ex.matched,n_matched:ex.matched,
+               n_library:lib.length,library_source:'DEMO atlas'}});
+      spectra.push({ion_uid:id,sample_id:null,kind:'ms2_library',precursor_mz:mz,charge:z,scan_id:null,
+        collision_energy:32,peaks:lib.map(function(q){
+          return {mz:q.mz,intensity:q.int,ion:q.label,idx:q.idx,charge:1,ppm_error:null};}),match:null});
+      spectra.push({ion_uid:id,sample_id:smp.sample_id,kind:'ms1_isotope',precursor_mz:mz,charge:z,
+        scan_id:smp.sample_id+':ms1',collision_energy:null,
+        peaks:isotopePeaks(mz,z,mass).map(function(q){
+          return {mz:q.mz,intensity:q.int*(.9+.2*r()),ion:'precursor',idx:q.idx,charge:z,ppm_error:(r()*2-1)*3};}),
+        match:null});
+      var pts=[],k;
+      for(k=-7;k<=7;k++){var g=k/3.1; pts.push([+(rt+k*.07).toFixed(3), +(inten*Math.exp(-g*g*.5)).toFixed(4)]);}
+      traces.push({ion_uid:id,sample_id:smp.sample_id,kind:'xic',extraction_window_ppm:7.1,points:pts,
+        apex_rt_min:+rt.toFixed(3),fwhm_min:.21});
+    });
+    ['Q99836','P04406'].forEach(function(acc){
+      var peps=DEMO_PEPTIDES.filter(function(p){return p.acc===acc;})
+        .sort(function(a,b){return b.maxInt-a.maxInt;});
+      proteins.push({sample_id:smp.sample_id,prot_accession:acc,
+        protein_name:peps[0].prot,
+        top3avg:DEMO_TOP3[acc][smp.sample_id],
+        n_peptides_used:Math.min(3,peps.length),n_peptides_matched:peps.length,
+        peptides_used:peps.slice(0,3).map(function(p){return p.seq;}),
+        rank:null,percentile:DEMO_PCT[acc][smp.sample_id],
+        normalized:null,tier:'bare_proximity',decoy_controlled:false});
+    });
+  });
+  var manifest={
+    export_id:'DEMO-amherst-3',created_at:'2026-10-13T19:00:00Z',method_id:'aria-visuals-001',
+    method_version:'1.0.0',
+    sources:{atlas:'DEMO',atlas_version:'demo',consensus_db:null,consensus_db_rev:null,raw_dir:'DEMO'},
+    pipeline:{aria_spatial:'match_targets_spatial_in_cube@2026-10-02'},
+    samples:DEMO_SAMPLES,
+    tables:{ions:true,proteins:true,spectra:true,traces:true,
+            spectrum_kinds:['ms2_experimental','ms2_library','ms1_isotope']},
+    quant:{metric:'top3avg',absolute_standard_declared:false,normalizations:[]},
+    counts:{ions_total:ions.length,ions_exported:ions.length,
+            by_tier:{bare_proximity:0,pass2_confirmed:ions.length,atlas_consensus:0}},
+    decimation:null,
+    warnings:['Demo export. Real peptide sequences and the published Amherst Top3 percentiles; spectra, retention times and SeqStart positions are synthetic.'],
+    _demo:true
+  };
+  return {manifest:manifest,ions:ions,spectra:spectra,traces:traces,proteins:proteins};
+}
+
+/* ==================================================================
+   3. Chart primitives
+   ================================================================== */
+var CSS=getComputedStyle(document.documentElement);
+function tok(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();}
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+
+function niceTicks(lo,hi,n){
+  if(!(hi>lo)) return [lo];
+  var span=hi-lo, step=Math.pow(10,Math.floor(Math.log10(span/n)));
+  var err=span/n/step;
+  if(err>=7.5) step*=10; else if(err>=3.5) step*=5; else if(err>=1.5) step*=2;
+  var out=[],v=Math.ceil(lo/step)*step;
+  for(;v<=hi+step*1e-6;v+=step) out.push(+v.toFixed(10));
+  return out;
+}
+function logTicks(lo,hi){
+  var out=[], e=Math.floor(Math.log10(lo)), top=Math.ceil(Math.log10(hi));
+  for(;e<=top;e++) out.push(Math.pow(10,e));
+  return out.filter(function(v){return v>=lo*0.95&&v<=hi*1.05;});
+}
+function sciLabel(v){
+  if(v===0) return '0';
+  var e=Math.round(Math.log10(v));
+  if(e>=-1&&e<=3) return String(+v.toFixed(e<0?2:(e<1?1:0)));
+  return '1e'+e;
+}
+var SERIES=['--s1','--s2','--s3'];
+function sampleColors(ids){
+  /* fixed order, capped at 3 — past three, fold to Other (all-pairs CVD gate) */
+  var map={},i;
+  for(i=0;i<ids.length;i++) map[ids[i]] = i<3 ? tok(SERIES[i]) : tok('--s-other');
+  return map;
+}
+
+function mkTip(wrap){
+  var tip=document.createElement('div');
+  tip.className='tip'; tip.hidden=true; wrap.appendChild(tip);
+  return {
+    show:function(html,x,y){
+      tip.innerHTML=html; tip.hidden=false;
+      var w=wrap.clientWidth, tw=tip.offsetWidth, th=tip.offsetHeight;
+      tip.style.left=clamp(x+12,4,Math.max(4,w-tw-4))+'px';
+      tip.style.top=Math.max(4,y-th-10)+'px';
+    },
+    hide:function(){tip.hidden=true;}
+  };
+}
+function attachSvgTips(wrap){
+  var tip=mkTip(wrap);
+  wrap.addEventListener('mousemove',function(ev){
+    var t=ev.target.closest('[data-tip]');
+    if(!t){tip.hide();return;}
+    var r=wrap.getBoundingClientRect();
+    tip.show(t.getAttribute('data-tip'),ev.clientX-r.left,ev.clientY-r.top);
+  });
+  wrap.addEventListener('mouseleave',function(){tip.hide();});
+}
+
+/* ==================================================================
+   4. Panels
+   ================================================================== */
+var state={data:null,ion:null,protein:null};
+
+function specFor(uid,kind){
+  var s=state.data.spectra,i;
+  for(i=0;i<s.length;i++) if(s[i].ion_uid===uid&&s[i].kind===kind) return s[i];
+  return null;
+}
+function traceFor(uid){
+  var t=state.data.traces,i;
+  for(i=0;i<t.length;i++) if(t[i].ion_uid===uid) return t[i];
+  return null;
+}
+function tables(){return (state.data.manifest&&state.data.manifest.tables)||{};}
+function kinds(){return tables().spectrum_kinds||[];}
+var TIER_ORDER={bare_proximity:0,pass2_confirmed:1,atlas_consensus:2};
+
+/* ---------- P1: MS/MS head-to-tail ---------- */
+var P_MIRROR={
+  id:'msms_mirror', title:'MS/MS head-to-tail vs Atlas library', familiarity:'conventional',
+  gate:function(){
+    if(!tables().spectra) return ['BLANK','this export has no spectra.jsonl'];
+    var need=['ms2_experimental','ms2_library'], have=kinds(), miss=need.filter(function(k){return have.indexOf(k)<0;});
+    if(have.length&&miss.length) return ['BLANK','spectra present but missing kind(s): '+miss.join(', ')];
+    if(!state.ion) return ['BLANK','no ion selected'];
+    if(!specFor(state.ion.ion_uid,'ms2_experimental')) return ['BLANK','no experimental MS2 for this ion'];
+    if(!specFor(state.ion.ion_uid,'ms2_library')) return ['PARTIAL','no library spectrum for this ion — experimental shown alone'];
+    return ['RENDER',''];
+  },
+  draw:function(body){
+    var ion=state.ion, ex=specFor(ion.ion_uid,'ms2_experimental'), lib=specFor(ion.ion_uid,'ms2_library');
+    var W=760,H=320,L=52,R=14,T=20,B=40;
+    var mid=(T+(H-B))/2, half=mid-T-6;
+    var all=(ex?ex.peaks:[]).concat(lib?lib.peaks:[]);
+    var lo=Math.min.apply(null,all.map(function(p){return p.mz;}))-30;
+    var hi=Math.max.apply(null,all.map(function(p){return p.mz;}))+30;
+    var x=function(mz){return L+(mz-lo)/(hi-lo)*(W-L-R);};
+    var yUp=function(i){return mid-i/100*half;};
+    var yDn=function(i){return mid+i/100*half;};
+    var cB=tok('--ion-b'), cY=tok('--ion-y'), cN=tok('--ion-none');
+    var grid=tok('--line'), ink=tok('--fg-3'), ink2=tok('--fg-2');
+    var s=['<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Head to tail MS2 comparison">'];
+    /* recessive grid */
+    niceTicks(lo,hi,7).forEach(function(t){
+      s.push('<line x1="'+fmt(x(t),1)+'" y1="'+T+'" x2="'+fmt(x(t),1)+'" y2="'+(H-B)+'" stroke="'+grid+'" stroke-width="1"/>');
+    });
+    [50,100].forEach(function(v){
+      s.push('<line x1="'+L+'" y1="'+fmt(yUp(v),1)+'" x2="'+(W-R)+'" y2="'+fmt(yUp(v),1)+'" stroke="'+grid+'" stroke-width="1"/>');
+      s.push('<line x1="'+L+'" y1="'+fmt(yDn(v),1)+'" x2="'+(W-R)+'" y2="'+fmt(yDn(v),1)+'" stroke="'+grid+'" stroke-width="1"/>');
+    });
+    function peakColor(p){return p.ion&&p.ion.charAt(0)==='b'?cB:(p.ion&&p.ion.charAt(0)==='y'?cY:cN);}
+    function stems(peaks,up){
+      var top=peaks.slice().sort(function(a,b){return b.intensity-a.intensity;}).slice(0,6);
+      var labelled={}; top.forEach(function(p){if(p.ion) labelled[p.mz]=1;});
+      peaks.forEach(function(p){
+        var px=x(p.mz), py=up?yUp(p.intensity):yDn(p.intensity), c=peakColor(p);
+        var h=Math.abs(py-mid);
+        s.push('<rect x="'+fmt(px-1,1)+'" y="'+fmt(up?py:mid,1)+'" width="2" height="'+fmt(h,1)+'" rx="1" fill="'+c+'"/>');
+        s.push('<rect x="'+fmt(px-5,1)+'" y="'+fmt(up?py-6:mid,1)+'" width="10" height="'+fmt(h+6,1)+'" fill="transparent" data-tip="'+
+          '<span class=k>m/z</span> '+fmt(p.mz,4)+'<br><span class=k>rel</span> '+fmt(p.intensity,1)+
+          (p.ion?'<br><span class=k>ion</span> '+esc(p.ion):'<br><span class=k>unassigned</span>')+
+          (p.ppm_error!=null?'<br><span class=k>ppm</span> '+fmt(p.ppm_error,2):'')+'"/>');
+        if(labelled[p.mz]){
+          s.push('<text x="'+fmt(px,1)+'" y="'+fmt(up?py-7:py+13,1)+'" fill="'+ink2+
+            '" font-family="'+tok('--font-mono')+'" font-size="9.5" text-anchor="middle">'+esc(p.ion)+'</text>');
+        }
+      });
+    }
+    if(ex) stems(ex.peaks,true);
+    if(lib) stems(lib.peaks,false);
+    s.push('<line x1="'+L+'" y1="'+fmt(mid,1)+'" x2="'+(W-R)+'" y2="'+fmt(mid,1)+'" stroke="'+tok('--line-2')+'" stroke-width="1"/>');
+    /* axes */
+    niceTicks(lo,hi,7).forEach(function(t){
+      s.push('<text x="'+fmt(x(t),1)+'" y="'+(H-B+18)+'" fill="'+ink+'" font-family="'+tok('--font-mono')+
+        '" font-size="9.5" text-anchor="middle">'+Math.round(t)+'</text>');
+    });
+    s.push('<text x="'+((L+W-R)/2)+'" y="'+(H-6)+'" fill="'+ink+'" font-family="'+tok('--font-mono')+
+      '" font-size="9.5" text-anchor="middle">m/z</text>');
+    [[100,'100'],[50,'50'],[0,'0']].forEach(function(p){
+      s.push('<text x="'+(L-8)+'" y="'+fmt(yUp(p[0])+3,1)+'" fill="'+ink+'" font-family="'+tok('--font-mono')+
+        '" font-size="9.5" text-anchor="end">'+p[1]+'</text>');
+      if(p[0]>0) s.push('<text x="'+(L-8)+'" y="'+fmt(yDn(p[0])+3,1)+'" fill="'+ink+'" font-family="'+tok('--font-mono')+
+        '" font-size="9.5" text-anchor="end">'+p[1]+'</text>');
+    });
+    s.push('<text x="'+(L+6)+'" y="'+fmt(T+10,1)+'" fill="'+ink2+'" font-family="'+tok('--font-mono')+'" font-size="9.5">EXPERIMENTAL</text>');
+    s.push('<text x="'+(L+6)+'" y="'+fmt(H-B-6,1)+'" fill="'+ink2+'" font-family="'+tok('--font-mono')+'" font-size="9.5">ATLAS LIBRARY</text>');
+    s.push('</svg>');
+    body.innerHTML='<div class="chartwrap">'+s.join('')+'</div>';
+    attachSvgTips(body.firstChild);
+    var m=ex&&ex.match||{};
+    return {
+      readout:[['sequence',esc(ion.annotation.peptide_sequence)],['charge',ion.coord.charge+'+'],
+               ['dot product',fmt(m.dot_product,3)],
+               ['matched',(m.n_matched!=null?m.n_matched:'—')+' / '+(m.n_library!=null?m.n_library:'—')],
+               ['median |ppm|',fmt(ion.confidence.ppm_error,2)]],
+      legend:[['--ion-b','b ions'],['--ion-y','y ions'],['--ion-none','unassigned']],
+      foot:'Shared m/z axis, relative intensity to base peak = 100 in each half. Dot product on square-root intensities. Hover any peak for its m/z, assignment and ppm error.',
+      cols:['half','m/z','rel','ion','ppm'],
+      rows:(ex?ex.peaks.map(function(p){return ['experimental',fmt(p.mz,4),fmt(p.intensity,1),p.ion||'—',fmt(p.ppm_error,2)];}):[])
+        .concat(lib?lib.peaks.map(function(p){return ['library',fmt(p.mz,4),fmt(p.intensity,1),p.ion||'—','—'];}):[])
+    };
+  }
+};
+
+/* ---------- P2: MS1 isotope envelope ---------- */
+var P_ISO={
+  id:'isotope_envelope', title:'MS1 isotope envelope', familiarity:'conventional',
+  gate:function(){
+    if(!tables().spectra) return ['BLANK','this export has no spectra.jsonl'];
+    if(kinds().length&&kinds().indexOf('ms1_isotope')<0) return ['BLANK','spectra present but no ms1_isotope records'];
+    if(!state.ion) return ['BLANK','no ion selected'];
+    if(!specFor(state.ion.ion_uid,'ms1_isotope')) return ['BLANK','no MS1 isotope scan for this ion'];
+    return ['RENDER',''];
+  },
+  draw:function(body){
+    var ion=state.ion, sp=specFor(ion.ion_uid,'ms1_isotope'), z=ion.coord.charge;
+    var mass=(ion.coord.mz-PROTON)*z, expct=isotopePeaks(ion.coord.mz,z,mass);
+    var W=760,H=220,L=52,R=14,T=22,B=40;
+    var lo=ion.coord.mz-0.6, hi=ion.coord.mz+(2*NEUTRON/z)+0.6;
+    var x=function(mz){return L+(mz-lo)/(hi-lo)*(W-L-R);};
+    var y=function(i){return (H-B)-i/100*((H-B)-T);};
+    var grid=tok('--line'), ink=tok('--fg-3'), ink2=tok('--fg-2'), c=tok('--accent');
+    var s=['<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="MS1 isotope envelope">'];
+    [50,100].forEach(function(v){s.push('<line x1="'+L+'" y1="'+fmt(y(v),1)+'" x2="'+(W-R)+'" y2="'+fmt(y(v),1)+
+      '" stroke="'+grid+'" stroke-width="1"/>');});
+    /* expected averagine, drawn as an outline behind the observed stems */
+    expct.forEach(function(p){
+      s.push('<rect x="'+fmt(x(p.mz)-7,1)+'" y="'+fmt(y(p.exp),1)+'" width="14" height="'+fmt((H-B)-y(p.exp),1)+
+        '" fill="none" stroke="'+ink+'" stroke-width="1" stroke-dasharray="2,3"/>');
+    });
+    sp.peaks.forEach(function(p,i){
+      var px=x(p.mz), py=y(p.intensity);
+      s.push('<rect x="'+fmt(px-2,1)+'" y="'+fmt(py,1)+'" width="4" height="'+fmt((H-B)-py,1)+'" rx="2" fill="'+c+'"/>');
+      s.push('<rect x="'+fmt(px-8,1)+'" y="'+fmt(py-8,1)+'" width="16" height="'+fmt((H-B)-py+8,1)+
+        '" fill="transparent" data-tip="<span class=k>m/z</span> '+fmt(p.mz,4)+'<br><span class=k>observed</span> '+
+        fmt(p.intensity,1)+'<br><span class=k>expected</span> '+fmt(expct[i]?expct[i].exp:null,1)+
+        (p.ppm_error!=null?'<br><span class=k>ppm</span> '+fmt(p.ppm_error,2):'')+'"/>');
+      s.push('<text x="'+fmt(px,1)+'" y="'+fmt(py-9,1)+'" fill="'+ink2+'" font-family="'+tok('--font-mono')+
+        '" font-size="9.5" text-anchor="middle">'+fmt(p.mz,2)+'</text>');
+    });
+    s.push('<line x1="'+L+'" y1="'+(H-B)+'" x2="'+(W-R)+'" y2="'+(H-B)+'" stroke="'+tok('--line-2')+'" stroke-width="1"/>');
+    /* spacing annotation between the first two isotopes */
+    var ax=x(sp.peaks[0].mz), bx=x(sp.peaks[1]?sp.peaks[1].mz:sp.peaks[0].mz), ay=(H-B)+16;
+    s.push('<line x1="'+fmt(ax,1)+'" y1="'+ay+'" x2="'+fmt(bx,1)+'" y2="'+ay+'" stroke="'+ink+'" stroke-width="1"/>');
+    s.push('<text x="'+fmt((ax+bx)/2,1)+'" y="'+(ay+12)+'" fill="'+ink+'" font-family="'+tok('--font-mono')+
+      '" font-size="9.5" text-anchor="middle">&#916; '+fmt(NEUTRON/z,4)+' = 1.00335/'+z+'</text>');
+    [[100,'100'],[50,'50'],[0,'0']].forEach(function(p){
+      s.push('<text x="'+(L-8)+'" y="'+fmt(y(p[0])+3,1)+'" fill="'+ink+'" font-family="'+tok('--font-mono')+
+        '" font-size="9.5" text-anchor="end">'+p[1]+'</text>');
+    });
+    s.push('</svg>');
+    body.innerHTML='<div class="chartwrap">'+s.join('')+'</div>';
+    attachSvgTips(body.firstChild);
+    return {
+      readout:[['precursor m/z',fmt(ion.coord.mz,4)],['charge',z+'+'],
+               ['neutral mass',fmt(mass,3)],['spacing',fmt(NEUTRON/z,4)]],
+      legend:[['--accent','observed'],['--fg-3','expected (averagine)']],
+      foot:'Observed stems against the expected averagine envelope (dashed). Spacing of 1.00335/z is what confirms the charge state.',
+      cols:['m/z','observed','expected','ppm'],
+      rows:sp.peaks.map(function(p,i){return [fmt(p.mz,4),fmt(p.intensity,1),fmt(expct[i]?expct[i].exp:null,1),fmt(p.ppm_error,2)];})
+    };
+  }
+};
+
+/* ---------- P3: extracted ion chromatogram ---------- */
+var P_XIC={
+  id:'xic', title:'Extracted ion chromatogram', familiarity:'conventional',
+  gate:function(){
+    if(!tables().traces) return ['BLANK','this export has no traces.jsonl — emit it for selected ions to draw peak shape'];
+    if(!state.ion) return ['BLANK','no ion selected'];
+    if(!traceFor(state.ion.ion_uid)) return ['BLANK','no trace recorded for this ion'];
+    return ['RENDER',''];
+  },
+  draw:function(body){
+    var ion=state.ion, tr=traceFor(ion.ion_uid), pts=tr.points;
+    var W=760,H=220,L=58,R=14,T=20,B=40;
+    var xs=pts.map(function(p){return p[0];}), ys=pts.map(function(p){return p[1];});
+    var xlo=Math.min.apply(null,xs), xhi=Math.max.apply(null,xs);
+    var yhi=Math.max.apply(null,ys)*1.12;
+    var x=function(v){return L+(v-xlo)/(xhi-xlo)*(W-L-R);};
+    var y=function(v){return (H-B)-v/yhi*((H-B)-T);};
+    var grid=tok('--line'), ink=tok('--fg-3'), c=tok('--accent');
+    var s=['<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Extracted ion chromatogram">'];
+    niceTicks(0,yhi,4).forEach(function(t){
+      s.push('<line x1="'+L+'" y1="'+fmt(y(t),1)+'" x2="'+(W-R)+'" y2="'+fmt(y(t),1)+'" stroke="'+grid+'" stroke-width="1"/>');
+      s.push('<text x="'+(L-8)+'" y="'+fmt(y(t)+3,1)+'" fill="'+ink+'" font-family="'+tok('--font-mono')+
+        '" font-size="9.5" text-anchor="end">'+sciLabel(t)+'</text>');
+    });
+    var dLine=pts.map(function(p,i){return (i?'L':'M')+fmt(x(p[0]),1)+' '+fmt(y(p[1]),1);}).join(' ');
+    s.push('<path d="'+dLine+' L'+fmt(x(xhi),1)+' '+fmt(y(0),1)+' L'+fmt(x(xlo),1)+' '+fmt(y(0),1)+'Z" fill="'+c+'" fill-opacity="0.14"/>');
+    s.push('<path d="'+dLine+'" fill="none" stroke="'+c+'" stroke-width="2" stroke-linejoin="round"/>');
+    /* apex marker, emphasised endpoint */
+    var ax=x(tr.apex_rt_min!=null?tr.apex_rt_min:xs[0]);
+    var apexY=Math.max.apply(null,ys);
+    s.push('<circle cx="'+fmt(ax,1)+'" cy="'+fmt(y(apexY),1)+'" r="4.5" fill="'+c+'" stroke="'+tok('--surface')+'" stroke-width="2"/>');
+    s.push('<text x="'+fmt(ax,1)+'" y="'+fmt(y(apexY)-11,1)+'" fill="'+tok('--fg-2')+'" font-family="'+tok('--font-mono')+
+      '" font-size="9.5" text-anchor="middle">'+fmt(tr.apex_rt_min,2)+' min</text>');
+    pts.forEach(function(p){
+      s.push('<rect x="'+fmt(x(p[0])-7,1)+'" y="'+T+'" width="14" height="'+((H-B)-T)+'" fill="transparent" data-tip="'+
+        '<span class=k>RT</span> '+fmt(p[0],3)+' min<br><span class=k>intensity</span> '+fmt(p[1],3)+'"/>');
+    });
+    s.push('<line x1="'+L+'" y1="'+(H-B)+'" x2="'+(W-R)+'" y2="'+(H-B)+'" stroke="'+tok('--line-2')+'" stroke-width="1"/>');
+    niceTicks(xlo,xhi,6).forEach(function(t){
+      s.push('<text x="'+fmt(x(t),1)+'" y="'+(H-B+18)+'" fill="'+ink+'" font-family="'+tok('--font-mono')+
+        '" font-size="9.5" text-anchor="middle">'+fmt(t,2)+'</text>');
+    });
+    s.push('<text x="'+((L+W-R)/2)+'" y="'+(H-6)+'" fill="'+ink+'" font-family="'+tok('--font-mono')+
+      '" font-size="9.5" text-anchor="middle">retention time (min)</text>');
+    s.push('</svg>');
+    body.innerHTML='<div class="chartwrap">'+s.join('')+'</div>';
+    attachSvgTips(body.firstChild);
+    return {
+      readout:[['apex',fmt(tr.apex_rt_min,3)+' min'],['FWHM',fmt(tr.fwhm_min,3)+' min'],
+               ['window',fmt(tr.extraction_window_ppm,1)+' ppm'],
+               ['consecutive scans',ion.intensity.n_consecutive_scans!=null?ion.intensity.n_consecutive_scans:'—']],
+      legend:[],
+      foot:'Peak shape at this ion’s own m/z, extraction window stated. The proximity tier claims a real peak over at least two consecutive scans; this is where that claim is visible.',
+      cols:['RT (min)','intensity'],
+      rows:pts.map(function(p){return [fmt(p[0],3),fmt(p[1],3)];})
+    };
+  }
+};
+
+/* ---------- canvas scatter helper ---------- */
+function scatterPanel(body,cfg){
+  var wrap=document.createElement('div'); wrap.className='chartwrap';
+  var cv=document.createElement('canvas'); wrap.appendChild(cv); body.appendChild(wrap);
+  var tip=mkTip(wrap);
+  var H=cfg.height||280, pad={l:62,r:16,t:16,b:42};
+  var screenPts=[];
+  function paint(){
+    var W=wrap.clientWidth||760, dpr=Math.min(2,window.devicePixelRatio||1);
+    cv.width=W*dpr; cv.height=H*dpr; cv.style.height=H+'px';
+    var g=cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
+    var pts=cfg.points;
+    if(!pts.length) return;
+    var xs=pts.map(function(p){return p.x;}), ys=pts.map(function(p){return p.y;});
+    var xlo=cfg.xlo!=null?cfg.xlo:Math.min.apply(null,xs), xhi=cfg.xhi!=null?cfg.xhi:Math.max.apply(null,xs);
+    if(xhi===xlo){xhi=xlo+1;}
+    var ylo,yhi;
+    if(cfg.logY){
+      var pos=ys.filter(function(v){return v>0;});
+      ylo=Math.pow(10,Math.floor(Math.log10(Math.min.apply(null,pos))));
+      yhi=Math.pow(10,Math.ceil(Math.log10(Math.max.apply(null,pos))));
+    } else { ylo=0; yhi=Math.max.apply(null,ys)*1.1; }
+    var xpad=(xhi-xlo)*0.05;
+    var X=function(v){return pad.l+(v-(xlo-xpad))/((xhi+xpad)-(xlo-xpad))*(W-pad.l-pad.r);};
+    var Y=cfg.logY
+      ? function(v){return (H-pad.b)-(Math.log10(v)-Math.log10(ylo))/(Math.log10(yhi)-Math.log10(ylo))*((H-pad.b)-pad.t);}
+      : function(v){return (H-pad.b)-(v-ylo)/(yhi-ylo)*((H-pad.b)-pad.t);};
+    var grid=tok('--line'), ink=tok('--fg-3'), mono='9.5px '+tok('--font-mono');
+    g.strokeStyle=grid; g.lineWidth=1; g.font=mono; g.fillStyle=ink;
+    var yt=cfg.logY?logTicks(ylo,yhi):niceTicks(ylo,yhi,4);
+    yt.forEach(function(t){
+      var py=Math.round(Y(t))+.5;
+      g.beginPath(); g.moveTo(pad.l,py); g.lineTo(W-pad.r,py); g.stroke();
+      g.textAlign='right'; g.textBaseline='middle';
+      g.fillText(cfg.logY?sciLabel(t):sciLabel(t),pad.l-8,py);
+    });
+    niceTicks(xlo,xhi,6).forEach(function(t){
+      var px=Math.round(X(t))+.5;
+      g.beginPath(); g.moveTo(px,pad.t); g.lineTo(px,H-pad.b); g.stroke();
+      g.textAlign='center'; g.textBaseline='top';
+      g.fillText(cfg.xFmt?cfg.xFmt(t):String(Math.round(t)),px,H-pad.b+8);
+    });
+    g.strokeStyle=tok('--line-2');
+    g.beginPath(); g.moveTo(pad.l,H-pad.b+.5); g.lineTo(W-pad.r,H-pad.b+.5); g.stroke();
+    g.textAlign='center'; g.fillStyle=ink;
+    g.fillText(cfg.xLabel,(pad.l+W-pad.r)/2,H-14);
+    g.save(); g.translate(14,(pad.t+H-pad.b)/2); g.rotate(-Math.PI/2);
+    g.textBaseline='middle'; g.fillText(cfg.yLabel,0,0); g.restore();
+    /* marks: 2px surface ring keeps overlapping points separable */
+    screenPts=[];
+    var ring=tok('--surface');
+    pts.forEach(function(p){
+      if(cfg.logY&&!(p.y>0)) return;
+      var px=X(p.x), py=Y(p.y);
+      g.beginPath(); g.arc(px,py,5,0,6.2832);
+      g.fillStyle=p.color; g.globalAlpha=.92; g.fill(); g.globalAlpha=1;
+      g.lineWidth=2; g.strokeStyle=ring; g.stroke();
+      screenPts.push({px:px,py:py,p:p});
+    });
+  }
+  paint();
+  var ro=window.ResizeObserver?new ResizeObserver(paint):null;
+  if(ro) ro.observe(wrap); else window.addEventListener('resize',paint);
+  cv.addEventListener('mousemove',function(ev){
+    var r=cv.getBoundingClientRect(), mx=ev.clientX-r.left, my=ev.clientY-r.top;
+    var best=null,bd=1e9,i,d;
+    for(i=0;i<screenPts.length;i++){
+      d=Math.pow(screenPts[i].px-mx,2)+Math.pow(screenPts[i].py-my,2);
+      if(d<bd){bd=d;best=screenPts[i];}
+    }
+    if(best&&bd<=196) tip.show(best.p.tip,best.px,best.py); else tip.hide();
+  });
+  cv.addEventListener('mouseleave',function(){tip.hide();});
+}
+
+/* ---------- P4: intensity vs retention time ---------- */
+var P_INT_RT={
+  id:'intensity_vs_time', title:'Intensity vs retention time', familiarity:'conventional',
+  gate:function(){
+    var n=state.data.ions.filter(function(i){return i.intensity&&i.intensity.matched_intensity>0;}).length;
+    if(!n) return ['BLANK','no ion carries matched_intensity'];
+    return ['RENDER',''];
+  },
+  draw:function(body){
+    var ids=state.data.manifest.samples.map(function(s){return s.sample_id;});
+    var cmap=sampleColors(ids);
+    var ions=state.data.ions.filter(function(i){return i.intensity&&i.intensity.matched_intensity>0;});
+    var pts=ions.map(function(i){
+      return {x:i.coord.rt_min,y:i.intensity.matched_intensity,color:cmap[i.sample_id]||tok('--s-other'),
+        tip:'<span class=k>'+esc(i.sample_id)+'</span> '+esc(i.annotation?i.annotation.peptide_sequence:'unassigned')+
+            '<br><span class=k>RT</span> '+fmt(i.coord.rt_min,2)+' min<br><span class=k>intensity</span> '+
+            fmt(i.intensity.matched_intensity,3)+'<br><span class=k>m/z</span> '+fmt(i.coord.mz,4)+' ('+i.coord.charge+'+)'};
+    });
+    scatterPanel(body,{points:pts,logY:true,xLabel:'retention time (min)',yLabel:'matched intensity (log)',
+      xFmt:function(t){return fmt(t,0);}});
+    return {
+      readout:[['ions',fmtInt(pts.length)],['samples',ids.length]],
+      legend:ids.slice(0,3).map(function(id,i){return [SERIES[i],id];})
+        .concat(ids.length>3?[['--s-other','other ('+(ids.length-3)+')']]:[]),
+      foot:'Log intensity: real cohorts span five orders of magnitude, which a linear axis cannot render legibly. Colour is capped at three samples by the colourblind-separation gate; further samples fold into Other.',
+      cols:['sample','peptide','RT (min)','matched intensity','m/z','z'],
+      rows:ions.map(function(i){return [i.sample_id,i.annotation?i.annotation.peptide_sequence:'—',
+        fmt(i.coord.rt_min,3),fmt(i.intensity.matched_intensity,3),fmt(i.coord.mz,4),i.coord.charge];})
+    };
+  }
+};
+
+/* ---------- P5: SeqStart vs intensity ---------- */
+var P_SEQ={
+  id:'seqstart_vs_intensity', title:'SeqStart vs intensity', familiarity:'conventional',
+  gate:function(){
+    var ok=state.data.ions.filter(function(i){
+      return i.annotation&&i.annotation.seq_start!=null&&i.intensity.summed_precursor_intensity>0&&
+             i.intensity.cluster_rank===1&&TIER_ORDER[i.confidence.tier]>=TIER_ORDER.pass2_confirmed;});
+    if(!ok.length){
+      var anyTier=state.data.ions.some(function(i){return TIER_ORDER[i.confidence.tier]>=TIER_ORDER.pass2_confirmed;});
+      if(!anyTier) return ['BLANK','no ion reaches pass2_confirmed — this panel will not draw a decoy-uncontrolled tier'];
+      return ['BLANK','no ion carries seq_start with a primary cluster'];
+    }
+    var prot=state.protein;
+    if(prot&&!ok.some(function(i){return i.annotation.prot_accession===prot;}))
+      return ['PARTIAL','selected protein has no qualifying ion — showing all proteins'];
+    return ['RENDER',''];
+  },
+  draw:function(body){
+    var ids=state.data.manifest.samples.map(function(s){return s.sample_id;});
+    var cmap=sampleColors(ids);
+    var ok=state.data.ions.filter(function(i){
+      return i.annotation&&i.annotation.seq_start!=null&&i.intensity.summed_precursor_intensity>0&&
+             i.intensity.cluster_rank===1&&TIER_ORDER[i.confidence.tier]>=TIER_ORDER.pass2_confirmed;});
+    var prot=state.protein, scoped=ok.filter(function(i){return !prot||i.annotation.prot_accession===prot;});
+    if(!scoped.length) scoped=ok;
+    var pts=scoped.map(function(i){
+      return {x:i.annotation.seq_start,y:i.intensity.summed_precursor_intensity,
+        color:cmap[i.sample_id]||tok('--s-other'),
+        tip:'<span class=k>'+esc(i.sample_id)+'</span> '+esc(i.annotation.peptide_sequence)+
+            '<br><span class=k>starts at</span> '+i.annotation.seq_start+
+            '<br><span class=k>summed precursor</span> '+fmt(i.intensity.summed_precursor_intensity,1)+
+            '<br><span class=k>cluster</span> rank '+i.intensity.cluster_rank};
+    });
+    scatterPanel(body,{points:pts,logY:true,xLabel:'peptide start position (residue)',
+      yLabel:'summed precursor intensity (log)',xFmt:function(t){return String(Math.round(t));}});
+    var pname=scoped[0]&&scoped[0].annotation.protein_name;
+    return {
+      readout:[['protein',esc(prot||'all')],['points',fmtInt(pts.length)],['tier','pass2_confirmed'],['cluster','rank 1 only']],
+      legend:ids.slice(0,3).map(function(id,i){return [SERIES[i],id];})
+        .concat(ids.length>3?[['--s-other','other ('+(ids.length-3)+')']]:[]),
+      foot:'Primary confirmed cluster only — pooling clusters was found to corrupt the pattern. Decoy-controlled tier only. Absolute log intensity, so a real cross-sample scale anomaly stays visible instead of being normalised away.',
+      cols:['sample','peptide','start','summed precursor'],
+      rows:scoped.map(function(i){return [i.sample_id,i.annotation.peptide_sequence,i.annotation.seq_start,
+        fmt(i.intensity.summed_precursor_intensity,1)];})
+    };
+  }
+};
+
+/* ---------- P6: Top3avg percentile across samples ---------- */
+var P_TOP3={
+  id:'top3_percentile', title:'Top3avg percentile across samples', familiarity:'conventional',
+  gate:function(){
+    if(!tables().proteins) return ['BLANK','this export has no proteins.jsonl'];
+    if(!state.data.proteins.length) return ['BLANK','no protein quant records'];
+    var ns=state.data.manifest.samples.length;
+    if(ns<2) return ['BLANK','needs at least 2 samples, export has '+ns];
+    var withPct=state.data.proteins.filter(function(p){return p.percentile!=null;});
+    if(!withPct.length) return ['PARTIAL','no percentile column — raw Top3avg is not comparable across samples with different protein counts'];
+    return ['RENDER',''];
+  },
+  draw:function(body){
+    var samples=state.data.manifest.samples.map(function(s){return s.sample_id;});
+    var byProt={};
+    state.data.proteins.forEach(function(p){
+      (byProt[p.prot_accession]=byProt[p.prot_accession]||{name:p.protein_name,rows:{}}).rows[p.sample_id]=p;
+    });
+    var accs=Object.keys(byProt).slice(0,3), extra=Object.keys(byProt).length-accs.length;
+    var W=760,H=280,L=58,R=104,T=20,B=48;
+    var x=function(i){return L+(samples.length===1?0.5:i/(samples.length-1))*(W-L-R);};
+    var y=function(v){return (H-B)-v/100*((H-B)-T);};
+    var grid=tok('--line'), ink=tok('--fg-3'), ink2=tok('--fg-2');
+    var s=['<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Top3avg percentile across samples">'];
+    [0,25,50,75,100].forEach(function(v){
+      s.push('<line x1="'+L+'" y1="'+fmt(y(v),1)+'" x2="'+(W-R)+'" y2="'+fmt(y(v),1)+'" stroke="'+grid+'" stroke-width="1"/>');
+      s.push('<text x="'+(L-8)+'" y="'+fmt(y(v)+3,1)+'" fill="'+ink+'" font-family="'+tok('--font-mono')+
+        '" font-size="9.5" text-anchor="end">'+v+'</text>');
+    });
+    accs.forEach(function(acc,si){
+      var c=tok(SERIES[si]), rows=byProt[acc].rows, d=[], last=null;
+      samples.forEach(function(sid,i){
+        var r=rows[sid]; if(!r||r.percentile==null) return;
+        d.push((d.length?'L':'M')+fmt(x(i),1)+' '+fmt(y(r.percentile),1));
+        last={i:i,r:r};
+      });
+      if(d.length>1) s.push('<path d="'+d.join(' ')+'" fill="none" stroke="'+c+'" stroke-width="2" stroke-linejoin="round"/>');
+      samples.forEach(function(sid,i){
+        var r=rows[sid]; if(!r||r.percentile==null) return;
+        s.push('<circle cx="'+fmt(x(i),1)+'" cy="'+fmt(y(r.percentile),1)+'" r="5" fill="'+c+
+          '" stroke="'+tok('--surface')+'" stroke-width="2" data-tip="<span class=k>'+esc(sid)+'</span> '+
+          esc(byProt[acc].name||acc)+'<br><span class=k>percentile</span> '+fmt(r.percentile,0)+
+          '<br><span class=k>Top3avg</span> '+fmt(r.top3avg,3)+'<br><span class=k>peptides used</span> '+
+          r.n_peptides_used+' of '+(r.n_peptides_matched!=null?r.n_peptides_matched:'—')+'"/>');
+      });
+      if(last) s.push('<text x="'+fmt(x(last.i)+11,1)+'" y="'+fmt(y(last.r.percentile)+3.5,1)+'" fill="'+c+
+        '" font-family="'+tok('--font-mono')+'" font-size="10.5" font-weight="600">'+
+        esc((byProt[acc].name||acc).replace('_HUMAN',''))+'</text>');
+    });
+    s.push('<line x1="'+L+'" y1="'+(H-B)+'" x2="'+(W-R)+'" y2="'+(H-B)+'" stroke="'+tok('--line-2')+'" stroke-width="1"/>');
+    samples.forEach(function(sid,i){
+      s.push('<text x="'+fmt(x(i),1)+'" y="'+(H-B+18)+'" fill="'+ink+'" font-family="'+tok('--font-mono')+
+        '" font-size="9.5" text-anchor="middle">'+esc(sid)+'</text>');
+    });
+    s.push('<text x="'+((L+W-R)/2)+'" y="'+(H-8)+'" fill="'+ink+'" font-family="'+tok('--font-mono')+
+      '" font-size="9.5" text-anchor="middle">sample</text>');
+    s.push('</svg>');
+    body.innerHTML='<div class="chartwrap">'+s.join('')+'</div>';
+    attachSvgTips(body.firstChild);
+    var absolute=!!(state.data.manifest.quant&&state.data.manifest.quant.absolute_standard_declared);
+    var rows=[];
+    Object.keys(byProt).forEach(function(acc){
+      samples.forEach(function(sid){
+        var r=byProt[acc].rows[sid]; if(!r) return;
+        rows.push([acc,byProt[acc].name||'—',sid,fmt(r.top3avg,3),fmt(r.percentile,0),
+                   r.n_peptides_used+' / '+(r.n_peptides_matched!=null?r.n_peptides_matched:'—'),r.tier||'—']);
+      });
+    });
+    return {
+      readout:[['basis',absolute?'absolute (spike-in declared)':'relative abundance'],
+               ['scale','percentile, 100 = most abundant'],
+               ['proteins',Object.keys(byProt).length],['samples',samples.length]],
+      legend:accs.map(function(acc,i){return [SERIES[i],(byProt[acc].name||acc)];})
+        .concat(extra>0?[['--s-other',extra+' more not shown']]:[]),
+      foot:(absolute?'':'<b>Relative abundance, not concentration</b> — this export declares no known-amount spike-in standard. ')+
+        'Percentile rather than raw rank, because sample protein counts differ. A densely packed distribution moves a protein several rank positions on measurement noise alone, so read the trend, not the exact value.',
+      cols:['accession','protein','sample','Top3avg','percentile','peptides used','tier'],
+      rows:rows
+    };
+  }
+};
+
+var PANELS=[P_MIRROR,P_ISO,P_XIC,P_INT_RT,P_SEQ,P_TOP3];
+
+/* ==================================================================
+   5. Shell rendering
+   ================================================================== */
+var elPanels=document.getElementById('panels');
+var tableOpen={};
+
+function renderPanels(){
+  elPanels.innerHTML='';
+  PANELS.forEach(function(def){
+    var g; try{ g=def.gate(); }catch(e){ g=['BLANK','gate error: '+e.message]; }
+    var status=g[0], reason=g[1];
+    var panel=document.createElement('section'); panel.className='panel';
+    var head=document.createElement('div'); head.className='phead';
+    head.innerHTML='<h2>'+esc(def.title)+'</h2>'+
+      '<span class="fam '+def.familiarity+'">'+def.familiarity+'</span>'+
+      '<span class="stat '+status.toLowerCase()+'">'+status+'</span><div class="spacer"></div>';
+    panel.appendChild(head);
+    var body=document.createElement('div'); body.className='pbody';
+    panel.appendChild(body);
+    if(status==='BLANK'){
+      body.className='empty';
+      body.innerHTML='<b>Blank:</b> '+esc(reason)+'.<br>The panel stays here rather than disappearing, '+
+        'so a missing measurement is not mistaken for a zero.';
+      elPanels.appendChild(panel);
+      return;
+    }
+    var out;
+    try{ out=def.draw(body); }
+    catch(e){
+      body.className='empty';
+      body.innerHTML='<b>Could not draw:</b> '+esc(e.message);
+      elPanels.appendChild(panel); return;
+    }
+    if(out.readout&&out.readout.length){
+      var ro=document.createElement('div'); ro.className='readout';
+      ro.innerHTML=out.readout.map(function(p){return '<span>'+esc(p[0])+' <b>'+p[1]+'</b></span>';}).join('');
+      panel.appendChild(ro);
+    }
+    if(out.legend&&out.legend.length){
+      var lg=document.createElement('div'); lg.className='legend';
+      lg.innerHTML=out.legend.map(function(p){
+        return '<span><i style="background:'+tok(p[0])+'"></i>'+esc(p[1])+'</span>';}).join('');
+      panel.appendChild(lg);
+    }
+    var foot=document.createElement('div'); foot.className='pfoot';
+    foot.innerHTML=(status==='PARTIAL'&&reason?'<b>Partial:</b> '+esc(reason)+'. ':'')+(out.foot||'');
+    panel.appendChild(foot);
+    if(out.rows&&out.rows.length){
+      var btn=document.createElement('button');
+      btn.className='btn'+(tableOpen[def.id]?' on':'');
+      btn.textContent=tableOpen[def.id]?'Hide values':'Values';
+      btn.setAttribute('aria-expanded',tableOpen[def.id]?'true':'false');
+      head.appendChild(btn);
+      var tw=document.createElement('div'); tw.className='tscroll'; tw.hidden=!tableOpen[def.id];
+      tw.innerHTML='<table class="dtable"><thead><tr>'+
+        out.cols.map(function(c){return '<th>'+esc(c)+'</th>';}).join('')+'</tr></thead><tbody>'+
+        out.rows.map(function(r){return '<tr>'+r.map(function(c){return '<td>'+esc(c)+'</td>';}).join('')+'</tr>';}).join('')+
+        '</tbody></table>';
+      panel.appendChild(tw);
+      btn.addEventListener('click',function(){
+        tableOpen[def.id]=!tableOpen[def.id];
+        tw.hidden=!tableOpen[def.id];
+        btn.classList.toggle('on',tableOpen[def.id]);
+        btn.textContent=tableOpen[def.id]?'Hide values':'Values';
+        btn.setAttribute('aria-expanded',tableOpen[def.id]?'true':'false');
+      });
+    }
+    elPanels.appendChild(panel);
+  });
+}
+
+function renderRail(){
+  var ids=state.data.manifest.samples.map(function(s){return s.sample_id;});
+  var cmap=sampleColors(ids);
+  var list=document.getElementById('ionList');
+  var ions=state.data.ions.slice().sort(function(a,b){
+    var an=(a.annotation&&a.annotation.peptide_sequence)||'zzz', bn=(b.annotation&&b.annotation.peptide_sequence)||'zzz';
+    return an===bn ? a.sample_id.localeCompare(b.sample_id) : an.localeCompare(bn);
+  }).slice(0,200);
+  list.innerHTML='';
+  ions.forEach(function(i){
+    var b=document.createElement('button');
+    b.className='ionbtn'+(state.ion&&state.ion.ion_uid===i.ion_uid?' sel':'');
+    b.style.color=cmap[i.sample_id]||tok('--s-other');
+    var weak=TIER_ORDER[i.confidence.tier]<TIER_ORDER.pass2_confirmed;
+    b.innerHTML='<span class="dot"></span>'+
+      '<span class="seq">'+esc((i.annotation&&i.annotation.peptide_sequence)||'unassigned')+'</span>'+
+      '<span class="meta">'+esc(i.sample_id)+' '+i.coord.charge+'+</span>';
+    b.title=(i.annotation?i.annotation.protein_name||i.annotation.prot_accession:'unassigned')+
+      ' · m/z '+fmt(i.coord.mz,4)+' · '+i.confidence.tier;
+    b.addEventListener('click',function(){
+      state.ion=i;
+      if(i.annotation) state.protein=i.annotation.prot_accession;
+      renderRail(); renderPanels();
+    });
+    list.appendChild(b);
+  });
+  document.getElementById('ionCount').textContent=
+    fmtInt(state.data.ions.length)+' ions'+(state.data.ions.length>200?' — first 200 listed':'');
+
+  var protEl=document.getElementById('protList'), seen={}, order=[];
+  state.data.ions.forEach(function(i){
+    if(!i.annotation) return;
+    var a=i.annotation.prot_accession;
+    if(!seen[a]){seen[a]={name:i.annotation.protein_name||a,n:0};order.push(a);}
+    seen[a].n++;
+  });
+  protEl.innerHTML='';
+  order.forEach(function(a){
+    var b=document.createElement('button');
+    b.className='ionbtn'+(state.protein===a?' sel':'');
+    b.style.color=tok('--fg-2');
+    b.innerHTML='<span class="dot" style="background:transparent"></span>'+
+      '<span class="seq">'+esc(seen[a].name)+'</span><span class="meta">'+seen[a].n+'</span>';
+    b.addEventListener('click',function(){
+      state.protein=(state.protein===a?null:a); renderRail(); renderPanels();
+    });
+    protEl.appendChild(b);
+  });
+}
+
+function renderHeader(){
+  var m=state.data.manifest;
+  document.getElementById('srcBadge').textContent=m.export_id+' · '+m.samples.length+' samples';
+  document.getElementById('demoBadge').hidden=!m._demo;
+  var dec=document.getElementById('decBadge');
+  if(m.decimation&&m.decimation.strategy&&m.decimation.strategy!=='none'){
+    var pct=100*m.decimation.kept/m.decimation.of;
+    dec.hidden=false;
+    dec.textContent='showing '+fmtInt(m.decimation.kept)+' of '+fmtInt(m.decimation.of)+' ions ('+pct.toFixed(2)+'%)';
+  } else dec.hidden=true;
+  var hint=document.getElementById('loadHint');
+  if(m.warnings&&m.warnings.length){
+    hint.innerHTML='<b style="color:var(--warn)">Notes from this export</b><br>'+
+      m.warnings.map(function(w){return esc(w);}).join('<br>')+
+      '<br><br>Drop an export’s manifest.json, ions.jsonl, spectra.jsonl, traces.jsonl and proteins.jsonl anywhere on this page to replace it.';
+  }
+}
+
+function setData(d){
+  state.data=d;
+  state.ion=d.ions.find(function(i){return i.annotation;})||d.ions[0]||null;
+  state.protein=state.ion&&state.ion.annotation?state.ion.annotation.prot_accession:null;
+  renderHeader(); renderRail(); renderPanels();
+}
+
+/* ==================================================================
+   6. Loading a real export
+   ================================================================== */
+function parseJsonl(txt){
+  var out=[],lines=txt.split(/\r?\n/),i;
+  for(i=0;i<lines.length;i++){
+    var t=lines[i].trim(); if(!t) continue;
+    try{ out.push(JSON.parse(t)); }catch(e){ /* skip a bad line rather than lose the file */ }
+  }
+  return out;
+}
+function ingest(files){
+  var next={manifest:null,ions:[],spectra:[],traces:[],proteins:[]}, pending=files.length, touched=[];
+  if(!pending) return;
+  files.forEach(function(f){
+    var r=new FileReader();
+    r.onload=function(){
+      var n=f.name.toLowerCase(), txt=String(r.result);
+      try{
+        if(n.indexOf('manifest')>=0){ next.manifest=JSON.parse(txt); touched.push('manifest'); }
+        else if(n.indexOf('ion')>=0){ next.ions=parseJsonl(txt); touched.push('ions'); }
+        else if(n.indexOf('spectra')>=0||n.indexOf('spectrum')>=0){ next.spectra=parseJsonl(txt); touched.push('spectra'); }
+        else if(n.indexOf('trace')>=0){ next.traces=parseJsonl(txt); touched.push('traces'); }
+        else if(n.indexOf('protein')>=0){ next.proteins=parseJsonl(txt); touched.push('proteins'); }
+      }catch(e){}
+      if(--pending===0) finish();
+    };
+    r.onerror=function(){ if(--pending===0) finish(); };
+    r.readAsText(f);
+  });
+  function finish(){
+    if(!next.ions.length){
+      document.getElementById('loadHint').innerHTML=
+        '<b style="color:var(--crit)">No ions read.</b> The loader needs a file whose name contains '+
+        '<code>ions</code>, one JSON object per line.';
+      return;
+    }
+    if(!next.manifest){
+      /* infer a minimal manifest so panels can still gate honestly */
+      var bySample={};
+      next.ions.forEach(function(i){
+        if(!bySample[i.sample_id]) bySample[i.sample_id]={
+          sample_id:i.sample_id,
+          vendor:(i.provenance&&i.provenance.vendor)||'unknown',
+          acquisition_method:(i.provenance&&i.provenance.acquisition_method)||'unknown',
+          drift_kind:(i.coord&&i.coord.drift_kind)||'absent',
+          has_ims:!!(i.provenance&&i.provenance.has_ims),
+          batch:(i.provenance&&i.provenance.batch)||null,
+          sample_class:(i.provenance&&i.provenance.sample_class)||null};
+      });
+      var ks={};
+      next.spectra.forEach(function(s){ks[s.kind]=1;});
+      next.manifest={export_id:'(no manifest)',created_at:null,method_id:null,
+        samples:Object.keys(bySample).map(function(k){return bySample[k];}),
+        tables:{ions:true,proteins:next.proteins.length>0,spectra:next.spectra.length>0,
+                traces:next.traces.length>0,spectrum_kinds:Object.keys(ks)},
+        quant:{metric:'top3avg',absolute_standard_declared:false},
+        counts:{ions_total:next.ions.length,ions_exported:next.ions.length,by_tier:{}},
+        decimation:null,
+        warnings:['No manifest.json was loaded, so sample metadata was inferred from the ion records. Panel gating is only as good as that inference.']};
+    } else if(!next.manifest.tables){
+      var kk={}; next.spectra.forEach(function(s){kk[s.kind]=1;});
+      next.manifest.tables={ions:true,proteins:next.proteins.length>0,spectra:next.spectra.length>0,
+        traces:next.traces.length>0,spectrum_kinds:Object.keys(kk)};
+    }
+    tableOpen={};
+    setData(next);
+  }
+}
+document.getElementById('loadBtn').addEventListener('click',function(){
+  document.getElementById('fileIn').click();
+});
+document.getElementById('fileIn').addEventListener('change',function(ev){
+  ingest(Array.prototype.slice.call(ev.target.files||[]));
+});
+['dragenter','dragover'].forEach(function(t){
+  document.addEventListener(t,function(e){e.preventDefault();document.body.style.outline='2px dashed '+tok('--accent');});
+});
+['dragleave','drop'].forEach(function(t){
+  document.addEventListener(t,function(e){e.preventDefault();document.body.style.outline='none';});
+});
+document.addEventListener('drop',function(e){
+  var dt=e.dataTransfer; if(!dt) return;
+  ingest(Array.prototype.slice.call(dt.files||[]));
+});
+
+/* ==================================================================
+   7. Boot
+   ================================================================== */
+setData(buildDemo());
+window.addEventListener('resize',function(){ /* canvas panels observe their own wrapper */ });
+})();
+</script>

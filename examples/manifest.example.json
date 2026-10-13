@@ -93,6 +93,14 @@
       "ms1_isotope"
     ]
   },
+  "quant": {
+    "metric": "top3avg",
+    "absolute_standard_declared": false,
+    "normalizations": [
+      "median_scaled",
+      "within_protein_max"
+    ]
+  },
   "counts": {
     "ions_total": 2140883,
     "ions_exported": 60000,

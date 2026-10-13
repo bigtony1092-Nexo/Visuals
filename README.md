@@ -18,7 +18,18 @@ schema/spectrum.schema.json      MS/MS and MS1 isotope peaks (the conventional p
 schema/trace.schema.json         extracted ion chromatograms (optional)
 examples/                        a filled method and a matching export
 tools/plan_panels.py             says which panels will render, and why not
+viewer/aria-ion-panels.html      the viewer — the six conventional panels, fed by an export
 ```
+
+## Viewer
+
+`viewer/aria-ion-panels.html` is a single self-contained page: MS/MS head-to-tail against
+the Atlas library, MS1 isotope envelope, XIC, intensity vs RT, SeqStart vs intensity and
+Top3avg percentile. It opens on a clearly labelled demo export and takes a real one by
+drag-and-drop of `manifest.json`, `ions.jsonl`, `spectra.jsonl`, `traces.jsonl` and
+`proteins.jsonl`. Each panel reports `RENDER` / `PARTIAL` / `BLANK` and states its reason
+rather than vanishing. Published at https://claude.ai/artifact/EaRBSjdQ666bsfS2sVTMvx
+(private until shared).
 
 ## Try it
 
