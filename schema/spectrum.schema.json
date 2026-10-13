@@ -4,50 +4,173 @@
   "title": "Spectrum record",
   "description": "One record per line in spectra.jsonl, keyed to an ion by ion_uid. Kept out of ions.jsonl because peak arrays would multiply its size. This is what the conventional panels read: the MS/MS mirror and the MS1 isotope envelope.",
   "type": "object",
-  "required": ["ion_uid", "kind", "peaks"],
+  "required": [
+    "ion_uid",
+    "kind",
+    "peaks"
+  ],
   "additionalProperties": false,
   "properties": {
-    "ion_uid": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
-    "sample_id": { "type": ["string", "null"] },
+    "ion_uid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$"
+    },
+    "sample_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "kind": {
-      "enum": ["ms2_experimental", "ms2_library", "ms1_isotope"],
+      "enum": [
+        "ms2_experimental",
+        "ms2_library",
+        "ms1_isotope"
+      ],
       "description": "A mirror panel needs ms2_experimental AND ms2_library for the same ion_uid."
     },
-    "precursor_mz": { "type": ["number", "null"] },
-    "charge": { "type": ["integer", "null"] },
-    "scan_id": { "type": ["string", "null"] },
-    "collision_energy": { "type": ["number", "null"] },
-
+    "precursor_mz": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "charge": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "scan_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "collision_energy": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
     "peaks": {
       "type": "array",
       "minItems": 1,
       "description": "Sorted by mz ascending. intensity is relative to this spectrum's base peak = 100.",
       "items": {
         "type": "object",
-        "required": ["mz", "intensity"],
+        "required": [
+          "mz",
+          "intensity"
+        ],
         "additionalProperties": false,
         "properties": {
-          "mz": { "type": "number", "exclusiveMinimum": 0 },
-          "intensity": { "type": "number", "minimum": 0 },
-          "ion": { "type": ["string", "null"], "description": "b | y | a | c | z | precursor | null. Null = unassigned, drawn grey." },
-          "idx": { "type": ["integer", "null"], "description": "Fragment index, e.g. 7 for y7." },
-          "charge": { "type": ["integer", "null"] },
-          "ppm_error": { "type": ["number", "null"] }
+          "mz": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "intensity": {
+            "type": "number",
+            "minimum": 0
+          },
+          "ion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "b | y | a | c | z | precursor | null. Null = unassigned, drawn grey."
+          },
+          "idx": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Fragment index, e.g. 7 for y7."
+          },
+          "charge": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ppm_error": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "ar1": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Area ratio: this product ion's ABSOLUTE intensity divided by the precursor's. Loading-invariant by construction \u2014 scale the injection and numerator and denominator move together \u2014 so a change in ar1 across runs is a change in fragmentation, not in amount. Null when the source carries no precursor intensity. Must be computed upstream from absolute intensities: the stored `intensity` is base-peak-normalized, so ar1 cannot be reproduced from it."
+          }
         }
       }
     },
-
     "match": {
-      "type": ["object", "null"],
+      "type": [
+        "object",
+        "null"
+      ],
       "description": "Present on ms2_experimental when it has been scored against a library spectrum.",
       "additionalProperties": false,
       "properties": {
-        "dot_product": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
-        "basis": { "enum": ["sqrt_intensity", "linear_intensity"], "default": "sqrt_intensity" },
-        "n_matched": { "type": ["integer", "null"] },
-        "n_library": { "type": ["integer", "null"] },
-        "library_source": { "type": ["string", "null"], "description": "Atlas version the library spectrum came from." }
+        "dot_product": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "basis": {
+          "enum": [
+            "sqrt_intensity",
+            "linear_intensity"
+          ],
+          "default": "sqrt_intensity"
+        },
+        "n_matched": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "n_library": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "library_source": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Atlas version the library spectrum came from."
+        }
       }
+    },
+    "ar1_basis": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "summed_precursor_intensity",
+        "matched_intensity",
+        null
+      ],
+      "description": "Which precursor intensity the ar1 division used. Required whenever any peak carries ar1 \u2014 without it the ratio is not reproducible, since the two denominators differ."
+    },
+    "ar1_sum": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Sum of ar1 over the assigned ladder ions: the share of the precursor that converted to identified fragments, one number per ion. This is the figure that compares across runs, collision energies and loads. Null when ar1 is null."
     }
   }
 }

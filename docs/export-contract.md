@@ -18,7 +18,7 @@ pipeline (python, on the box with the data)        viewer (published page)
 | `manifest.json` | one object | `schema/manifest.schema.json` |
 | `ions.jsonl` | one ion per line | `schema/ion_track.schema.json` |
 | `proteins.jsonl` | one (protein, sample) per line | `schema/protein_quant.schema.json` |
-| `spectra.jsonl` | one spectrum per line | `schema/spectrum.schema.json` |
+| `spectra.jsonl` | one spectrum per line, with per-peak `ar1` | `schema/spectrum.schema.json` |
 | `traces.jsonl` | one XIC per line, optional | `schema/trace.schema.json` |
 
 `manifest.tables` declares which of these were emitted, so a panel whose table is absent
@@ -155,7 +155,58 @@ does.
 2,331–4,235, and in a densely packed stretch of the distribution (nine proteins inside a
 1.4% Top3avg span) a protein shifts several rank positions on measurement noise alone.
 
-## 6. Stoichiometry and flux
+## 6. AR1: fragment conversion, and why it is loading-invariant
+
+`ar1` on each assigned peak is that product ion's absolute intensity divided by its
+precursor's:
+
+```
+ar1 = I_product / I_precursor
+```
+
+Scale the injection and both move together, so **ar1 does not change with load**. That is
+the point of it: a difference in ar1 across runs is a difference in fragmentation, not in
+how much went on column. `ar1_sum`, the total over the assigned ladder, is the share of
+the precursor that converted to identified fragments — one number per ion, comparable
+across runs, collision energies and loads.
+
+Three rules keep it honest:
+
+- **Do not normalise ar1 within a spectrum.** The precursor intensity is a constant there,
+  so dividing by the largest ar1 cancels it exactly: `(I_p/I_prec) / (I_max/I_prec) =
+  I_p/I_max`. That is base-peak relative intensity, which `peaks[].intensity` already
+  holds. The raw ratio is the only part that carries new information.
+- **`ar1_basis` is required whenever any peak carries `ar1`.** `summed_precursor_intensity`
+  and `matched_intensity` are different denominators and give different numbers.
+- **It must be computed upstream, from absolute intensities.** `peaks[].intensity` is
+  base-peak-normalized, so ar1 cannot be reproduced from the stored spectrum.
+
+**Where it is null, and why that matters.** ar1 needs a precursor intensity. Sources that
+store fragments but no precursor intensity — the UID Atlas and `ARiA_Consensus.db` among
+them — carry `ar1: null` throughout. So ar1 does not close a cross-platform gap; it
+compares within sources that record precursor intensity. A panel that mixes a source
+carrying ar1 with one that cannot is comparing a number against an absence.
+
+### Ruling out a loading effect
+
+Loading-invariance is what makes ar1 a test rather than a description. Where a difference
+between runs or methods is suspected, the order is:
+
+1. **Count what the enzyme can produce.** In a region with few cleavage sites there may be
+   nothing to find; a gap there is arithmetic, not sensitivity. (PAX8: residues 288–450
+   hold 3 cleavage sites against 29 in 1–287, yielding 2 observable peptides in that whole
+   third.)
+2. **Check whether amount moves it.** If coverage is flat across a real loading range, the
+   gap is not a loading effect. (PAX8 on Colorado: 50-fold on-column range, coverage
+   44.7–49.8%, zero ions past residue 287 in all ten runs.)
+3. **Then compare ar1**, which holds amount constant by construction, to ask whether the
+   ions that are seen fragment the same way.
+
+Only after those does a modification hypothesis earn its cost — and the residues pick it:
+N-terminal start → Met oxidation, N-terminal acetyl or a GG remnant; an S/T-rich stretch →
+phosphorylation; a K-rich stretch → ubiquitin GG or acetyl.
+
+## 7. Stoichiometry and flux
 
 - **Stoichiometry** ratios are computed **within one run only** (`require_same_run` is
   `const: true`). `min_peptides_both_sides` guards the 1-vs-3 peptide mismatch.
@@ -164,7 +215,7 @@ does.
   Top3avg tracked total sample signal only weakly (median r ≈ 0.23), so loading is not a
   universal explanation — but it is the first thing to rule out.
 
-## 7. Can an ion map tell HeLa from K562?
+## 8. Can an ion map tell HeLa from K562?
 
 Worth asking, and easy to answer wrongly. The defaults enforce the honest version:
 
@@ -182,7 +233,7 @@ diaPASEF), K562 only in `colorado-B` (Waters). Cell line is perfectly confounded
 both batch and vendor, so the panel refuses. Answering this question needs at least one
 cell line run on at least two instruments, or two batches of each class on one.
 
-## 8. The method lifecycle
+## 9. The method lifecycle
 
 `schema/method.schema.json` is the fillable form. Fill it, save it, point it at new
 samples, get the same panels back.
@@ -204,13 +255,13 @@ Per-panel requirements live in `schema/panels.json`, so a panel's needs are data
 code. `on_requirement_unmet` defaults to `blank_with_reason`: the panel stays visible and
 states why it is empty, so **a missing measurement is never mistaken for a zero**.
 
-## 9. Decimation is disclosed
+## 10. Decimation is disclosed
 
 "Complete library" can be millions of ions against a few thousand renderable marks.
 `manifest.decimation` records strategy, `kept`, `of` and `seed`, and
 `render.show_decimation_ratio` is `const: true`. A thinned plot states what it dropped.
 
-## 10. Open questions
+## 11. Open questions
 
 - `ion_uid` hashes `source_file`. Re-converting a raw file to a new path mints new uids.
   Either freeze the path at first ingest or hash a stable file id instead.
