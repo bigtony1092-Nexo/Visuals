@@ -1,0 +1,1444 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Ion Flight Atlas</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: three-column instrument console - inventory rail, flight-tube viewport, match panel. */
+:root{
+  --bg:#06080a; --bg-lift:#0a0e12; --panel:#0b1014; --panel-2:#0f161d;
+  --line:rgba(255,255,255,.085); --line-2:rgba(255,255,255,.18);
+  --fg:#e9eef2; --fg-2:#96a3ae; --fg-3:#5d6a75;
+  --accent:#4cc8ff; --accent-dim:#14364a;
+  --iso-a:#ff5f56; --iso-b:#4d9bff; --iso-c:#34d399;
+  --warn:#ffb340;
+  --font-ui:'Barlow','Helvetica Neue',Helvetica,Arial,sans-serif;
+  --font-mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font-ui);font-size:14px;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+canvas{display:block}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#1b242c;border-radius:9px}
+::-webkit-scrollbar-track{background:transparent}
+:focus-visible{outline:1px solid var(--accent);outline-offset:1px}
+
+.app{height:100%;display:flex;flex-direction:column;background:var(--line)}
+
+/* ---- header ---- */
+.bar{display:flex;align-items:center;gap:18px;flex-wrap:wrap;
+  padding:11px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+.mark{display:flex;align-items:baseline;gap:10px;min-width:0;flex-wrap:wrap}
+.mark h1{margin:0;font-size:15px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;white-space:nowrap}
+.mark .tag{font-family:var(--font-mono);font-size:10.5px;color:var(--fg-3);letter-spacing:.07em}
+.bar .spacer{flex:1}
+.ctl{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.btn{font-family:var(--font-mono);font-size:11px;letter-spacing:.09em;text-transform:uppercase;
+  padding:6px 11px;border:1px solid var(--line-2);border-radius:2px;color:var(--fg-2);
+  transition:border-color .15s,color .15s,background .15s;white-space:nowrap}
+.btn:hover{color:var(--fg);border-color:#32424e;background:#0f161d}
+.btn.on{color:#031018;background:var(--accent);border-color:var(--accent);font-weight:600}
+.btn.ghost{border-color:transparent;padding:6px 8px}
+.readout{font-family:var(--font-mono);font-size:11px;color:var(--fg-3);letter-spacing:.06em;white-space:nowrap}
+.readout b{color:var(--accent);font-weight:500}
+
+/* ---- grid ---- */
+.grid{flex:1;min-height:0;display:grid;grid-template-columns:254px minmax(0,1fr) 356px;gap:1px}
+.col{min-width:0;min-height:0;background:var(--bg);display:flex;flex-direction:column;overflow:hidden}
+.col.scroll{overflow-y:auto;overflow-x:hidden}
+
+/* ---- section headers ---- */
+.sh{display:flex;align-items:center;gap:8px;padding:11px 16px 7px;
+  font-family:var(--font-mono);font-size:10px;letter-spacing:.17em;text-transform:uppercase;color:var(--fg-3)}
+.sh::after{content:'';flex:1;height:1px;background:var(--line)}
+.block{padding:0 16px 14px}
+.block.tight{padding-bottom:8px}
+
+/* ---- protein / peptide list ---- */
+.prot{display:grid;grid-template-columns:8px 1fr auto;align-items:center;gap:9px;width:100%;
+  padding:7px 16px;text-align:left;border-left:2px solid transparent}
+.prot:hover{background:var(--bg-lift)}
+.prot.sel{background:var(--panel-2);border-left-color:currentColor}
+.prot .sw{width:8px;height:8px;border-radius:50%;background:currentColor}
+.prot .nm{min-width:0;display:flex;align-items:baseline;gap:7px}
+.prot .gene{font-family:var(--font-mono);font-size:12px;font-weight:600;letter-spacing:.05em;color:var(--fg)}
+.prot .desc{font-size:11.5px;color:var(--fg-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.prot .cnt{font-family:var(--font-mono);font-size:10.5px;color:var(--fg-3)}
+.peps{padding:2px 0 8px}
+.pep{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:8px;width:100%;
+  padding:4px 16px 4px 27px;text-align:left}
+.pep:hover{background:var(--bg-lift)}
+.pep.sel{background:#132130}
+.pep .sq{font-family:var(--font-mono);font-size:11px;letter-spacing:.02em;color:var(--fg-2);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.pep.sel .sq{color:var(--fg)}
+.pep .zc{font-family:var(--font-mono);font-size:10px;color:var(--fg-3)}
+.pep .scr{width:26px;height:3px;background:#1b242c;border-radius:2px;overflow:hidden}
+.pep .scr i{display:block;height:100%;background:var(--accent)}
+
+/* ---- filter chips ---- */
+.chips{display:flex;flex-wrap:wrap;gap:5px}
+.chip{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.06em;padding:4px 8px;
+  border:1px solid var(--line);border-radius:2px;color:var(--fg-3);display:flex;align-items:center;gap:5px}
+.chip:hover{border-color:#32424e;color:var(--fg-2)}
+.chip.on{color:var(--fg);border-color:var(--line-2);background:var(--panel-2)}
+.chip .d{width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.85}
+.seg{display:flex;border:1px solid var(--line);border-radius:2px;overflow:hidden}
+.seg button{flex:1;font-family:var(--font-mono);font-size:10px;letter-spacing:.07em;text-transform:uppercase;
+  padding:5px 4px;color:var(--fg-3)}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button.on{background:var(--panel-2);color:var(--fg)}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:4px 0;
+  font-size:12px;color:var(--fg-2)}
+.row .k{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.05em;color:var(--fg-3);text-transform:uppercase}
+
+/* ---- axis legend ---- */
+.axk{display:grid;grid-template-columns:14px 1fr;gap:8px 9px;align-items:start;font-size:11.5px;color:var(--fg-3);line-height:1.45}
+.axk .ax{font-family:var(--font-mono);font-size:10px;color:var(--fg-2);padding-top:1px}
+.axk b{color:var(--fg-2);font-weight:500}
+
+/* ---- viewport ---- */
+.view{position:relative;flex:1;min-height:0;background:
+  radial-gradient(130% 95% at 18% 8%,#0d141b 0%,#06080a 58%,#040608 100%)}
+.view canvas{position:absolute;inset:0;width:100%;height:100%;cursor:grab;touch-action:none}
+.vhud{position:absolute;left:14px;top:12px;pointer-events:none;
+  font-family:var(--font-mono);font-size:10.5px;letter-spacing:.09em;color:var(--fg-3);line-height:1.7}
+.vhud .big{color:var(--fg-2)}
+.vhud .trace{color:var(--accent)}
+.vnote{position:absolute;right:14px;bottom:11px;pointer-events:none;
+  font-family:var(--font-mono);font-size:10px;letter-spacing:.08em;color:#3f4b55;text-align:right;line-height:1.7}
+
+/* ---- match panel ---- */
+.rh{padding:12px 16px 10px;border-bottom:1px solid var(--line)}
+.rseq{font-family:var(--font-mono);font-size:14px;font-weight:600;letter-spacing:.04em;
+  word-break:break-all;line-height:1.3}
+.rsub{margin-top:4px;font-size:11.5px;color:var(--fg-3);display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.rsub .pill{font-family:var(--font-mono);font-size:10px;letter-spacing:.07em;padding:2px 6px;
+  border:1px solid var(--line-2);border-radius:2px;color:var(--fg-2)}
+.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:var(--line)}
+.stat{background:var(--panel);padding:8px 10px;min-width:0}
+.stat .k{font-family:var(--font-mono);font-size:9px;letter-spacing:.11em;text-transform:uppercase;color:var(--fg-3)}
+.stat .v{font-family:var(--font-mono);font-size:13px;font-variant-numeric:tabular-nums;margin-top:2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stat .v small{font-size:9.5px;color:var(--fg-3);letter-spacing:.04em}
+
+.ladwrap{padding:11px 16px 4px}
+.ladder{display:flex;flex-wrap:wrap;align-items:center;row-gap:2px}
+.ladder .aa{font-family:var(--font-mono);font-size:12.5px;font-weight:500;color:var(--fg);letter-spacing:.02em}
+.ladder .brk{position:relative;width:8px;height:22px;flex:none}
+.ladder .brk::before,.ladder .brk::after{content:'';position:absolute;left:3px;width:1px;height:0;background:transparent}
+.ladder .brk.b::before{top:0;height:5px;background:var(--iso-b)}
+.ladder .brk.y::after{bottom:0;height:5px;background:var(--iso-a)}
+.ladkey{display:flex;gap:12px;margin-top:3px;font-family:var(--font-mono);font-size:9.5px;letter-spacing:.09em;color:var(--fg-3)}
+.ladkey i{display:inline-block;width:1px;height:8px;vertical-align:-1px;margin-right:4px}
+
+.specs{flex:1;min-height:0;display:flex;flex-direction:column;padding:4px 16px 16px;gap:0}
+.speclab{display:flex;justify-content:space-between;align-items:baseline;gap:8px;
+  font-family:var(--font-mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--fg-3);padding:7px 0 4px}
+.speclab b{color:var(--fg-2);font-weight:500;letter-spacing:.07em}
+.specs canvas{width:100%;height:118px;flex:none}
+.empty{padding:16px;font-size:12.5px;color:var(--fg-3);line-height:1.6}
+
+.foot{padding:10px 16px 14px;font-size:11px;color:#46525c;line-height:1.55;border-top:1px solid var(--line)}
+
+.specnote{padding:12px 0 0;font-size:11.5px;line-height:1.55;color:#5d6a75}
+.specnote b{color:var(--fg-2);font-weight:500}
+@media (max-width:620px){ .mark .tag{display:none} }
+@media (max-width:1080px){
+  .app{height:auto;min-height:100%}
+  .grid{display:flex;flex-direction:column}
+  .col{overflow:visible}
+  .col.scroll{overflow:visible}
+  .view{height:min(68vh,500px);flex:none}
+  .col-view{order:-1}
+  .specs canvas{height:106px}
+}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.001ms!important}}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="bar">
+    <div class="mark">
+      <h1>Ion Flight Atlas</h1>
+      <span class="tag">LC &rarr; ESI &rarr; TIMS &rarr; TOF &middot; synthetic dataset</span>
+    </div>
+    <div class="spacer"></div>
+    <div class="ctl">
+      <span class="readout" id="ro"></span>
+      <button class="btn" id="bRun">Replay acquisition</button>
+      <button class="btn" id="bFill">Fill</button>
+      <button class="btn" id="bFlash">Flash protein</button>
+      <button class="btn" id="bSpeed">1&times;</button>
+      <button class="btn" id="bHome">Reset view</button>
+    </div>
+  </header>
+
+  <div class="grid">
+
+    <!-- ============ left rail ============ -->
+    <aside class="col scroll">
+      <div class="sh">Proteins</div>
+      <div id="plist"></div>
+
+      <div class="sh">Charge state</div>
+      <div class="block tight"><div class="chips" id="zchips"></div></div>
+
+      <div class="sh">Display</div>
+      <div class="block">
+        <div class="row"><span class="k">Colour by</span></div>
+        <div class="seg" id="cmode">
+          <button data-m="protein" class="on">Protein</button>
+          <button data-m="isotope">Isotope</button>
+          <button data-m="charge">Charge</button>
+        </div>
+        <div class="row" style="margin-top:9px"><span class="k">Isotopes</span></div>
+        <div class="seg" id="imode">
+          <button data-m="all" class="on">All 3</button>
+          <button data-m="mono">Mono only</button>
+        </div>
+        <div class="row" style="margin-top:9px"><span class="k">Isotope spacing</span></div>
+        <div class="seg" id="sspread">
+          <button data-m="wide" class="on">Expanded</button>
+          <button data-m="true">True scale</button>
+        </div>
+        <div class="chips" style="margin-top:10px">
+          <button class="chip on" id="cUnk"><span class="d"></span>Unassigned features</button>
+        </div>
+      </div>
+
+      <div class="sh">Axes</div>
+      <div class="block">
+        <div class="axk">
+          <span class="ax">X</span><span><b>m/z</b> &mdash; time of flight down the tube</span>
+          <span class="ax">Y</span><span><b>1/K&#8320;</b> &mdash; mobility drift, cross-section over charge</span>
+          <span class="ax">Z</span><span><b>RT</b> &mdash; retention time, hydrophobicity on the gradient</span>
+        </div>
+      </div>
+
+      <div class="foot">Every dot sits where the physics puts it. Change the gradient and the cloud
+      changes shape, but hydrophobicity is still hydrophobicity and cross-section is still
+      cross-section &mdash; the identifications hold.</div>
+    </aside>
+
+    <!-- ============ flight tube ============ -->
+    <section class="col col-view">
+      <div class="view" id="view">
+        <canvas id="cv"></canvas>
+        <div class="vhud" id="hud"></div>
+        <div class="vnote">drag &middot; orbit<br>wheel &middot; zoom<br>click dot &middot; inspect</div>
+      </div>
+    </section>
+
+    <!-- ============ match panel ============ -->
+    <aside class="col scroll">
+      <div class="sh">Selected ion</div>
+      <div class="rh">
+        <div class="rseq" id="rseq">&mdash;</div>
+        <div class="rsub" id="rsub"></div>
+      </div>
+      <div class="stats" id="stats"></div>
+      <div class="ladwrap" id="ladwrap">
+        <div class="ladder" id="ladder"></div>
+        <div class="ladkey"><span><i style="background:#4d9bff"></i>b ions</span><span><i style="background:#ff5f56"></i>y ions</span></div>
+      </div>
+      <div class="specs" id="specs">
+        <div class="speclab"><span>Experimental MS2</span><b id="mA"></b></div>
+        <canvas id="specA"></canvas>
+        <canvas id="specB"></canvas>
+        <div class="speclab"><span>Atlas library MS2</span><b id="mB"></b></div>
+        <div class="specnote">Head&ndash;to&ndash;tail against the spectral atlas on a shared m/z axis.
+        <b>Blue</b> marks b ions, <b>red</b> marks y ions; grey is chemical noise in the
+        experimental scan and atlas fragments the scan missed. The dot product is computed on
+        square-root intensities.</div>
+      </div>
+    </aside>
+
+  </div>
+</div>
+<script>
+(function(){
+'use strict';
+
+/* ======================================================================
+   1. CHEMISTRY  -- monoisotopic residue masses, retention coefficients
+   ====================================================================== */
+var AA={G:57.02146,A:71.03711,S:87.03203,P:97.05276,V:99.06841,T:101.04768,
+        C:103.00919,L:113.08406,I:113.08406,N:114.04293,D:115.02694,Q:128.05858,
+        K:128.09496,E:129.04259,M:131.04049,H:137.05891,F:147.06841,R:156.10111,
+        Y:163.06333,W:186.07931};
+var H2O=18.010565, PROTON=1.0072765, NEU=1.0033548, N2=28.00615;
+
+/* retention coefficients (hydrophobicity, SSRCalc-like ranking) */
+var HYD={W:11.0,F:10.5,L:9.6,I:8.4,M:5.8,V:5.0,Y:4.0,C:2.6,P:1.5,A:0.8,T:0.4,
+         H:-1.3,G:0.0,S:-0.8,Q:-2.0,N:-2.0,E:-3.1,D:-3.6,K:-5.1,R:-4.5};
+
+function pepMass(s){var m=H2O,i;for(i=0;i<s.length;i++)m+=AA[s.charAt(i)]||0;return m;}
+function hydIndex(s){var v=0,i;for(i=0;i<s.length;i++)v+=HYD[s.charAt(i)]||0;
+  return v/Math.pow(s.length,0.62);}
+
+/* collision cross section, calibrated against typical tryptic peptide values
+   (~400 A^2 for a 2+ at 1500 Da) then Mason-Schamp to reduced mobility */
+function ccsOf(mass,z,jit){return 5.40*Math.pow(mass,0.585)*(1+0.085*(z-1))*(1+0.055*(jit-0.5));}
+function invK0Of(ccs,mass,z){var mu=mass*N2/(mass+N2);return 1.049e-3*ccs*Math.sqrt(mu)/z;}
+
+/* deterministic hashing + PRNG so the dataset is identical on every load */
+function hash32(s){var h=2166136261,i;for(i=0;i<s.length;i++){h^=s.charCodeAt(i);
+  h=(h*16777619)>>>0;}return h>>>0;}
+function rng(seed){var s=seed>>>0||1;return function(){s^=s<<13;s>>>=0;s^=s>>>17;
+  s^=s<<5;s>>>=0;return s/4294967296;};}
+function clamp(v,a,b){return v<a?a:v>b?b:v;}
+
+/* ======================================================================
+   2. SAMPLE  -- seven proteins, tryptic peptides, illustrative sequences
+   ====================================================================== */
+var PROTEINS=[
+ {gene:'ALB',  desc:'Serum albumin',        acc:'P02768', color:'#ff5f56',
+  peps:['LVNEVTEFAK','YLYEIAR','DLGEENFK','AVMDDFAAFVEK','QTALVELVK','LVTDLTK',
+        'KVPQVSTPTLVEVSR','FQNALLVRYTK']},
+ {gene:'HBB',  desc:'Haemoglobin subunit β', acc:'P68871', color:'#5aa9ff',
+  peps:['VNVDEVGGEALGR','LLVVYPWTQR','SAVTALWGK','VHLTPEEK',
+        'FFESFGDLSTPDAVMGNPK','VDPENFR','EFTPPVQAAYQK']},
+ {gene:'ENO1', desc:'Alpha-enolase',        acc:'P06733', color:'#3ddc97',
+  peps:['AAVPSGASTGIYEALELR','YISPDQLADLYK','IEEELGSK','VNQIGSVTESLQACK',
+        'SGETEDTFIADLVVGLCTGQIK','GNPTVEVDLFTSK']},
+ {gene:'GAPDH',desc:'G3P dehydrogenase',    acc:'P04406', color:'#ffb340',
+  peps:['GALQNIIPASTGAAK','LISWYDNEFGYSNR','VIISAPSADAPMFVMGVNHEK',
+        'VPTANVSVVDLTCR','IISNASCTTNCLAPLAK','AAVLDLTCR']},
+ {gene:'PKM',  desc:'Pyruvate kinase',      acc:'P14618', color:'#c084fc',
+  peps:['GSGTAEVELK','LDIDSPPITAR','NTGIICTIGPASR','APIIAVTR','IYVDDGLISLQVK',
+        'LAPITSDPTEATAVGAVEASFK']},
+ {gene:'CAT',  desc:'Catalase',             acc:'P04040', color:'#22d3ee',
+  peps:['FSTVAGESGSADTVR','LFAYPDTHR','NLSVEDAAR','GAGAFGYFEVTHDITK',
+        'LGPNYLHIPVNCPYR','DPILFPSFIHSQK']},
+ {gene:'TPI1', desc:'Triosephosphate isomerase', acc:'P60174', color:'#f472b6',
+  peps:['VVLAYEPVWAIGTGK','IIYGGSVTGATCK','FFVGGNFK','KQSLGELIGTLNAAK',
+        'VAHALAEGLGVIACIGEK']}
+];
+
+/* top each protein up to a realistic number of observed peptides.
+   A pseudo-sequence is drawn at human proteome residue frequencies and
+   cleaved at K/R, so every added peptide is genuinely tryptic. */
+(function(){
+  var FREQ='A70 R56 N36 D47 C23 Q47 E71 G66 H26 I43 L100 K57 M21 F36 P63 S83 T54 W12 Y27 V60'
+    .split(' ').map(function(t){return [t.charAt(0),+t.slice(1)];});
+  var cum=[],tot=0,i;
+  for(i=0;i<FREQ.length;i++){tot+=FREQ[i][1];cum.push([FREQ[i][0],tot]);}
+  var seen={},j,k,p;
+  for(i=0;i<PROTEINS.length;i++){
+    p=PROTEINS[i];
+    for(j=0;j<p.peps.length;j++) seen[p.peps[j]]=1;
+    var r=rng(hash32('seq|'+p.gene)), seq='', n=900;
+    for(j=0;j<n;j++){
+      var u=r()*tot;
+      for(k=0;k<cum.length;k++) if(u<=cum[k][1]){seq+=cum[k][0];break;}
+    }
+    var parts=seq.replace(/([KR])/g,'$1|').split('|'), want=14;
+    for(j=0;j<parts.length&&p.peps.length<want;j++){
+      var q=parts[j];
+      if(q.length<7||q.length>21) continue;
+      if(!/[KR]$/.test(q)) continue;
+      if(seen[q]) continue;
+      seen[q]=1; p.peps.push(q);
+    }
+  }
+})();
+
+/* ======================================================================
+   3. FRAGMENT SPECTRA  -- b/y series, library + noisy experimental copy
+   ====================================================================== */
+function fragments(seq){
+  var n=seq.length,out=[],i,s=0;
+  for(i=0;i<n-1;i++){s+=AA[seq.charAt(i)];out.push({ion:'b',idx:i+1,mz:s+PROTON});}
+  s=H2O;
+  for(i=n-1;i>0;i--){s+=AA[seq.charAt(i)];out.push({ion:'y',idx:n-i,mz:s+PROTON});}
+  return out;
+}
+function buildSpectra(seq,z){
+  var n=seq.length, lib=fragments(seq), r=rng(hash32(seq+'|lib')), i,f,mid,v;
+  for(i=0;i<lib.length;i++){
+    f=lib[i];
+    v = f.ion==='y' ? 0.52+0.48*r() : 0.20+0.42*r();
+    mid = 1-Math.abs(f.idx/(n-1)-0.5)*1.15;
+    v *= 0.30+0.90*mid;
+    /* cleavage N-terminal to proline is favoured */
+    if(f.ion==='y' && seq.charAt(n-f.idx)==='P') v*=1.9;
+    if(f.ion==='b' && seq.charAt(f.idx)==='P')   v*=1.6;
+    f.int=v; f.label=f.ion+f.idx;
+  }
+  var mx=0; for(i=0;i<lib.length;i++) mx=Math.max(mx,lib[i].int);
+  for(i=0;i<lib.length;i++) lib[i].int=100*lib[i].int/mx;
+
+  /* experimental = library with per-peak variance, dropouts and chemical noise */
+  var r2=rng(hash32(seq+'|'+z+'|exp')), exp=[], span=0;
+  for(i=0;i<lib.length;i++) span=Math.max(span,lib[i].mz);
+  span=Math.ceil((span+60)/100)*100;
+  for(i=0;i<lib.length;i++){
+    f=lib[i];
+    var keep = r2()>0.11 || f.int>45;
+    var jit  = 0.55+0.92*r2();
+    if(keep) exp.push({ion:f.ion,idx:f.idx,label:f.label,mz:f.mz,int:f.int*jit});
+  }
+  for(i=0;i<15;i++) exp.push({ion:null,idx:0,label:null,
+    mz:130+(span-170)*r2(), int:(1.2+7*r2()*r2())});
+  mx=0; for(i=0;i<exp.length;i++) mx=Math.max(mx,exp[i].int);
+  for(i=0;i<exp.length;i++) exp[i].int=100*exp[i].int/mx;
+
+  /* normalised dot product on square-root intensities */
+  var byLabel={},num=0,da=0,db=0,matched=0;
+  for(i=0;i<exp.length;i++) if(exp[i].label) byLabel[exp[i].label]=exp[i];
+  for(i=0;i<lib.length;i++){
+    var e=byLabel[lib[i].label], a=Math.sqrt(lib[i].int), b=e?Math.sqrt(e.int):0;
+    num+=a*b; da+=a*a; if(e&&e.int>2.5) matched++;
+  }
+  for(i=0;i<exp.length;i++) db+=exp[i].int;
+  var score=num/Math.sqrt(da*db);
+  return {lib:lib, exp:exp, span:span, score:clamp(score,0.4,0.995),
+          matched:matched, nfrag:lib.length, dppm:(r2()*2-1)*6.5};
+}
+
+/* ======================================================================
+   4. FEATURE LIST  -- precursors and their isotope dots
+   ====================================================================== */
+var MZ0=380, MZ1=1460, K0LO=0.72, K0HI=1.88, RT0=0, RT1=40;
+var TUBE_L=640, TUBE_R=186, INSET=0.655, HALF=TUBE_R*INSET;
+
+var features=[], dots=[], fid=0;
+
+function chargesFor(seq,r){
+  var n=seq.length;
+  if(n<=8)  return r()<0.35?[1,2]:[2];
+  if(n<=13) return r()<0.30?[2,3]:[2];
+  if(n<=17) return r()<0.55?[2,3]:[3];
+  return r()<0.45?[3,4]:[3];
+}
+
+function addFeature(o){
+  var ccs=o.ccs, k0=invK0Of(ccs,o.mass,o.z);
+  var f={id:fid++, kind:o.kind, protein:o.protein, pi:o.pi, pepIdx:o.pepIdx,
+         seq:o.seq, z:o.z, mass:o.mass, mz:(o.mass+o.z*PROTON)/o.z,
+         rt:o.rt, ccs:ccs, k0:k0, inten:o.inten, spec:o.spec, iso:[]};
+  if(f.mz<MZ0+4||f.mz>MZ1-4||k0<K0LO+0.01||k0>K0HI-0.01) return null;
+  /* averagine isotope envelope: expected 13C count scales with mass */
+  var lam=4.9e-4*f.mass, w=[1,lam,lam*lam/2], i;
+  for(i=0;i<3;i++){
+    f.iso.push({f:f, k:i, mz:f.mz+i*NEU/f.z, rel:w[i]/w[0],
+                inten:f.inten*w[i], landed:true, sx:0, sy:0, sr:0, sd:0, vis:false});
+  }
+  features.push(f);
+  for(i=0;i<3;i++) dots.push(f.iso[i]);
+  return f;
+}
+
+/* -- identified peptides ------------------------------------------------ */
+(function(){
+  var raw=[],p,i,j,seq;
+  for(i=0;i<PROTEINS.length;i++){p=PROTEINS[i];p.idx=i;
+    for(j=0;j<p.peps.length;j++) raw.push({pi:i,pepIdx:j,seq:p.peps[j],h:hydIndex(p.peps[j])});}
+  var lo=1e9,hi=-1e9;
+  for(i=0;i<raw.length;i++){lo=Math.min(lo,raw[i].h);hi=Math.max(hi,raw[i].h);}
+  for(i=0;i<raw.length;i++){
+    var it=raw[i], r=rng(hash32(it.seq)), mass=pepMass(it.seq);
+    var rt=2.6+33.8*(it.h-lo)/(hi-lo)+(r()-0.5)*1.6;
+    var zs=chargesFor(it.seq,r), q;
+    var pep={seq:it.seq, mass:mass, rt:rt, charges:zs, feats:[]};
+    PROTEINS[it.pi].peps[it.pepIdx]=pep;
+    for(q=0;q<zs.length;q++){
+      var z=zs[q], sp=buildSpectra(it.seq,z);
+      var f=addFeature({kind:'id', protein:PROTEINS[it.pi], pi:it.pi, pepIdx:it.pepIdx,
+        seq:it.seq, z:z, mass:mass, rt:clamp(rt,RT0+1,RT1-1),
+        ccs:ccsOf(mass,z,r()), inten:Math.pow(10,4.4+1.8*r())*(q===0?1:0.42),
+        spec:sp});
+      if(f){pep.feats.push(f); if(!pep.spec){pep.spec=sp; pep.score=sp.score;}}
+    }
+    if(pep.feats.length) pep.score=pep.feats[0].spec.score;
+  }
+})();
+
+/* -- unassigned background features ------------------------------------ */
+(function(){
+  var r=rng(0x51f3a7),i;
+  for(i=0;i<290;i++){
+    var u=r(), z=u<0.17?1:u<0.63?2:u<0.89?3:4;
+    var mass=(430+1020*Math.pow(r(),0.78))*z-z*PROTON;
+    addFeature({kind:'unk', protein:null, pi:-1, pepIdx:-1, seq:null, z:z,
+      mass:mass, rt:1.5+37*Math.pow(r(),0.92),
+      ccs:ccsOf(mass,z,r()), inten:Math.pow(10,3.5+1.7*r()), spec:null});
+  }
+})();
+
+var MAXINT=0; (function(){var i;for(i=0;i<features.length;i++)
+  MAXINT=Math.max(MAXINT,features[i].inten);})();
+
+/* world position of a dot */
+var isoSpread=7.2;
+function wx(d){
+  var off = (S.spread==='true') ? (NEU/d.f.z)/(MZ1-MZ0)*TUBE_L : isoSpread;
+  return ((d.f.mz-MZ0)/(MZ1-MZ0))*TUBE_L + d.k*off;
+}
+function wy(d){return (((d.f.k0-K0LO)/(K0HI-K0LO))-0.5)*2*HALF;}
+function wz(d){return (((d.f.rt-RT0)/(RT1-RT0))-0.5)*2*HALF;}
+
+/* ======================================================================
+   5. CAMERA + PROJECTION
+   ====================================================================== */
+var cv=document.getElementById('cv'), ctx=cv.getContext('2d'), viewEl=document.getElementById('view');
+var V={w:900,h:560,cx:450,cy:290,dpr:1};
+var HOME={az:-0.52,el:0.38,dist:1180,userZoom:1};
+var cam={az:HOME.az, el:HOME.el, dist:HOME.dist, fov:900, tx:250, ty:0, tz:0,
+         userZoom:1, zoom:1, fit:1};
+var _ca=1,_sa=0,_ce=1,_se=0,_kmid=1;
+
+var POOL=[],POOLN=0,i0;
+for(i0=0;i0<6400;i0++) POOL.push({x:0,y:0,k:1,d:1,ok:false});
+function P(x,y,z){
+  var o=POOL[POOLN++&6383];
+  var dx=x-cam.tx, dy=y-cam.ty, dz=z-cam.tz;
+  var x1=dx*_ca+dz*_sa, z1=dz*_ca-dx*_sa;
+  var y1=dy*_ce-z1*_se, z2=dy*_se+z1*_ce;
+  var d=z2+cam.dist;
+  if(d<40){o.ok=false;return o;}
+  var k=cam.fov*cam.zoom/d;
+  o.x=V.cx+x1*k; o.y=V.cy-y1*k; o.k=k; o.d=d; o.ok=true; return o;
+}
+function beginFrame(){
+  POOLN=0;
+  _ca=Math.cos(cam.az); _sa=Math.sin(cam.az);
+  _ce=Math.cos(cam.el); _se=Math.sin(cam.el);
+  cam.zoom=cam.fit*cam.userZoom;
+  _kmid=cam.fov*cam.zoom/cam.dist;
+}
+function resize(){
+  var r=viewEl.getBoundingClientRect();
+  V.dpr=Math.min(2,window.devicePixelRatio||1);
+  V.w=Math.max(260,r.width); V.h=Math.max(240,r.height);
+  cv.width=(V.w*V.dpr)|0; cv.height=(V.h*V.dpr)|0;
+  ctx.setTransform(V.dpr,0,0,V.dpr,0,0);
+  var pOn=(V.w>=440&&V.h>=340);
+  V.cx=V.w*(pOn?0.575:0.50); V.cy=V.h*(pOn?0.57:0.50);
+  cam.fit=clamp(V.w/(pOn?765:712),0.46,1.58);
+}
+
+/* ======================================================================
+   6. SCENE PRIMITIVES
+   ====================================================================== */
+var MZ_TICKS=[400,600,800,1000,1200,1400];
+var RT_TICKS=[0,10,20,30,40];
+var K_TICKS=[0.8,1.0,1.2,1.4,1.6,1.8];
+function xOfMz(mz){return ((mz-MZ0)/(MZ1-MZ0))*TUBE_L;}
+function yOfK0(k){return (((k-K0LO)/(K0HI-K0LO))-0.5)*2*HALF;}
+function zOfRt(t){return (((t-RT0)/(RT1-RT0))-0.5)*2*HALF;}
+
+function line(ax,ay,az,bx,by,bz,col,lw){
+  var a=P(ax,ay,az), b=P(bx,by,bz);
+  if(!a.ok||!b.ok) return;
+  ctx.strokeStyle=col; ctx.lineWidth=lw||1;
+  ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+}
+function ringPath(x,rad,n){
+  var i,a,p,started=false,dsum=0;
+  ctx.beginPath();
+  for(i=0;i<=n;i++){
+    a=i/n*Math.PI*2;
+    p=P(x,Math.cos(a)*rad,Math.sin(a)*rad);
+    if(!p.ok) return 0;
+    dsum+=p.d;
+    if(!started){ctx.moveTo(p.x,p.y);started=true;} else ctx.lineTo(p.x,p.y);
+  }
+  return dsum/(n+1);
+}
+function fade(d){return clamp(1.35-(d-cam.dist)/(TUBE_L*1.5)*0.9,0.28,1.25);}
+
+function drawTube(){
+  var i,a,x,dm,f;
+  /* longitudinal mesh */
+  for(i=0;i<30;i++){
+    a=i/30*Math.PI*2;
+    var cy=Math.cos(a)*TUBE_R, cz=Math.sin(a)*TUBE_R;
+    line(0,cy,cz,TUBE_L,cy,cz,'rgba(120,180,215,0.040)',1);
+  }
+  /* indexing rings - the clock running down the tube */
+  for(i=0;i<MZ_TICKS.length;i++){
+    x=xOfMz(MZ_TICKS[i]);
+    dm=ringPath(x,TUBE_R,64); if(!dm) continue;
+    f=fade(dm);
+    ctx.strokeStyle='rgba(140,195,228,'+(0.085*f).toFixed(3)+')'; ctx.lineWidth=1; ctx.stroke();
+  }
+  /* exit aperture */
+  dm=ringPath(TUBE_L,TUBE_R,72);
+  if(dm){ctx.strokeStyle='rgba(140,195,228,0.11)';ctx.lineWidth=1;ctx.stroke();}
+  /* entrance flange */
+  dm=ringPath(0,TUBE_R,80);
+  if(dm){ctx.strokeStyle='rgba(176,224,255,0.30)';ctx.lineWidth=1.4;ctx.stroke();}
+  dm=ringPath(0,TUBE_R*0.955,80);
+  if(dm){ctx.strokeStyle='rgba(176,224,255,0.11)';ctx.lineWidth=1;ctx.stroke();}
+  /* flange index marks */
+  for(i=0;i<24;i++){
+    a=i/24*Math.PI*2;
+    var l0=i%6===0?0.90:0.955;
+    line(0,Math.cos(a)*TUBE_R*l0,Math.sin(a)*TUBE_R*l0,
+         0,Math.cos(a)*TUBE_R,Math.sin(a)*TUBE_R,'rgba(176,224,255,0.20)',1);
+  }
+}
+
+function txt(s,x,y,col,font,align,base){
+  ctx.fillStyle=col; ctx.font=font||'500 10px '+MONO;
+  ctx.textAlign=align||'center'; ctx.textBaseline=base||'middle';
+  ctx.fillText(s,x,y);
+}
+var MONO="'IBM Plex Mono',ui-monospace,Menlo,monospace";
+var UIF="'Barlow',Helvetica,Arial,sans-serif";
+
+function drawFrame(){
+  var i,p,q,t;
+  /* floor grid at the mobility minimum */
+  for(i=0;i<MZ_TICKS.length;i++){ t=xOfMz(MZ_TICKS[i]);
+    line(t,-HALF,-HALF,t,-HALF,HALF,'rgba(255,255,255,0.045)',1); }
+  for(i=0;i<RT_TICKS.length;i++){ t=zOfRt(RT_TICKS[i]);
+    line(0,-HALF,t,TUBE_L,-HALF,t,'rgba(255,255,255,0.045)',1); }
+  /* back wall grid */
+  for(i=0;i<K_TICKS.length;i++){ t=yOfK0(K_TICKS[i]);
+    line(0,t,-HALF,TUBE_L,t,-HALF,'rgba(255,255,255,0.030)',1); }
+
+  /* measurement box */
+  var E='rgba(255,255,255,0.13)';
+  line(0,-HALF,-HALF,TUBE_L,-HALF,-HALF,E,1);
+  line(0,-HALF,HALF,TUBE_L,-HALF,HALF,E,1);
+  line(0,HALF,-HALF,TUBE_L,HALF,-HALF,E,1);
+  line(0,-HALF,-HALF,0,HALF,-HALF,E,1);
+  line(0,-HALF,-HALF,0,-HALF,HALF,E,1);
+  line(0,HALF,-HALF,0,HALF,HALF,'rgba(255,255,255,0.07)',1);
+
+  /* m/z ticks along the near bottom edge */
+  for(i=0;i<MZ_TICKS.length;i++){
+    t=xOfMz(MZ_TICKS[i]);
+    line(t,-HALF,HALF,t,-HALF-11,HALF+11,'rgba(255,255,255,0.22)',1);
+    p=P(t,-HALF-26,HALF+26);
+    if(p.ok) txt(MZ_TICKS[i],p.x,p.y,'rgba(150,163,174,0.95)','500 10px '+MONO);
+  }
+  p=P(TUBE_L*0.5,-HALF-58,HALF+58);
+  if(p.ok) txt('m/z   →  time of flight',p.x,p.y,'rgba(110,124,135,1)','600 10px '+MONO);
+
+  /* 1/K0 ticks on the entrance plane, left edge */
+  for(i=0;i<K_TICKS.length;i++){
+    t=yOfK0(K_TICKS[i]);
+    line(0,t,-HALF,-22,t,-HALF-22,'rgba(255,255,255,0.22)',1);
+    p=P(-38,t,-HALF-38);
+    if(p.ok) txt(K_TICKS[i].toFixed(1),p.x,p.y,'rgba(150,163,174,0.95)','500 10px '+MONO,'right');
+  }
+  p=P(-56,0,-HALF-56);
+  if(p.ok) txt('1/K₀',p.x,p.y,'rgba(110,124,135,1)','600 10px '+MONO,'right');
+
+  /* RT ticks along the entrance bottom edge */
+  for(i=0;i<RT_TICKS.length;i++){
+    t=zOfRt(RT_TICKS[i]);
+    line(0,-HALF,t,-16,-HALF-14,t,'rgba(255,255,255,0.22)',1);
+    p=P(-40,-HALF-30,t);
+    if(p.ok) txt(RT_TICKS[i],p.x,p.y,'rgba(150,163,174,0.95)','500 10px '+MONO,'right');
+  }
+  p=P(-86,-HALF-62,0);
+  if(p.ok) txt('RT min',p.x,p.y,'rgba(110,124,135,1)','600 10px '+MONO,'right');
+}
+
+/* ---- inlet: the hole in the tube where the ion enters the gas phase ---- */
+function drawInlet(t){
+  var i,a,p,r=17.5;
+  var c=P(0,0,0); if(!c.ok) return;
+  var sr=r*c.k;
+  ctx.globalCompositeOperation='source-over';
+  var g=ctx.createRadialGradient(c.x,c.y,0,c.x,c.y,sr*3.0);
+  g.addColorStop(0,'rgba(76,200,255,0.30)'); g.addColorStop(0.34,'rgba(76,200,255,0.07)');
+  g.addColorStop(1,'rgba(76,200,255,0)');
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(c.x,c.y,sr*3.0,0,6.2832); ctx.fill();
+  ctx.fillStyle='#04080c'; ctx.beginPath(); ctx.arc(c.x,c.y,sr,0,6.2832); ctx.fill();
+  ctx.strokeStyle='rgba(120,222,255,0.95)'; ctx.lineWidth=1.3;
+  ctx.beginPath(); ctx.arc(c.x,c.y,sr,0,6.2832); ctx.stroke();
+  ctx.strokeStyle='rgba(120,222,255,'+(0.22+0.16*Math.sin(t*2.1)).toFixed(3)+')';
+  ctx.beginPath(); ctx.arc(c.x,c.y,sr*(1.5+0.12*Math.sin(t*2.1)),0,6.2832); ctx.stroke();
+  for(i=0;i<4;i++){
+    a=i/4*Math.PI*2+Math.PI/4;
+    ctx.strokeStyle='rgba(120,222,255,0.45)'; ctx.lineWidth=1;
+    ctx.beginPath();
+    ctx.moveTo(c.x+Math.cos(a)*sr*1.25,c.y+Math.sin(a)*sr*1.25);
+    ctx.lineTo(c.x+Math.cos(a)*sr*1.85,c.y+Math.sin(a)*sr*1.85);
+    ctx.stroke();
+  }
+  txt('INLET',c.x+sr*1.9+4,c.y,'rgba(120,222,255,0.80)','600 9.5px '+MONO,'left');
+}
+
+/* ---- liquid phase readout: a flat instrument panel in front of the tube.
+   Drawn in screen space so the chromatogram and the isotope envelope stay
+   legible, then wired to the projected inlet by the ESI capillary. ---- */
+var TIC=null;
+function buildTIC(){
+  var n=240,arr=new Float32Array(n),i,j,f,g,c;
+  for(i=0;i<features.length;i++){
+    f=features[i]; c=(f.rt-RT0)/(RT1-RT0)*(n-1);
+    var w=f.kind==='id'?2.4:1.9, amp=Math.pow(f.inten/MAXINT,0.42);
+    for(j=Math.max(0,(c-10)|0);j<Math.min(n,c+10);j++){
+      g=(j-c)/w; arr[j]+=amp*Math.exp(-g*g*0.5);
+    }
+  }
+  var mx=0; for(i=0;i<n;i++) mx=Math.max(mx,arr[i]);
+  for(i=0;i<n;i++) arr[i]/=mx;
+  TIC=arr;
+}
+buildTIC();
+
+var ISO_COL=['#ff5f56','#4d9bff','#34d399'];
+var pbox={on:false,isoX:[0,0,0],isoY:[0,0,0]};
+
+function drawPanel(tr,t){
+  pbox.on=false;
+  if(V.w<440||V.h<340) return;
+  var PW=clamp(V.w*0.40,250,308), SC=PW/308, PH=174*SC;
+  var X=14, Y=72, W=PW, H=PH, i,j,x,y,p,f=tr.f;
+  var pr=f?tr.t/tr.dur:0;
+
+  ctx.setLineDash([]); ctx.globalCompositeOperation='source-over';
+  ctx.fillStyle='rgba(7,11,15,0.80)';
+  ctx.strokeStyle='rgba(255,255,255,0.10)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.rect(X+0.5,Y+0.5,W,H); ctx.fill(); ctx.stroke();
+
+  var F=function(px){return (px*SC).toFixed(1);};
+  txt('LIQUID PHASE',X+11,Y+14,'rgba(150,163,174,0.95)','600 '+F(9.5)+'px '+MONO,'left');
+  txt('ESI +',X+W-11,Y+14,'rgba(120,222,255,0.80)','600 '+F(9.5)+'px '+MONO,'right');
+  ctx.strokeStyle='rgba(255,255,255,0.08)';
+  ctx.beginPath(); ctx.moveTo(X+1,Y+23); ctx.lineTo(X+W,Y+23); ctx.stroke();
+
+  /* ---- MS1 isotope envelope ---- */
+  var mTop=Y+34, mBase=Y+34+64*SC, mL=X+14, mR=X+W-14;
+  txt(f?('MS1  ·  ISOTOPE ENVELOPE  ·  '+f.z+'+'):'MS1  ·  ISOTOPE ENVELOPE',
+      mL,mTop-5,'rgba(93,106,117,1)','600 '+F(8.5)+'px '+MONO,'left');
+  ctx.strokeStyle='rgba(255,255,255,0.18)';
+  ctx.beginPath(); ctx.moveTo(mL,mBase); ctx.lineTo(mR,mBase); ctx.stroke();
+
+  if(f){
+    var envOn=clamp((pr-0.10)/0.08,0,1), collapse=clamp((pr-0.34)/0.10,0,1);
+    var span=(mR-mL), bx0=mL+span*0.14, step=span*0.17;
+    for(i=0;i<3;i++){
+      x=bx0+step*i;
+      var full=(mBase-mTop)*f.iso[i].rel*0.96;
+      y=mBase-full*envOn*(1-collapse*0.80);
+      pbox.isoX[i]=x; pbox.isoY[i]=mBase-full*0.20;
+      ctx.strokeStyle=ISO_COL[i];
+      ctx.globalAlpha=envOn*(1-collapse*0.6);
+      ctx.lineWidth=2.2*SC;
+      ctx.beginPath(); ctx.moveTo(x,mBase); ctx.lineTo(x,y); ctx.stroke();
+      ctx.globalAlpha=1;
+      if(envOn>0.75&&collapse<0.35)
+        txt((f.mz+i*NEU/f.z).toFixed(2),x,y-8,
+          'rgba(150,163,174,'+(0.95*(1-collapse*2.8)).toFixed(2)+')',
+          '500 '+F(8)+'px '+MONO);
+    }
+    txt('Δ '+(NEU/f.z).toFixed(4)+'  m/z',mR,mBase-6,'rgba(70,82,92,1)',
+        '500 '+F(8)+'px '+MONO,'right');
+    pbox.on=true;
+  }
+
+  /* ---- LC chromatogram ---- */
+  var cTop=mBase+22*SC, cBase=Y+H-17*SC, cL=X+14, cR=X+W-14, n=TIC.length;
+  txt('LC GRADIENT  ·  40 min',cL,cTop-6,'rgba(93,106,117,1)','600 '+F(8.5)+'px '+MONO,'left');
+  ctx.strokeStyle='rgba(150,170,186,0.42)'; ctx.lineWidth=1;
+  ctx.beginPath();
+  for(i=0;i<n;i++){
+    x=cL+(cR-cL)*i/(n-1); y=cBase-(cBase-cTop)*TIC[i]*0.92;
+    if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+  ctx.strokeStyle='rgba(255,255,255,0.18)';
+  ctx.beginPath(); ctx.moveTo(cL,cBase); ctx.lineTo(cR,cBase); ctx.stroke();
+  for(i=0;i<RT_TICKS.length;i++){
+    x=cL+(cR-cL)*RT_TICKS[i]/RT1;
+    ctx.beginPath(); ctx.moveTo(x,cBase); ctx.lineTo(x,cBase+3); ctx.stroke();
+    txt(RT_TICKS[i],x,cBase+10,'rgba(93,106,117,1)','500 '+F(8)+'px '+MONO);
+  }
+  if(f){
+    var grow=1-Math.pow(1-clamp(pr/0.16,0,1),3);
+    var decay=pr>0.44?clamp(1-(pr-0.44)/0.12,0,1):1;
+    var hgt=(cBase-cTop)*0.90*grow*decay*Math.pow(f.inten/MAXINT,0.28);
+    var cx=cL+(cR-cL)*f.rt/RT1, wdt=(cR-cL)*0.016;
+    ctx.strokeStyle=f.kind==='id'?f.protein.color:'rgba(190,205,216,0.9)';
+    ctx.lineWidth=1.5; ctx.beginPath();
+    for(i=-16;i<=16;i++){
+      var g2=i/5.6;
+      x=cx+wdt*i/5.6; y=cBase-hgt*Math.exp(-g2*g2*0.5);
+      if(i===-16) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+    if(decay>0.5&&grow>0.6)
+      txt(f.rt.toFixed(1)+' min',cx,cBase-hgt-7,
+        'rgba(150,163,174,'+(0.9*decay).toFixed(2)+')','500 '+F(8)+'px '+MONO);
+  }
+
+  /* ---- capillary: panel to inlet ---- */
+  p=P(0,0,0);
+  if(p.ok&&p.x>X+W){
+    ctx.setLineDash([3,5]); ctx.lineDashOffset=-t*16;
+    ctx.strokeStyle='rgba(120,222,255,0.28)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(X+W,Y+H*0.52);
+    ctx.lineTo((X+W+p.x)/2,Y+H*0.52); ctx.lineTo(p.x,p.y); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+/* ======================================================================
+   7. ION CLOUD
+   ====================================================================== */
+var S={selProt:0, selPep:0, selFeat:null, hover:null, colorMode:'protein',
+       isoMode:'all', spread:'wide', zOn:{1:true,2:true,3:true,4:true},
+       showUnk:true, speed:1};
+var CHG_COL={1:'#ffb340',2:'#4cc8ff',3:'#3ddc97',4:'#c084fc'};
+var VIS=[];
+
+function dotColor(d){
+  if(d.f.kind==='unk') return null;
+  if(S.colorMode==='isotope') return ISO_COL[d.k];
+  if(S.colorMode==='charge')  return CHG_COL[d.f.z]||'#8da0ad';
+  return d.f.protein.color;
+}
+function dotVisible(d){
+  if(!d.landed) return false;
+  if(!S.zOn[d.f.z]) return false;
+  if(d.f.kind==='unk'&&!S.showUnk) return false;
+  if(S.isoMode==='mono'&&d.k>0) return false;
+  return true;
+}
+function dotRadius(d){
+  var base=2.0+6.4*Math.sqrt(d.inten/MAXINT);
+  if(d.f.kind==='unk') base*=0.78;
+  return clamp(base*d.pk/_kmid,1.0,12.5);
+}
+function projectDots(){
+  var i,d,p,n=0;
+  for(i=0;i<dots.length;i++){
+    d=dots[i]; d.vis=false;
+    if(!dotVisible(d)) continue;
+    p=P(wx(d),wy(d),wz(d));
+    if(!p.ok) continue;
+    d.sx=p.x; d.sy=p.y; d.sd=p.d; d.pk=p.k; d.vis=true;
+    VIS[n++]=d;
+  }
+  VIS.length=n;
+  VIS.sort(function(a,b){return b.sd-a.sd;});
+}
+function drawDots(t){
+  var i,d,c,r,al,sel=S.selFeat,prot=S.selProt;
+  var pulse=0.5+0.5*Math.sin(t*3.4);
+  /* unassigned: open rings, drawn first and kept quiet */
+  ctx.globalCompositeOperation='source-over';
+  ctx.lineWidth=0.9;
+  for(i=0;i<VIS.length;i++){
+    d=VIS[i]; if(d.f.kind!=='unk') continue;
+    r=dotRadius(d);
+    ctx.strokeStyle='rgba(205,220,232,'+(0.30*fade(d.sd)).toFixed(3)+')';
+    ctx.beginPath(); ctx.arc(d.sx,d.sy,r,0,6.2832); ctx.stroke();
+  }
+  /* identified: additive fills so overlapping clouds glow */
+  ctx.globalCompositeOperation='lighter';
+  for(i=0;i<VIS.length;i++){
+    d=VIS[i]; if(d.f.kind==='unk') continue;
+    c=dotColor(d); r=dotRadius(d);
+    al=(prot===null)?0.78:(d.f.pi===prot?0.95:0.14);
+    al*=clamp(fade(d.sd),0.4,1.1);
+    if(prot!==null&&d.f.pi===prot){
+      ctx.globalAlpha=al*0.16;
+      ctx.fillStyle=c; ctx.beginPath(); ctx.arc(d.sx,d.sy,r*2.4,0,6.2832); ctx.fill();
+    }
+    ctx.globalAlpha=clamp(al,0,1);
+    ctx.fillStyle=c; ctx.beginPath(); ctx.arc(d.sx,d.sy,r,0,6.2832); ctx.fill();
+  }
+  ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
+  /* selected peptide pulses */
+  if(sel){
+    for(i=0;i<3;i++){
+      d=sel.iso[i]; if(!d.vis) continue;
+      r=dotRadius(d);
+      ctx.strokeStyle='rgba(255,255,255,'+(0.30+0.5*pulse).toFixed(3)+')';
+      ctx.lineWidth=1.2;
+      ctx.beginPath(); ctx.arc(d.sx,d.sy,r+3.5+4.5*pulse,0,6.2832); ctx.stroke();
+      ctx.strokeStyle='rgba(255,255,255,0.9)'; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.arc(d.sx,d.sy,r+2,0,6.2832); ctx.stroke();
+    }
+  }
+  if(S.hover&&S.hover.vis){
+    d=S.hover; r=dotRadius(d);
+    ctx.strokeStyle='#fff'; ctx.lineWidth=1.2;
+    ctx.beginPath(); ctx.arc(d.sx,d.sy,r+4.5,0,6.2832); ctx.stroke();
+  }
+}
+
+/* ======================================================================
+   8. ANIMATION  -- acquisition sweep, featured trace, protein flash
+   ====================================================================== */
+function ease(p){return p<0.5?4*p*p*p:1-Math.pow(-2*p+2,3)/2;}
+function easeOut(p){return 1-Math.pow(1-p,3);}
+function lerp(a,b,p){return a+(b-a)*p;}
+
+var run={on:false,t:0,i:0,order:null}, flights=[], FLIGHT_T=1.2;
+function landFeature(f){var i;for(i=0;i<3;i++) f.iso[i].landed=true;}
+function startRun(){
+  var i;
+  for(i=0;i<dots.length;i++) dots[i].landed=false;
+  flights.length=0; run.on=true; run.t=0; run.i=0;
+  run.order=features.slice().sort(function(a,b){return a.rt-b.rt;});
+}
+function fillAll(){
+  var i; for(i=0;i<dots.length;i++) dots[i].landed=true;
+  flights.length=0; run.on=false;
+}
+function landedCount(){var i,n=0;for(i=0;i<dots.length;i++) if(dots[i].landed)n++;return n;}
+function updateRun(dt){
+  var i,stag;
+  if(!run.on) return;
+  run.t+=dt; stag=10.0/run.order.length;
+  while(run.i<run.order.length && run.t>run.i*stag){
+    flights.push({f:run.order[run.i],t:0}); run.i++;
+  }
+  for(i=flights.length-1;i>=0;i--){
+    flights[i].t+=dt;
+    if(flights[i].t>=FLIGHT_T){ landFeature(flights[i].f); flights.splice(i,1); }
+  }
+  if(run.i>=run.order.length&&!flights.length) run.on=false;
+}
+function drawFlights(){
+  var i,k,fl,f,p,q,d,c,o,r;
+  if(!flights.length) return;
+  o=P(0,0,0); if(!o.ok) return;
+  ctx.globalCompositeOperation='lighter';
+  for(i=0;i<flights.length;i++){
+    fl=flights[i]; f=fl.f; q=easeOut(clamp(fl.t/FLIGHT_T,0,1));
+    for(k=0;k<3;k++){
+      d=f.iso[k];
+      if(!S.zOn[f.z]) continue;
+      if(f.kind==='unk'&&!S.showUnk) continue;
+      if(S.isoMode==='mono'&&k>0) continue;
+      p=P(lerp(0,wx(d),q),lerp(0,wy(d),q),lerp(0,wz(d),q));
+      if(!p.ok) continue;
+      c=f.kind==='unk'?'rgba(170,196,214,':null;
+      ctx.strokeStyle=c?c+'0.16)':hexA(dotColor(d),0.22);
+      ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(o.x,o.y); ctx.lineTo(p.x,p.y); ctx.stroke();
+      r=clamp((1.6+4.6*Math.sqrt(d.inten/MAXINT))*p.k/_kmid,1,10);
+      ctx.globalAlpha=0.85;
+      ctx.fillStyle=f.kind==='unk'?'#aac4d6':dotColor(d);
+      ctx.beginPath(); ctx.arc(p.x,p.y,r,0,6.2832); ctx.fill();
+      ctx.globalAlpha=1;
+    }
+  }
+  ctx.globalCompositeOperation='source-over';
+}
+function hexA(hex,a){
+  if(!hex) return 'rgba(200,215,228,'+a+')';
+  var n=parseInt(hex.slice(1),16);
+  return 'rgba('+((n>>16)&255)+','+((n>>8)&255)+','+(n&255)+','+a+')';
+}
+
+/* ---- featured trace: one precursor, start to finish ---- */
+var trace={f:null,t:0,dur:6.8,queue:[],on:true};
+function traceSet(){
+  var out=[],i,j,p,pep;
+  var list=(S.selProt===null)?PROTEINS:[PROTEINS[S.selProt]];
+  for(i=0;i<list.length;i++){p=list[i];
+    for(j=0;j<p.peps.length;j++){pep=p.peps[j];
+      if(pep.feats&&pep.feats.length) out.push(pep.feats[0]);}}
+  out.sort(function(a,b){return a.rt-b.rt;});
+  return out;
+}
+function nextTrace(){
+  if(!trace.queue.length) trace.queue=traceSet();
+  trace.f=trace.queue.shift()||null; trace.t=0;
+}
+function resetTrace(){trace.queue=traceSet();nextTrace();}
+function updateTrace(dt){
+  if(!trace.on){trace.f=null;return;}
+  if(!trace.f){nextTrace();return;}
+  trace.t+=dt;
+  if(trace.t>trace.dur) nextTrace();
+}
+function drawTrace(t){
+  var f=trace.f,pr,k,d,q,p,col,inl,rP,rW,ox,oy,x,y,tgt,r;
+  if(!f) return;
+  pr=trace.t/trace.dur;
+  if(pr<0.34) return;
+  inl=P(0,0,0); if(!inl.ok) return;
+  ctx.setLineDash([4.5,5]); ctx.lineDashOffset=-t*26;
+  for(k=0;k<3;k++){
+    if(S.isoMode==='mono'&&k>0) continue;
+    d=f.iso[k]; col=ISO_COL[k];
+    rP=2.8+7.6*Math.sqrt(d.rel);                       /* radius on the flat panel */
+    rW=3.2+9.0*Math.sqrt(d.rel);                       /* radius once in the tube  */
+    ox=pbox.on?pbox.isoX[k]:inl.x; oy=pbox.on?pbox.isoY[k]:inl.y;
+    tgt={x:wx(d),y:wy(d),z:wz(d)};
+    if(pr<0.44){                       /* the peak closes into an ion packet */
+      q=clamp((pr-0.34)/0.10,0,1);
+      blobS(ox,oy,rP*q,col,1);
+    } else if(pr<0.62){                /* down the capillary, into the inlet */
+      q=ease(clamp((pr-0.44)/0.18,0,1));
+      x=lerp(ox,inl.x,q); y=lerp(oy,inl.y,q);
+      r=lerp(rP,clamp(rW*inl.k/_kmid,1,22),q);
+      dashS(ox,oy,x,y,hexA(col,0.5));
+      blobS(x,y,r,col,1);
+    } else if(pr<0.92){                /* gas phase: the angle its physics gives it */
+      q=ease(clamp((pr-0.62)/0.30,0,1));
+      p=P(lerp(0,tgt.x,q),lerp(0,tgt.y,q),lerp(0,tgt.z,q)); if(!p.ok) continue;
+      dashS(inl.x,inl.y,p.x,p.y,hexA(col,0.6));
+      blobS(p.x,p.y,clamp(rW*p.k/_kmid,1,22),col,1);
+    } else {                           /* arrival at its coordinate */
+      q=clamp((pr-0.92)/0.08,0,1);
+      p=P(tgt.x,tgt.y,tgt.z); if(!p.ok) continue;
+      dashS(inl.x,inl.y,p.x,p.y,hexA(col,0.6*(1-q)));
+      ctx.setLineDash([]);
+      ctx.strokeStyle=hexA(col,0.85*(1-q)); ctx.lineWidth=1.2;
+      ctx.beginPath(); ctx.arc(p.x,p.y,(4+26*q)*p.k/_kmid,0,6.2832); ctx.stroke();
+      ctx.setLineDash([4.5,5]);
+      blobS(p.x,p.y,clamp(rW*p.k/_kmid,1,22)*(1-q*0.6),col,1-q);
+    }
+  }
+  ctx.setLineDash([]);
+}
+function dashS(x1,y1,x2,y2,col){
+  ctx.strokeStyle=col; ctx.lineWidth=1.1;
+  ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+}
+function blobS(x,y,r,col,al){
+  r=clamp(r,0.5,22);
+  ctx.setLineDash([]);
+  ctx.globalCompositeOperation='lighter';
+  ctx.globalAlpha=clamp(al,0,1)*0.22; ctx.fillStyle=col;
+  ctx.beginPath(); ctx.arc(x,y,r*2.6,0,6.2832); ctx.fill();
+  ctx.globalAlpha=clamp(al,0,1); ctx.fillStyle=col;
+  ctx.beginPath(); ctx.arc(x,y,r,0,6.2832); ctx.fill();
+  ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
+  ctx.setLineDash([4.5,5]);
+}
+
+/* ---- protein flash: every ion of one protein, struck at once ---- */
+var flash={on:false,t:0,items:[]};
+function doFlash(){
+  var i,j,p,pep,r=rng(7919);
+  if(S.selProt===null) return;
+  flash.items.length=0; p=PROTEINS[S.selProt];
+  for(j=0;j<p.peps.length;j++){pep=p.peps[j];
+    if(pep.feats) for(i=0;i<pep.feats.length;i++)
+      flash.items.push({f:pep.feats[i],d:r()*0.40});}
+  flash.on=true; flash.t=0;
+}
+function updateFlash(dt){ if(!flash.on) return; flash.t+=dt; if(flash.t>1.9) flash.on=false; }
+function drawFlash(){
+  var i,k,it,f,q,p,d,o,col,fo;
+  if(!flash.on) return;
+  o=P(0,0,0); if(!o.ok) return;
+  ctx.globalCompositeOperation='lighter';
+  ctx.setLineDash([3,4]); ctx.lineDashOffset=-flash.t*60;
+  for(i=0;i<flash.items.length;i++){
+    it=flash.items[i]; f=it.f;
+    if(!S.zOn[f.z]) continue;
+    if(flash.t<it.d) continue;
+    q=clamp((flash.t-it.d)/0.45,0,1);
+    fo=clamp(1-(flash.t-it.d-0.75)/0.9,0,1);
+    col=f.protein.color;
+    for(k=0;k<(S.isoMode==='mono'?1:3);k++){
+      d=f.iso[k];
+      p=P(lerp(0,wx(d),easeOut(q)),lerp(0,wy(d),easeOut(q)),lerp(0,wz(d),easeOut(q)));
+      if(!p.ok) continue;
+      ctx.strokeStyle=hexA(col,0.5*fo);
+      ctx.lineWidth=1.1;
+      ctx.beginPath(); ctx.moveTo(o.x,o.y); ctx.lineTo(p.x,p.y); ctx.stroke();
+      if(q<1){
+        ctx.fillStyle=col; ctx.globalAlpha=0.9*fo;
+        ctx.beginPath(); ctx.arc(p.x,p.y,clamp(3.4*p.k/_kmid,1,8),0,6.2832); ctx.fill();
+        ctx.globalAlpha=1;
+      }
+    }
+  }
+  ctx.setLineDash([]); ctx.globalCompositeOperation='source-over';
+}
+
+/* ---- hover guides: drop lines onto each measurement axis ---- */
+function drawHoverGuides(){
+  var d=S.hover,f,p,a,b,lines,i,txtL,w,h,bx,by;
+  if(!d||!d.vis) return;
+  f=d.f;
+  var X=wx(d), Y=wy(d), Z=wz(d);
+  ctx.setLineDash([2,4]); ctx.strokeStyle='rgba(255,255,255,0.30)'; ctx.lineWidth=1;
+  var seg=[[X,Y,Z, X,-HALF,Z],[X,-HALF,Z, X,-HALF,HALF],[X,-HALF,Z, 0,-HALF,Z],
+           [X,Y,Z, 0,Y,-HALF]];
+  for(i=0;i<seg.length;i++){
+    a=P(seg[i][0],seg[i][1],seg[i][2]); b=P(seg[i][3],seg[i][4],seg[i][5]);
+    if(a.ok&&b.ok){ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();}
+  }
+  ctx.setLineDash([]);
+  /* readout card */
+  txtL=[];
+  if(f.kind==='id'){
+    txtL.push([f.protein.gene+'  '+f.seq, '#fff']);
+    txtL.push(['m/z '+d.mz.toFixed(4)+'   '+f.z+'+   iso '+f.k,'#96a3ae']);
+  } else {
+    txtL.push(['UNASSIGNED','#cdd8e0']);
+    txtL.push(['m/z '+d.mz.toFixed(4)+'   '+f.z+'+   iso '+f.k,'#96a3ae']);
+  }
+  txtL.push(['1/K₀ '+f.k0.toFixed(3)+'   RT '+f.rt.toFixed(2)+' min','#96a3ae']);
+  ctx.font='500 10.5px '+MONO; w=0;
+  for(i=0;i<txtL.length;i++) w=Math.max(w,ctx.measureText(txtL[i][0]).width);
+  w+=18; h=txtL.length*14+12;
+  bx=clamp(d.sx+16,6,V.w-w-6); by=clamp(d.sy-h-14,6,V.h-h-6);
+  ctx.fillStyle='rgba(6,10,14,0.92)'; ctx.strokeStyle='rgba(255,255,255,0.18)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.rect(bx,by,w,h); ctx.fill(); ctx.stroke();
+  for(i=0;i<txtL.length;i++)
+    txt(txtL[i][0],bx+9,by+13+i*14,txtL[i][1],(i===0?'600 10.5px ':'500 10.5px ')+MONO,'left');
+}
+
+/* ======================================================================
+   9. MS2 PANELS
+   ====================================================================== */
+var ION_B='#4d9bff', ION_Y='#ff5f56', ION_N='#46535e';
+function sizeSpec(c){
+  var r=c.getBoundingClientRect(), d=Math.min(2,window.devicePixelRatio||1);
+  c.width=Math.max(1,(r.width*d)|0); c.height=Math.max(1,(r.height*d)|0);
+  var g=c.getContext('2d'); g.setTransform(d,0,0,d,0,0);
+  return {g:g,w:Math.max(1,r.width),h:Math.max(1,r.height)};
+}
+function drawSpectrum(c,peaks,span,flip,matchedSet,noLabels){
+  var m=sizeSpec(c), g=m.g, W=m.w, H=m.h, i,p,x,bh,col,lab=[],tk;
+  var L=10,R=10,T=flip?15:11,B=flip?11:17;
+  var pw=W-L-R, ph=H-T-B, base=flip?T:(H-B), MZ_LO=100;
+  g.clearRect(0,0,W,H);
+  if(!peaks){ g.fillStyle='#46535e'; g.font='500 10.5px '+MONO;
+    g.textAlign='center'; g.textBaseline='middle';
+    g.fillText('no library match',W/2,H/2); return; }
+  function X(mz){return L+(clamp(mz,MZ_LO,span)-MZ_LO)/(span-MZ_LO)*pw;}
+  /* intensity gridlines */
+  g.strokeStyle='rgba(255,255,255,0.05)'; g.lineWidth=1;
+  for(i=1;i<=2;i++){ var yy=base+(flip?1:-1)*ph*(i/2);
+    g.beginPath(); g.moveTo(L,yy); g.lineTo(W-R,yy); g.stroke(); }
+  /* m/z axis */
+  g.strokeStyle='rgba(255,255,255,0.20)';
+  g.beginPath(); g.moveTo(L,base); g.lineTo(W-R,base); g.stroke();
+  g.fillStyle='#5d6a75'; g.font='500 9px '+MONO; g.textAlign='center';
+  g.textBaseline=flip?'top':'top';
+  for(tk=200;tk<=span;tk+=200){
+    x=X(tk);
+    g.strokeStyle='rgba(255,255,255,0.20)';
+    g.beginPath(); g.moveTo(x,base); g.lineTo(x,base+(flip?-3:3)); g.stroke();
+    if(noLabels) continue;
+    g.textBaseline='top'; g.fillText(tk,x,base+5);
+  }
+  /* peaks */
+  for(i=0;i<peaks.length;i++){
+    p=peaks[i]; x=X(p.mz); bh=p.int/100*ph;
+    if(!p.ion) col=ION_N;
+    else if(matchedSet&&!matchedSet[p.label]) col=ION_N;
+    else col=p.ion==='b'?ION_B:ION_Y;
+    g.strokeStyle=col; g.lineWidth=p.ion?1.4:1;
+    g.globalAlpha=p.ion?1:0.75;
+    g.beginPath(); g.moveTo(x,base); g.lineTo(x,base+(flip?bh:-bh)); g.stroke();
+    g.globalAlpha=1;
+    if(p.ion&&(!matchedSet||matchedSet[p.label])) lab.push({x:x,y:base+(flip?bh:-bh),p:p});
+  }
+  /* annotate the strongest assigned fragments without collisions */
+  lab.sort(function(a,b){return b.p.int-a.p.int;});
+  var used=[],ok;
+  g.font='600 9px '+MONO; g.textAlign='center';
+  g.textBaseline=flip?'top':'bottom';
+  for(i=0;i<lab.length&&used.length<8;i++){
+    ok=true;
+    for(var j=0;j<used.length;j++) if(Math.abs(used[j]-lab[i].x)<24){ok=false;break;}
+    if(!ok) continue;
+    used.push(lab[i].x);
+    g.fillStyle=lab[i].p.ion==='b'?ION_B:ION_Y;
+    g.fillText(lab[i].p.label,lab[i].x,lab[i].y+(flip?3:-3));
+  }
+}
+
+/* pseudo MS2 for an unassigned feature, so the panel still shows the scan */
+function unkSpectrum(f){
+  if(f._us) return f._us;
+  var r=rng(hash32('unk'+f.id)), peaks=[], i, span=Math.ceil((f.mz*f.z/100))*100;
+  span=clamp(span,600,2200);
+  for(i=0;i<46;i++) peaks.push({ion:null,label:null,mz:130+(span-170)*r(),
+    int:2+98*Math.pow(r(),2.3)});
+  f._us={exp:peaks,span:span};
+  return f._us;
+}
+
+/* ======================================================================
+   10. PANELS + CONTROLS
+   ====================================================================== */
+var $=function(id){return document.getElementById(id);};
+var elPlist=$('plist'), elRo=$('ro'), elHud=$('hud');
+var elSeq=$('rseq'), elSub=$('rsub'), elStats=$('stats'), elLad=$('ladder'),
+    elLadW=$('ladwrap'), elMA=$('mA'), elMB=$('mB');
+
+function statHTML(k,v,u){
+  return '<div class="stat"><div class="k">'+k+'</div><div class="v">'+v+
+         (u?' <small>'+u+'</small>':'')+'</div></div>';
+}
+function renderPanel(){
+  var f=S.selFeat;
+  if(!f){ elSeq.textContent='—'; elSub.innerHTML=''; elStats.innerHTML='';
+    elLadW.hidden=true; drawSpectrum($('specA'),null); drawSpectrum($('specB'),null,0,true);
+    return; }
+  var id=f.kind==='id', sp=id?f.spec:null;
+  elSeq.innerHTML=(id?f.seq:'Unassigned feature')+
+    '<span style="color:#5d6a75;font-weight:500"> '+f.z+'+</span>';
+  elSub.innerHTML = id
+    ? '<span class="pill" style="color:'+f.protein.color+';border-color:'+hexA(f.protein.color,0.5)+'">'+
+      f.protein.gene+'</span><span>'+f.protein.desc+'</span><span style="color:#46525c">'+
+      f.protein.acc+'</span>'
+    : '<span class="pill">no match</span><span>not in the spectral atlas</span>';
+  elStats.innerHTML=
+    statHTML('m/z obs',f.mz.toFixed(4))+
+    statHTML('Δ ppm',id?(sp.dppm>=0?'+':'')+sp.dppm.toFixed(1):'—')+
+    statHTML('charge',f.z+'+')+
+    statHTML('M<sub>r</sub>',f.mass.toFixed(3),'Da')+
+    statHTML('RT',f.rt.toFixed(2),'min')+
+    statHTML('1/K₀',f.k0.toFixed(3),'Vs/cm²')+
+    statHTML('CCS',f.ccs.toFixed(1),'Å²')+
+    statHTML('intensity',(f.inten/1e3).toFixed(0)+'k')+
+    statHTML('dot product',id?sp.score.toFixed(3):'—');
+
+  if(id){
+    var matched={},i,n=f.seq.length,bcov={},ycov={};
+    for(i=0;i<sp.exp.length;i++) if(sp.exp[i].label&&sp.exp[i].int>2.5) matched[sp.exp[i].label]=1;
+    for(i=1;i<n;i++){ if(matched['b'+i]) bcov[i]=1; if(matched['y'+i]) ycov[i]=1; }
+    var h='';
+    for(i=0;i<n;i++){
+      h+='<span class="aa">'+f.seq.charAt(i)+'</span>';
+      if(i<n-1){
+        var cl='brk'+(bcov[i+1]?' b':'')+(ycov[n-1-i]?' y':'');
+        h+='<span class="'+cl+'"></span>';
+      }
+    }
+    elLad.innerHTML=h; elLadW.hidden=false;
+    elMA.textContent=sp.matched+' / '+sp.nfrag+' fragments';
+    elMB.textContent=sp.lib.length+' atlas fragments';
+    drawSpectrum($('specA'),sp.exp,sp.span,false,null);
+    drawSpectrum($('specB'),sp.lib,sp.span,true,matched,true);
+  } else {
+    elLadW.hidden=true;
+    var us=unkSpectrum(f);
+    elMA.textContent='unassigned scan';
+    elMB.textContent='';
+    drawSpectrum($('specA'),us.exp,us.span,false,null);
+    drawSpectrum($('specB'),null,0,true);
+  }
+}
+
+function renderList(){
+  var h='',i,j,p,pep,sel;
+  h+='<button class="prot'+(S.selProt===null?' sel':'')+'" data-p="-1" style="color:#8da0ad">'+
+     '<span class="sw" style="background:transparent;box-shadow:inset 0 0 0 1px currentColor"></span>'+
+     '<span class="nm"><span class="gene">ALL</span>'+
+     '<span class="desc">every identification</span></span>'+
+     '<span class="cnt">'+idFeatureCount()+'</span></button>';
+  for(i=0;i<PROTEINS.length;i++){
+    p=PROTEINS[i]; sel=(S.selProt===i);
+    h+='<button class="prot'+(sel?' sel':'')+'" data-p="'+i+'" style="color:'+p.color+'">'+
+       '<span class="sw"></span><span class="nm">'+
+       '<span class="gene">'+p.gene+'</span>'+
+       '<span class="desc">'+p.desc+'</span></span>'+
+       '<span class="cnt">'+p.peps.length+'</span></button>';
+    if(sel){
+      h+='<div class="peps">';
+      for(j=0;j<p.peps.length;j++){
+        pep=p.peps[j];
+        if(!pep.feats||!pep.feats.length) continue;
+        var zs='',q; for(q=0;q<pep.feats.length;q++) zs+=(q?'/':'')+pep.feats[q].z+'+';
+        h+='<button class="pep'+(S.selPep===j?' sel':'')+'" data-p="'+i+'" data-q="'+j+'">'+
+           '<span class="sq">'+pep.seq+'</span>'+
+           '<span class="zc">'+zs+'</span>'+
+           '<span class="scr"><i style="width:'+(pep.score*100).toFixed(0)+'%"></i></span>'+
+           '</button>';
+      }
+      h+='</div>';
+    }
+  }
+  elPlist.innerHTML=h;
+}
+function idFeatureCount(){var i,n=0;for(i=0;i<features.length;i++) if(features[i].kind==='id')n++;return n;}
+
+elPlist.addEventListener('click',function(e){
+  var b=e.target.closest('button'); if(!b) return;
+  var pi=+b.getAttribute('data-p'), q=b.getAttribute('data-q');
+  if(b.classList.contains('pep')){
+    S.selPep=+q;
+    var pep=PROTEINS[pi].peps[+q];
+    if(pep.feats&&pep.feats.length){ S.selFeat=pep.feats[0]; renderPanel(); }
+    renderList();
+  } else {
+    S.selProt = (pi<0) ? null : (S.selProt===pi?null:pi);
+    S.selPep=0;
+    if(S.selProt!==null){
+      var p=PROTEINS[S.selProt],k;
+      for(k=0;k<p.peps.length;k++) if(p.peps[k].feats&&p.peps[k].feats.length){
+        S.selPep=k; S.selFeat=p.peps[k].feats[0]; break; }
+      doFlash();
+    }
+    renderList(); renderPanel(); resetTrace();
+  }
+});
+
+/* charge chips */
+(function(){
+  var box=$('zchips'),h='',z;
+  for(z=1;z<=4;z++) h+='<button class="chip on" data-z="'+z+'" style="color:'+CHG_COL[z]+
+    '"><span class="d"></span>'+z+'+</button>';
+  box.innerHTML=h;
+  box.addEventListener('click',function(e){
+    var b=e.target.closest('button'); if(!b) return;
+    var z=+b.getAttribute('data-z');
+    S.zOn[z]=!S.zOn[z];
+    b.classList.toggle('on',S.zOn[z]);
+    updateReadout();
+  });
+})();
+function seg(id,key,after){
+  var box=$(id);
+  box.addEventListener('click',function(e){
+    var b=e.target.closest('button'); if(!b) return;
+    var all=box.querySelectorAll('button'),i;
+    for(i=0;i<all.length;i++) all[i].classList.toggle('on',all[i]===b);
+    S[key]=b.getAttribute('data-m');
+    if(after) after();
+  });
+}
+seg('cmode','colorMode'); seg('imode','isoMode'); seg('sspread','spread');
+$('cUnk').addEventListener('click',function(){
+  S.showUnk=!S.showUnk; this.classList.toggle('on',S.showUnk); updateReadout();
+});
+$('bRun').addEventListener('click',function(){ startRun(); resetTrace(); });
+$('bFill').addEventListener('click',fillAll);
+$('bFlash').addEventListener('click',doFlash);
+$('bHome').addEventListener('click',function(){
+  cam.azBase=HOME.az; cam.el=HOME.el; cam.userZoom=1; cam.tx=250; cam.ty=0;
+});
+$('bSpeed').addEventListener('click',function(){
+  S.speed = S.speed===1?2:S.speed===2?4:1;
+  this.textContent=S.speed+'×';
+});
+
+function updateReadout(){
+  var i,n=0,shown=0;
+  for(i=0;i<dots.length;i++) if(dotVisible(dots[i])) shown++;
+  elRo.innerHTML='<b>'+idFeatureCount()+'</b> IDs &middot; <b>'+features.length+
+    '</b> precursors &middot; <b>'+shown+'</b> ions drawn';
+}
+
+/* ======================================================================
+   11. POINTER
+   ====================================================================== */
+var drag=null, lastUser=0;
+cam.azBase=HOME.az;
+viewEl.addEventListener('pointerdown',function(e){
+  drag={x:e.clientX,y:e.clientY,az:cam.azBase,el:cam.el,moved:0};
+  viewEl.setPointerCapture(e.pointerId); lastUser=performance.now()/1000;
+});
+viewEl.addEventListener('pointermove',function(e){
+  var r=cv.getBoundingClientRect();
+  if(drag){
+    var dx=e.clientX-drag.x, dy=e.clientY-drag.y;
+    drag.moved+=Math.abs(dx)+Math.abs(dy);
+    cam.azBase=drag.az-dx*0.0062;
+    cam.el=clamp(drag.el+dy*0.0050,-0.62,0.92);
+    lastUser=performance.now()/1000;
+    S.hover=null; return;
+  }
+  pick(e.clientX-r.left,e.clientY-r.top);
+});
+viewEl.addEventListener('pointerup',function(e){
+  if(drag&&drag.moved<5){
+    var r=cv.getBoundingClientRect();
+    pick(e.clientX-r.left,e.clientY-r.top);
+    if(S.hover){
+      S.selFeat=S.hover.f;
+      if(S.hover.f.kind==='id'){ S.selProt=S.hover.f.pi; S.selPep=S.hover.f.pepIdx;
+        renderList(); resetTrace(); }
+      renderPanel();
+    }
+  }
+  drag=null; lastUser=performance.now()/1000;
+});
+viewEl.addEventListener('pointerleave',function(){ S.hover=null; });
+viewEl.addEventListener('wheel',function(e){
+  e.preventDefault();
+  cam.userZoom=clamp(cam.userZoom*(e.deltaY<0?1.11:0.9),0.42,7);
+  lastUser=performance.now()/1000;
+},{passive:false});
+function pick(mx,my){
+  var i,d,best=null,bd=1e9,dx,dy,r2;
+  for(i=0;i<VIS.length;i++){
+    d=VIS[i]; dx=d.sx-mx; dy=d.sy-my; r2=dx*dx+dy*dy;
+    var reach=Math.max(7,dotRadius(d)+5);
+    if(r2<reach*reach && r2<bd){ bd=r2; best=d; }
+  }
+  S.hover=best;
+  cv.style.cursor=best?'pointer':'grab';
+}
+
+/* ======================================================================
+   12. LOOP
+   ====================================================================== */
+var reduced=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+var tPrev=0;
+function hud(){
+  var pct=Math.round(landedCount()/dots.length*100),h;
+  h='<div class="big">'+(run.on?('ACQUIRING  '+pct+'%'):'ACQUISITION COMPLETE')+'</div>';
+  if(trace.f) h+='<div class="trace">TRACE  '+(trace.f.kind==='id'
+      ? trace.f.protein.gene+' · '+trace.f.seq+' '+trace.f.z+'+'
+      : 'unassigned')+'</div>';
+  if(S.selProt!==null) h+='<div>SELECTED  '+PROTEINS[S.selProt].gene+'</div>';
+  elHud.innerHTML=h;
+}
+var hudAcc=0;
+function frame(ms){
+  var now=ms/1000, dt=tPrev?Math.min(0.05,now-tPrev):0.016; tPrev=now;
+  var sdt=dt*S.speed;
+  updateRun(sdt); updateTrace(sdt); updateFlash(sdt);
+  if(!reduced && now-lastUser>12)
+    cam.az=cam.azBase+0.10*Math.sin((now-lastUser-12)*0.10);
+  else cam.az=cam.azBase;
+  beginFrame();
+  ctx.clearRect(0,0,V.w,V.h);
+  drawTube(); drawFrame();
+  projectDots(); drawDots(now);
+  drawFlights(); drawFlash();
+  drawInlet(now); drawPanel(trace,now); drawTrace(now);
+  drawHoverGuides();
+  hudAcc+=dt; if(hudAcc>0.2){hudAcc=0;hud();updateReadout();}
+  requestAnimationFrame(frame);
+}
+
+/* ======================================================================
+   13. INIT
+   ====================================================================== */
+function boot(){
+  resize();
+  renderList();
+  var p=PROTEINS[0],k;
+  for(k=0;k<p.peps.length;k++) if(p.peps[k].feats&&p.peps[k].feats.length){
+    S.selPep=k; S.selFeat=p.peps[k].feats[0]; break; }
+  renderList(); renderPanel(); updateReadout();
+  trace.on=!reduced; resetTrace();
+  requestAnimationFrame(frame);
+  setTimeout(function(){ if(!reduced) doFlash(); },700);
+}
+if(window.ResizeObserver){
+  var ro1=new ResizeObserver(function(){ resize(); });
+  ro1.observe(viewEl);
+  var ro2=new ResizeObserver(function(){ renderPanel(); });
+  ro2.observe($('specs'));
+} 
+window.addEventListener('resize',function(){resize();renderPanel();});
+boot();
+})();
+</script>
+</body>
+</html>
