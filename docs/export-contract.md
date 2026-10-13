@@ -18,11 +18,45 @@ pipeline (python, on the box with the data)        viewer (published page)
 | `manifest.json` | one object | `schema/manifest.schema.json` |
 | `ions.jsonl` | one ion per line | `schema/ion_track.schema.json` |
 | `proteins.jsonl` | one (protein, sample) per line | `schema/protein_quant.schema.json` |
+| `spectra.jsonl` | one spectrum per line | `schema/spectrum.schema.json` |
+| `traces.jsonl` | one XIC per line, optional | `schema/trace.schema.json` |
+
+`manifest.tables` declares which of these were emitted, so a panel whose table is absent
+blanks with a reason instead of failing on a missing file.
 
 The viewer reads `manifest.json` **first** and decides from it which panels can honestly
 render — before loading a single ion.
 
-## 1. The forensic track
+## 1. Panel order: the familiarity ladder
+
+A new paradigm and an unfamiliar chart are two separate asks. Making them at once means
+the reader has to grant both before they can check either, and the usual outcome is that
+they grant neither.
+
+So every panel declares a `familiarity` in `schema/panels.json`:
+
+| Tier | What it is | Panels |
+|---|---|---|
+| `conventional` | reads without explanation | `msms_mirror`, `isotope_envelope`, `xic`, `intensity_vs_time`, `seqstart_vs_intensity`, `top3_percentile` |
+| `bridge` | familiar axes, unfamiliar emphasis | `drift_vs_time`, `mz_vs_drift`, `stoichiometry`, `flux` |
+| `novel` | asks for a new way of seeing | `ion_flight`, `ion_map_classifier`, `forensic_track` |
+
+**`msms_mirror` is the load-bearing panel.** Head-to-tail experimental against Atlas
+library, b ions blue, y ions red, unassigned grey, shared m/z axis, dot product on
+square-root intensities, ppm per matched peak. It is the view in which an identification
+lives or dies in every search engine's output. If geometry-based selection picked the
+right ion, that is where it shows — in a frame nobody has to be taught, and one that was
+not built to flatter the method.
+
+The argument runs in that order: the conventional panels agree first, and only then does
+the 3-D map get asked for, at which point it is explaining a result the reader has
+already accepted rather than asserting one. `tools/plan_panels.py` prints an advisory
+when a method puts a novel panel ahead of every conventional one.
+
+This is also why the contract carries `spectra.jsonl` at all. The first draft had no
+fragment data, which made the single most persuasive panel impossible to draw.
+
+## 2. The forensic track
 
 `ion_uid` is assigned at first detection and never reassigned:
 
@@ -52,7 +86,7 @@ Each event carries `at`, `tool`, `tool_version`, `params_hash` and an optional
 replay of `events[]` in order. Building the ledger is not extra work done for
 bookkeeping's sake — it is what the animation reads.
 
-## 2. Drift is not always drift
+## 3. Drift is not always drift
 
 `coord.drift_kind` is mandatory on every ion:
 
@@ -68,7 +102,7 @@ themselves announces the problem, which is why the gate is a required field and 
 runtime guess. Keyed the same way as `instrument_tolerance.py`'s
 `drift_tolerance(vendor, acquisition_method)`.
 
-## 3. Confidence tier is first class
+## 4. Confidence tier is first class
 
 | Tier | Gate | Decoy-controlled |
 |---|---|---|
@@ -82,7 +116,7 @@ reversed-tryptic decoys at **33–70%** elsewhere in this project. It is useful 
 and for exploration; it is not evidence, and `tier_policy.mix_tiers` defaults to `false`
 so a panel refuses rather than quietly blending it with a validated tier.
 
-## 4. Quant: Top3avg
+## 5. Quant: Top3avg
 
 Exactly as the method note defines it:
 
@@ -121,7 +155,7 @@ does.
 2,331–4,235, and in a densely packed stretch of the distribution (nine proteins inside a
 1.4% Top3avg span) a protein shifts several rank positions on measurement noise alone.
 
-## 5. Stoichiometry and flux
+## 6. Stoichiometry and flux
 
 - **Stoichiometry** ratios are computed **within one run only** (`require_same_run` is
   `const: true`). `min_peptides_both_sides` guards the 1-vs-3 peptide mismatch.
@@ -130,7 +164,7 @@ does.
   Top3avg tracked total sample signal only weakly (median r ≈ 0.23), so loading is not a
   universal explanation — but it is the first thing to rule out.
 
-## 6. Can an ion map tell HeLa from K562?
+## 7. Can an ion map tell HeLa from K562?
 
 Worth asking, and easy to answer wrongly. The defaults enforce the honest version:
 
@@ -148,7 +182,7 @@ diaPASEF), K562 only in `colorado-B` (Waters). Cell line is perfectly confounded
 both batch and vendor, so the panel refuses. Answering this question needs at least one
 cell line run on at least two instruments, or two batches of each class on one.
 
-## 7. The method lifecycle
+## 8. The method lifecycle
 
 `schema/method.schema.json` is the fillable form. Fill it, save it, point it at new
 samples, get the same panels back.
@@ -170,13 +204,13 @@ Per-panel requirements live in `schema/panels.json`, so a panel's needs are data
 code. `on_requirement_unmet` defaults to `blank_with_reason`: the panel stays visible and
 states why it is empty, so **a missing measurement is never mistaken for a zero**.
 
-## 8. Decimation is disclosed
+## 9. Decimation is disclosed
 
 "Complete library" can be millions of ions against a few thousand renderable marks.
 `manifest.decimation` records strategy, `kept`, `of` and `seed`, and
 `render.show_decimation_ratio` is `const: true`. A thinned plot states what it dropped.
 
-## 9. Open questions
+## 10. Open questions
 
 - `ion_uid` hashes `source_file`. Re-converting a raw file to a new path mints new uids.
   Either freeze the path at first ingest or hash a stable file id instead.

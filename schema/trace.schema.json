@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/bigtony1092-Nexo/Visuals/schema/trace.schema.json",
+  "title": "Trace record",
+  "description": "One record per line in traces.jsonl: the extracted ion chromatogram for one ion. Optional file. Emitted only for selected or annotated ions, since a trace per library ion would dwarf the rest of the export.",
+  "type": "object",
+  "required": ["ion_uid", "points"],
+  "additionalProperties": false,
+  "properties": {
+    "ion_uid": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+    "sample_id": { "type": ["string", "null"] },
+    "kind": { "enum": ["xic", "tic"], "default": "xic" },
+    "extraction_window_ppm": { "type": ["number", "null"] },
+    "points": {
+      "type": "array",
+      "minItems": 2,
+      "description": "[rt_min, intensity] pairs, rt ascending.",
+      "items": {
+        "type": "array",
+        "minItems": 2,
+        "maxItems": 2,
+        "items": { "type": "number" }
+      }
+    },
+    "apex_rt_min": { "type": ["number", "null"] },
+    "fwhm_min": { "type": ["number", "null"] }
+  }
+}

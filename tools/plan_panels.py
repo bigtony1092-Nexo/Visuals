@@ -72,6 +72,21 @@ def assess(panel, method, manifest):
                 )
                 reasons.append(f"excludes {s['sample_id']} ({s['acquisition_method']}): {why}")
 
+    # --- optional tables (spectra, traces) ---------------------------------
+    need_table = req.get("table")
+    if need_table and manifest:
+        tables = manifest.get("tables") or {}
+        if tables and not tables.get(need_table, need_table == "ions"):
+            status = BLANK
+            reasons.append(f"export has no {need_table}.jsonl ({need_table} not emitted)")
+        else:
+            want_kinds = req.get("spectrum_kinds") or []
+            have_kinds = set(tables.get("spectrum_kinds") or [])
+            missing = [k for k in want_kinds if k not in have_kinds]
+            if want_kinds and have_kinds and missing:
+                status = BLANK
+                reasons.append("spectra present but missing kind(s): " + ", ".join(missing))
+
     # --- confidence tier ---------------------------------------------------
     need_tier = req.get("min_tier")
     if need_tier:
@@ -189,24 +204,36 @@ def main():
         print("         Panels must not be labelled as concentration.")
         print()
 
-    print(f"{'panel':<24} {'status':<9} detail")
-    print("-" * 78)
+    print(f"{'panel':<24} {'familiarity':<13} {'status':<9} detail")
+    print("-" * 92)
     blanks = 0
     for sel in method.get("panels", []):
         pid = sel["id"]
         panel = catalog.get(pid)
         if panel is None:
-            print(f"{pid:<24} {'UNKNOWN':<9} not in schema/panels.json")
+            print(f"{pid:<24} {'-':<13} {'UNKNOWN':<9} not in schema/panels.json")
             blanks += 1
             continue
         status, reasons = assess(panel, method, manifest)
         if status == BLANK:
             blanks += 1
+        fam = panel.get("familiarity", "-")
         first = reasons[0] if reasons else ""
-        print(f"{pid:<24} {status:<9} {first}")
+        print(f"{pid:<24} {fam:<13} {status:<9} {first}")
         for extra in reasons[1:]:
-            print(f"{'':<24} {'':<9} {extra}")
+            print(f"{'':<24} {'':<13} {'':<9} {extra}")
     print()
+
+    # Ordering advisory: a novel panel ahead of every conventional one asks the
+    # reader to accept a new way of seeing before anything familiar has agreed.
+    fams = [catalog[sel["id"]].get("familiarity")
+            for sel in method.get("panels", []) if sel["id"] in catalog]
+    if "conventional" in fams and "novel" in fams:
+        if fams.index("novel") < fams.index("conventional"):
+            print("ordering  a novel panel precedes every conventional one.")
+            print("          Conventional views first let the selection be checked in a")
+            print("          familiar frame before the new one is asked for.")
+            print()
 
     if manifest and manifest.get("warnings"):
         print("export warnings")

@@ -4,85 +4,257 @@
   "title": "Export manifest",
   "description": "Written once per export. The viewer reads this FIRST and uses it to decide which panels can honestly render before loading a single ion.",
   "type": "object",
-  "required": ["export_id", "created_at", "method_id", "samples", "counts"],
+  "required": [
+    "export_id",
+    "created_at",
+    "method_id",
+    "samples",
+    "counts"
+  ],
   "additionalProperties": false,
   "properties": {
-    "export_id": { "type": "string" },
-    "created_at": { "type": "string", "format": "date-time" },
-    "method_id": { "type": "string", "description": "The method this export was produced from." },
-    "method_version": { "type": ["string", "null"] },
-
+    "export_id": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "method_id": {
+      "type": "string",
+      "description": "The method this export was produced from."
+    },
+    "method_version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "sources": {
       "type": "object",
       "description": "Recorded for audit. Resolved by the pipeline on the machine that holds the data; the viewer never opens these.",
       "additionalProperties": false,
       "properties": {
-        "atlas": { "type": ["string", "null"] },
-        "atlas_version": { "type": ["string", "null"] },
-        "consensus_db": { "type": ["string", "null"] },
-        "consensus_db_rev": { "type": ["string", "null"] },
-        "raw_dir": { "type": ["string", "null"] }
+        "atlas": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "atlas_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "consensus_db": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "consensus_db_rev": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "raw_dir": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     },
-
     "pipeline": {
       "type": "object",
       "description": "Tool versions, so a chart can be traced to the code that made it.",
-      "additionalProperties": { "type": "string" }
+      "additionalProperties": {
+        "type": "string"
+      }
     },
-
     "samples": {
       "type": "array",
       "minItems": 1,
       "description": "One entry per sample in the export. drift_kind here is what gates the drift panels.",
       "items": {
         "type": "object",
-        "required": ["sample_id", "vendor", "acquisition_method", "drift_kind"],
+        "required": [
+          "sample_id",
+          "vendor",
+          "acquisition_method",
+          "drift_kind"
+        ],
         "additionalProperties": false,
         "properties": {
-          "sample_id": { "type": "string" },
-          "vendor": { "type": "string" },
-          "acquisition_method": { "type": "string" },
-          "drift_kind": { "enum": ["ion_mobility", "quad_window", "absent"] },
-          "has_ims": { "type": "boolean" },
-          "search_engine": { "type": ["string", "null"] },
-          "batch": { "type": ["string", "null"] },
-          "sample_class": { "type": ["string", "null"] },
-          "role": { "enum": ["target", "control", "library", "blank"], "default": "library" },
-          "n_proteins": { "type": ["integer", "null"], "description": "Total proteins placed. Varies widely (2331-4235 in the Amherst cohort), which is why percentile beats raw rank." },
-          "total_signal": { "type": ["number", "null"], "description": "Loading proxy." }
+          "sample_id": {
+            "type": "string"
+          },
+          "vendor": {
+            "type": "string"
+          },
+          "acquisition_method": {
+            "type": "string"
+          },
+          "drift_kind": {
+            "enum": [
+              "ion_mobility",
+              "quad_window",
+              "absent"
+            ]
+          },
+          "has_ims": {
+            "type": "boolean"
+          },
+          "search_engine": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "batch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sample_class": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "role": {
+            "enum": [
+              "target",
+              "control",
+              "library",
+              "blank"
+            ],
+            "default": "library"
+          },
+          "n_proteins": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Total proteins placed. Varies widely (2331-4235 in the Amherst cohort), which is why percentile beats raw rank."
+          },
+          "total_signal": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Loading proxy."
+          }
         }
       }
     },
-
     "counts": {
       "type": "object",
-      "required": ["ions_total", "ions_exported"],
+      "required": [
+        "ions_total",
+        "ions_exported"
+      ],
       "additionalProperties": false,
       "properties": {
-        "ions_total": { "type": "integer", "minimum": 0, "description": "Ions that matched the method's selection BEFORE decimation." },
-        "ions_exported": { "type": "integer", "minimum": 0, "description": "Ions actually written to ions.jsonl." },
-        "by_tier": { "type": "object", "additionalProperties": { "type": "integer" } }
+        "ions_total": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Ions that matched the method's selection BEFORE decimation."
+        },
+        "ions_exported": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Ions actually written to ions.jsonl."
+        },
+        "by_tier": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer"
+          }
+        }
       }
     },
-
     "decimation": {
-      "type": ["object", "null"],
+      "type": [
+        "object",
+        "null"
+      ],
       "description": "Null when nothing was dropped. When not null the viewer MUST display the ratio on screen; a silently thinned plot is a lie about ion count.",
-      "required": ["strategy", "kept", "of"],
+      "required": [
+        "strategy",
+        "kept",
+        "of"
+      ],
       "additionalProperties": false,
       "properties": {
-        "strategy": { "enum": ["none", "top_intensity", "uniform_random", "grid_density", "per_sample_cap"] },
-        "kept": { "type": "integer" },
-        "of": { "type": "integer" },
-        "seed": { "type": ["integer", "null"] }
+        "strategy": {
+          "enum": [
+            "none",
+            "top_intensity",
+            "uniform_random",
+            "grid_density",
+            "per_sample_cap"
+          ]
+        },
+        "kept": {
+          "type": "integer"
+        },
+        "of": {
+          "type": "integer"
+        },
+        "seed": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
       }
     },
-
     "warnings": {
       "type": "array",
       "description": "Carried from the pipeline into the viewer so caveats travel with the data rather than living in someone's memory.",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
+    },
+    "tables": {
+      "type": "object",
+      "description": "Which files this export contains. The viewer and tools/plan_panels.py read this to blank a panel whose table was never emitted, rather than failing on a missing file.",
+      "additionalProperties": false,
+      "properties": {
+        "ions": {
+          "const": true,
+          "description": "Always present."
+        },
+        "proteins": {
+          "type": "boolean",
+          "default": true
+        },
+        "spectra": {
+          "type": "boolean",
+          "default": false,
+          "description": "spectra.jsonl \u2014 required by the MS/MS mirror and isotope envelope panels."
+        },
+        "traces": {
+          "type": "boolean",
+          "default": false,
+          "description": "traces.jsonl \u2014 required by the XIC panel. Large; emit for selected/annotated ions only."
+        },
+        "spectrum_kinds": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "ms2_experimental",
+              "ms2_library",
+              "ms1_isotope"
+            ]
+          },
+          "default": []
+        }
+      }
     }
   }
 }

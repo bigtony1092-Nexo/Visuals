@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/bigtony1092-Nexo/Visuals/schema/spectrum.schema.json",
+  "title": "Spectrum record",
+  "description": "One record per line in spectra.jsonl, keyed to an ion by ion_uid. Kept out of ions.jsonl because peak arrays would multiply its size. This is what the conventional panels read: the MS/MS mirror and the MS1 isotope envelope.",
+  "type": "object",
+  "required": ["ion_uid", "kind", "peaks"],
+  "additionalProperties": false,
+  "properties": {
+    "ion_uid": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
+    "sample_id": { "type": ["string", "null"] },
+    "kind": {
+      "enum": ["ms2_experimental", "ms2_library", "ms1_isotope"],
+      "description": "A mirror panel needs ms2_experimental AND ms2_library for the same ion_uid."
+    },
+    "precursor_mz": { "type": ["number", "null"] },
+    "charge": { "type": ["integer", "null"] },
+    "scan_id": { "type": ["string", "null"] },
+    "collision_energy": { "type": ["number", "null"] },
+
+    "peaks": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Sorted by mz ascending. intensity is relative to this spectrum's base peak = 100.",
+      "items": {
+        "type": "object",
+        "required": ["mz", "intensity"],
+        "additionalProperties": false,
+        "properties": {
+          "mz": { "type": "number", "exclusiveMinimum": 0 },
+          "intensity": { "type": "number", "minimum": 0 },
+          "ion": { "type": ["string", "null"], "description": "b | y | a | c | z | precursor | null. Null = unassigned, drawn grey." },
+          "idx": { "type": ["integer", "null"], "description": "Fragment index, e.g. 7 for y7." },
+          "charge": { "type": ["integer", "null"] },
+          "ppm_error": { "type": ["number", "null"] }
+        }
+      }
+    },
+
+    "match": {
+      "type": ["object", "null"],
+      "description": "Present on ms2_experimental when it has been scored against a library spectrum.",
+      "additionalProperties": false,
+      "properties": {
+        "dot_product": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "basis": { "enum": ["sqrt_intensity", "linear_intensity"], "default": "sqrt_intensity" },
+        "n_matched": { "type": ["integer", "null"] },
+        "n_library": { "type": ["integer", "null"] },
+        "library_source": { "type": ["string", "null"], "description": "Atlas version the library spectrum came from." }
+      }
+    }
+  }
+}

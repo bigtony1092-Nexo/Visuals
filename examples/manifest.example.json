@@ -16,18 +16,98 @@
     "populate_consensus_combined": "2.1.0"
   },
   "samples": [
-    { "sample_id": "CH163", "vendor": "Bruker", "acquisition_method": "diaPASEF", "drift_kind": "ion_mobility", "has_ims": true, "search_engine": "DIA-NN", "batch": "amherst-A", "sample_class": "HeLa", "role": "target", "n_proteins": 3664, "total_signal": 1.82e10 },
-    { "sample_id": "CH164", "vendor": "Bruker", "acquisition_method": "diaPASEF", "drift_kind": "ion_mobility", "has_ims": true, "search_engine": "DIA-NN", "batch": "amherst-A", "sample_class": "HeLa", "role": "target", "n_proteins": 3512, "total_signal": 1.61e10 },
-    { "sample_id": "CO021", "vendor": "Waters", "acquisition_method": "SONAR", "drift_kind": "quad_window", "has_ims": false, "search_engine": "DIA-NN", "batch": "colorado-B", "sample_class": "K562", "role": "target", "n_proteins": 2331, "total_signal": 7.4e9 },
-    { "sample_id": "CO022", "vendor": "Waters", "acquisition_method": "HDMSE", "drift_kind": "ion_mobility", "has_ims": true, "search_engine": "DIA-NN", "batch": "colorado-B", "sample_class": "K562", "role": "target", "n_proteins": 2894, "total_signal": 9.1e9 },
-    { "sample_id": "QC04", "vendor": "Thermo", "acquisition_method": "DDA", "drift_kind": "absent", "has_ims": false, "search_engine": "MSFragger", "batch": "qc", "sample_class": null, "role": "control", "n_proteins": 4235, "total_signal": 2.2e10 }
+    {
+      "sample_id": "CH163",
+      "vendor": "Bruker",
+      "acquisition_method": "diaPASEF",
+      "drift_kind": "ion_mobility",
+      "has_ims": true,
+      "search_engine": "DIA-NN",
+      "batch": "amherst-A",
+      "sample_class": "HeLa",
+      "role": "target",
+      "n_proteins": 3664,
+      "total_signal": 18200000000.0
+    },
+    {
+      "sample_id": "CH164",
+      "vendor": "Bruker",
+      "acquisition_method": "diaPASEF",
+      "drift_kind": "ion_mobility",
+      "has_ims": true,
+      "search_engine": "DIA-NN",
+      "batch": "amherst-A",
+      "sample_class": "HeLa",
+      "role": "target",
+      "n_proteins": 3512,
+      "total_signal": 16100000000.0
+    },
+    {
+      "sample_id": "CO021",
+      "vendor": "Waters",
+      "acquisition_method": "SONAR",
+      "drift_kind": "quad_window",
+      "has_ims": false,
+      "search_engine": "DIA-NN",
+      "batch": "colorado-B",
+      "sample_class": "K562",
+      "role": "target",
+      "n_proteins": 2331,
+      "total_signal": 7400000000.0
+    },
+    {
+      "sample_id": "CO022",
+      "vendor": "Waters",
+      "acquisition_method": "HDMSE",
+      "drift_kind": "ion_mobility",
+      "has_ims": true,
+      "search_engine": "DIA-NN",
+      "batch": "colorado-B",
+      "sample_class": "K562",
+      "role": "target",
+      "n_proteins": 2894,
+      "total_signal": 9100000000.0
+    },
+    {
+      "sample_id": "QC04",
+      "vendor": "Thermo",
+      "acquisition_method": "DDA",
+      "drift_kind": "absent",
+      "has_ims": false,
+      "search_engine": "MSFragger",
+      "batch": "qc",
+      "sample_class": null,
+      "role": "control",
+      "n_proteins": 4235,
+      "total_signal": 22000000000.0
+    }
   ],
+  "tables": {
+    "ions": true,
+    "proteins": true,
+    "spectra": true,
+    "traces": true,
+    "spectrum_kinds": [
+      "ms2_experimental",
+      "ms2_library",
+      "ms1_isotope"
+    ]
+  },
   "counts": {
     "ions_total": 2140883,
     "ions_exported": 60000,
-    "by_tier": { "bare_proximity": 0, "pass2_confirmed": 58211, "atlas_consensus": 1789 }
+    "by_tier": {
+      "bare_proximity": 0,
+      "pass2_confirmed": 58211,
+      "atlas_consensus": 1789
+    }
   },
-  "decimation": { "strategy": "grid_density", "kept": 60000, "of": 2140883, "seed": 7 },
+  "decimation": {
+    "strategy": "grid_density",
+    "kept": 60000,
+    "of": 2140883,
+    "seed": 7
+  },
   "warnings": [
     "CO021 is SONAR: drift present but not ion mobility. Drift panels exclude it.",
     "QC04 is DDA: drift absent. Drift panels blank for this sample.",

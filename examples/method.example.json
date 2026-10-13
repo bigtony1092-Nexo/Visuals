@@ -1,30 +1,42 @@
 {
   "method_id": "aria-visuals-001",
-  "name": "MYD88 vs controls — four panel starter",
+  "name": "MYD88 vs controls \u2014 conventional first",
   "version": "1.0.0",
   "created_by": "bigtony1092",
   "created_at": "2026-10-13T19:00:00Z",
-  "notes": "The three starter projections plus the SeqStart page. Pass2 tier only.",
-
+  "notes": "Ordered up the familiarity ladder: the MS/MS mirror and the other views practitioners already read come first, so the geometry-based selection is checked in a familiar frame before the 3-D map is asked for.",
   "inputs": {
     "atlas": "F:/ARiA/atlas/current",
     "consensus_db": "F:/ARiA/consensus/consensus_combined.db",
     "raw_dir": "F:/ARiA/raw/amherst_bruker",
     "detect_vendor_from_files": true,
     "manual_overrides": [
-      { "match": "*/sonar/*", "set": { "drift_kind": "quad_window" } }
+      {
+        "match": "*/sonar/*",
+        "set": {
+          "drift_kind": "quad_window"
+        }
+      }
     ]
   },
-
   "selection": {
     "mode": "targets_and_controls",
-    "targets": ["Q99836"],
-    "controls": ["P04406", "P78527"],
-    "library_filter": { "include_unassigned": true }
+    "targets": [
+      "Q99836"
+    ],
+    "controls": [
+      "P04406",
+      "P78527"
+    ],
+    "library_filter": {
+      "include_unassigned": true
+    }
   },
-
-  "tier_policy": { "min_tier": "pass2_confirmed", "mix_tiers": false, "label_tier_on_panels": true },
-
+  "tier_policy": {
+    "min_tier": "pass2_confirmed",
+    "mix_tiers": false,
+    "label_tier_on_panels": true
+  },
   "quant": {
     "metric": "top3avg",
     "intensity_field": "matched_intensity",
@@ -32,19 +44,28 @@
     "top_n": 3,
     "min_peptides": 1,
     "pad_missing_peptides": false,
-    "report": ["raw", "percentile"],
-    "normalization": ["median_scaled", "within_protein_max"],
+    "report": [
+      "raw",
+      "percentile"
+    ],
+    "normalization": [
+      "median_scaled",
+      "within_protein_max"
+    ],
     "reference_protein": "P04406",
     "absolute_standard": null
   },
-
   "stoichiometry": {
-    "pairs": [["Q99836", "P04406"]],
+    "pairs": [
+      [
+        "Q99836",
+        "P04406"
+      ]
+    ],
     "basis": "top3avg",
     "require_same_run": true,
     "min_peptides_both_sides": 2
   },
-
   "flux": {
     "group_by": "sample",
     "order_by": "sample_id",
@@ -52,37 +73,90 @@
     "normalization": "median_scaled",
     "show_loading_proxy": true
   },
-
   "classification": {
     "enabled": true,
     "label_field": "provenance.sample_class",
     "features": "ion_map_grid",
-    "grid": { "mz_bins": 40, "rt_bins": 40, "drift_bins": null, "value": "log_intensity_sum" },
+    "grid": {
+      "mz_bins": 40,
+      "rt_bins": 40,
+      "drift_bins": null,
+      "value": "log_intensity_sum"
+    },
     "holdout": "batch",
     "within_stratum_only": true,
     "report_confusion": true,
     "min_samples_per_class": 3
   },
-
   "panels": [
-    { "id": "intensity_vs_time", "scales": { "y": "log" }, "color_by": "sample" },
-    { "id": "drift_vs_time", "color_by": "charge", "on_requirement_unmet": "blank_with_reason" },
-    { "id": "mz_vs_drift", "color_by": "charge", "on_requirement_unmet": "blank_with_reason" },
-    { "id": "seqstart_vs_intensity", "scales": { "y": "log" }, "color_by": "sample", "normalization": "absolute_log10" },
-    { "id": "ion_flight", "color_by": "protein" },
-    { "id": "top3_percentile", "color_by": "protein" },
-    { "id": "stoichiometry" },
-    { "id": "flux", "normalization": "median_scaled" },
-    { "id": "ion_map_classifier", "split_by": "vendor" },
-    { "id": "forensic_track" }
+    {
+      "id": "msms_mirror"
+    },
+    {
+      "id": "isotope_envelope"
+    },
+    {
+      "id": "xic"
+    },
+    {
+      "id": "intensity_vs_time",
+      "scales": {
+        "y": "log"
+      },
+      "color_by": "sample"
+    },
+    {
+      "id": "seqstart_vs_intensity",
+      "scales": {
+        "y": "log"
+      },
+      "color_by": "sample",
+      "normalization": "absolute_log10"
+    },
+    {
+      "id": "top3_percentile",
+      "color_by": "protein"
+    },
+    {
+      "id": "drift_vs_time",
+      "color_by": "charge",
+      "on_requirement_unmet": "blank_with_reason"
+    },
+    {
+      "id": "mz_vs_drift",
+      "color_by": "charge",
+      "on_requirement_unmet": "blank_with_reason"
+    },
+    {
+      "id": "stoichiometry"
+    },
+    {
+      "id": "flux",
+      "normalization": "median_scaled"
+    },
+    {
+      "id": "ion_flight",
+      "color_by": "protein"
+    },
+    {
+      "id": "ion_map_classifier",
+      "split_by": "vendor"
+    },
+    {
+      "id": "forensic_track"
+    }
   ],
-
   "render": {
     "theme": "dark",
     "max_points": 60000,
     "decimation": "grid_density",
     "decimation_seed": 7,
     "show_decimation_ratio": true,
-    "animate": { "enabled": true, "mode": "trace_one", "seconds_per_ion": 6.8, "speed": 1 }
+    "animate": {
+      "enabled": true,
+      "mode": "trace_one",
+      "seconds_per_ion": 6.8,
+      "speed": 1
+    }
   }
 }

@@ -14,6 +14,8 @@ schema/panels.json               panel catalog; each panel declares what it requ
 schema/manifest.schema.json      per-export manifest (samples, counts, decimation)
 schema/ion_track.schema.json     one ion, with its append-only event ledger
 schema/protein_quant.schema.json Top3avg per (protein, sample)
+schema/spectrum.schema.json      MS/MS and MS1 isotope peaks (the conventional panels)
+schema/trace.schema.json         extracted ion chromatograms (optional)
 examples/                        a filled method and a matching export
 tools/plan_panels.py             says which panels will render, and why not
 ```
@@ -27,6 +29,13 @@ python3 tools/plan_panels.py examples/method.example.json examples/manifest.exam
 Reports per panel: `RENDER`, `PARTIAL` (with the samples it excludes and why) or `BLANK`
 (with the reason). Needs `jsonschema` for method validation; the feasibility report runs
 without it.
+
+## Panel order
+
+Panels declare a `familiarity`: `conventional`, `bridge`, `novel`. Methods are ordered up
+that ladder on purpose — the MS/MS mirror and the other views practitioners already read
+come first, so geometry-based selection gets checked in a familiar frame before the 3-D
+map is asked for. `plan_panels.py` flags a method that leads with a novel panel.
 
 ## Two rules worth knowing before reading the schemas
 
