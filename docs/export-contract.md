@@ -86,6 +86,20 @@ Each event carries `at`, `tool`, `tool_version`, `params_hash` and an optional
 replay of `events[]` in order. Building the ledger is not extra work done for
 bookkeeping's sake — it is what the animation reads.
 
+### Isotopes belong to their precursor
+
+An isotope is never an ion record of its own. The M+1 and M+2 peaks share the
+precursor's RT, drift, charge, identity and `ion_uid`; only m/z and intensity differ.
+Separate records would triple `ions.jsonl`, mint `ion_uid`s for things that were never
+detected independently, and let one precursor's isotopes land in different clusters.
+
+So the envelope rides on the precursor as `isotopes[]`: one entry per peak with `k`
+(0 = monoisotopic, at `coord.mz`), observed `mz`, and `rel` (most intense isotope = 100).
+`observed: false` marks an averagine-modelled envelope, which a panel must label as
+modelled. The raw MS1 scan the envelope was read from, interferences included, stays in
+`spectra.jsonl` as the `ms1_isotope` spectrum: `isotopes[]` is the assignment, the
+spectrum is the evidence.
+
 ## 3. Drift is not always drift
 
 `coord.drift_kind` is mandatory on every ion:
@@ -267,7 +281,5 @@ states why it is empty, so **a missing measurement is never mistaken for a zero*
   Either freeze the path at first ingest or hash a stable file id instead.
 - `params_hash` needs a home: the parameter sets it points at must be stored somewhere
   resolvable, or the hash is an audit dead end.
-- Isotopes are not yet in the contract. The flight animation draws three per precursor;
-  decide whether an isotope is its own ion record or a child of one.
 - `atlas_consensus` needs a definition sharp enough to compute — how many samples, at
   what agreement.
