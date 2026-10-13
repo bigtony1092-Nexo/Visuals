@@ -275,7 +275,7 @@ states why it is empty, so **a missing measurement is never mistaken for a zero*
 `manifest.decimation` records strategy, `kept`, `of` and `seed`, and
 `render.show_decimation_ratio` is `const: true`. A thinned plot states what it dropped.
 
-## 12. Depletion and interference (proposed, not yet implemented)
+## 11. Depletion and interference (proposed, not yet implemented)
 
 Nothing in this section exists in the pipeline, the schemas or the viewers yet. It records
 the method so it is built on purpose rather than rediscovered.
@@ -337,7 +337,7 @@ then is the product ions:**
   (`n_consecutive_scans` already says how many scans there are). This is the one input
   nothing exports today.
 
-## 11. Open questions
+## 12. Open questions
 
 - `ion_uid` hashes `source_file`. Re-converting a raw file to a new path mints new uids.
   Either freeze the path at first ingest or hash a stable file id instead.
