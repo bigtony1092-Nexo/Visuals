@@ -1,0 +1,88 @@
+{
+  "v": 1,
+  "description": "The pick-list. Each panel declares what it REQUIRES, so a method can be checked for feasibility before any data is read and the user is told up front which panels will be blank and why.",
+  "panels": [
+    {
+      "id": "intensity_vs_time",
+      "title": "Intensity vs retention time",
+      "axes": { "x": "coord.rt_min", "y": "intensity.matched_intensity" },
+      "default_scales": { "y": "log" },
+      "requires": { "fields": ["coord.rt_min", "intensity.matched_intensity"] },
+      "notes": "Always valid. Log y: intensity spans five orders of magnitude in real cohorts."
+    },
+    {
+      "id": "drift_vs_time",
+      "title": "Drift vs retention time",
+      "axes": { "x": "coord.rt_min", "y": "coord.drift" },
+      "requires": { "fields": ["coord.rt_min", "coord.drift"], "drift_kind": ["ion_mobility"] },
+      "notes": "Blank for DDA (drift null). EXCLUDED for SONAR: its drift column is a quadrupole window position, not a drift time."
+    },
+    {
+      "id": "mz_vs_drift",
+      "title": "m/z vs drift",
+      "axes": { "x": "coord.drift", "y": "coord.mz" },
+      "default_mark": "density",
+      "requires": { "fields": ["coord.mz", "coord.drift"], "drift_kind": ["ion_mobility"] },
+      "notes": "Density/hexbin, not scatter: this is where ion count bites hardest."
+    },
+    {
+      "id": "seqstart_vs_intensity",
+      "title": "SeqStart vs intensity",
+      "axes": { "x": "annotation.seq_start", "y": "intensity.summed_precursor_intensity" },
+      "requires": {
+        "fields": ["annotation.seq_start", "annotation.peptide_sequence", "intensity.summed_precursor_intensity"],
+        "min_tier": "pass2_confirmed",
+        "cluster_rank": 1
+      },
+      "notes": "Primary cluster only (cluster_rank 1); pooling clusters corrupts the pattern. Y is per-protein choice: within-protein max for stable proteins, absolute log where a real anomaly must stay visible."
+    },
+    {
+      "id": "ion_flight",
+      "title": "Ion flight (animated)",
+      "axes": { "x": "coord.mz", "y": "coord.one_over_k0", "z": "coord.rt_min" },
+      "requires": { "fields": ["coord.mz", "coord.rt_min", "coord.charge"] },
+      "degrades_without": { "drift_kind": ["ion_mobility"], "to": "2-D: m/z against RT, mobility axis collapsed" },
+      "notes": "Replay of the event track. Honours decimation and shows the kept/total ratio."
+    },
+    {
+      "id": "top3_percentile",
+      "title": "Top3avg percentile across samples",
+      "table": "proteins",
+      "requires": { "table": "proteins", "fields": ["top3avg", "percentile"], "min_samples": 2 },
+      "notes": "Percentile, not rank. A densely packed distribution moves a protein several rank positions on measurement noise alone."
+    },
+    {
+      "id": "stoichiometry",
+      "title": "Protein stoichiometry ratios",
+      "table": "proteins",
+      "requires": { "table": "proteins", "fields": ["top3avg", "n_peptides_used"], "same_run": true, "pairs": true },
+      "notes": "Ratios only within one run. Carries n_peptides_used on both sides: a 1-peptide vs 3-peptide ratio is not the same measurement."
+    },
+    {
+      "id": "flux",
+      "title": "Flux across runs",
+      "table": "proteins",
+      "requires": { "table": "proteins", "fields": ["normalized"], "min_samples": 2 },
+      "notes": "Needs a stated normalization. Raw Top3avg across runs mixes biology with loading."
+    },
+    {
+      "id": "ion_map_classifier",
+      "title": "Ion map to sample class",
+      "requires": {
+        "fields": ["coord.mz", "coord.rt_min", "intensity.matched_intensity"],
+        "labels": "provenance.sample_class",
+        "min_tier": "pass2_confirmed",
+        "holdout": "batch",
+        "min_classes": 2,
+        "min_batches_per_class": 2
+      },
+      "notes": "The HeLa/K562 question. Holds out by batch, never randomly: a random split lets the model read instrument and loading instead of cell line."
+    },
+    {
+      "id": "forensic_track",
+      "title": "Forensic track of one ion",
+      "requires": { "fields": ["ion_uid", "events"] },
+      "notes": "The event ledger as a timeline, with coordinate at each hop. Same data the flight animation replays."
+    }
+  ]
+}

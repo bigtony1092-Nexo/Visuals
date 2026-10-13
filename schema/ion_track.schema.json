@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/bigtony1092-Nexo/Visuals/schema/ion_track.schema.json",
+  "title": "Ion track record",
+  "description": "One record per ion, carried from first detection to Atlas membership. One JSON object per line in ions.jsonl. The events array is the forensic track; replaying it in order is also what drives the flight animation.",
+  "type": "object",
+  "required": ["ion_uid", "sample_id", "coord", "provenance", "confidence", "events"],
+  "additionalProperties": false,
+  "properties": {
+    "ion_uid": {
+      "type": "string",
+      "description": "Stable identity, assigned at first detection and never reassigned. Content-addressed: sha256(sample_id | source_file | mz@4dp | rt@3dp | drift@4dp-or-null | charge), first 16 hex chars. Survives re-merge and re-clustering.",
+      "pattern": "^[0-9a-f]{16}$"
+    },
+    "sample_id": { "type": "string", "minLength": 1 },
+
+    "coord": {
+      "type": "object",
+      "description": "Where the ion sits in the four real dimensions. drift_kind decides whether drift means anything at all.",
+      "required": ["mz", "rt_min", "charge", "drift_kind"],
+      "additionalProperties": false,
+      "properties": {
+        "mz": { "type": "number", "exclusiveMinimum": 0 },
+        "rt_min": { "type": "number", "minimum": 0 },
+        "charge": { "type": "integer", "minimum": 1, "maximum": 8 },
+        "drift": {
+          "type": ["number", "null"],
+          "description": "Null for DDA. A number for HDMSE/diaPASEF (real mobility) and for SONAR (a quadrupole window position, NOT mobility). Read drift_kind before plotting this."
+        },
+        "drift_kind": {
+          "enum": ["ion_mobility", "quad_window", "absent"],
+          "description": "ion_mobility = real drift (HDMSE, diaPASEF). quad_window = SONAR scanning-quadrupole position, physically unrelated to mobility. absent = DDA, drift is null."
+        },
+        "one_over_k0": { "type": ["number", "null"], "description": "Only when drift_kind is ion_mobility." },
+        "ccs": { "type": ["number", "null"], "description": "Only when drift_kind is ion_mobility." }
+      }
+    },
+
+    "intensity": {
+      "type": "object",
+      "description": "Field names mirror the pipeline's own CSVs so no renaming happens in transit.",
+      "additionalProperties": false,
+      "properties": {
+        "matched_intensity": { "type": ["number", "null"], "description": "From direct_match_results.csv. Feeds Top3avg." },
+        "summed_precursor_intensity": { "type": ["number", "null"], "description": "From coordinate_target_summary.csv. Feeds the SeqStart panels." },
+        "cluster_rank": { "type": ["integer", "null"], "minimum": 1, "description": "1 = primary confirmed cluster. SeqStart panels use rank 1 only; pooling clusters was found to corrupt the pattern." },
+        "n_consecutive_scans": { "type": ["integer", "null"], "minimum": 1 }
+      }
+    },
+
+    "annotation": {
+      "type": ["object", "null"],
+      "description": "Null while the ion is unassigned. Unassigned ions are still tracked and still render.",
+      "additionalProperties": false,
+      "properties": {
+        "peptide_sequence": { "type": "string", "pattern": "^[ACDEFGHIKLMNPQRSTVWY]+$" },
+        "prot_accession": { "type": "string" },
+        "protein_name": { "type": ["string", "null"] },
+        "seq_start": { "type": ["integer", "null"], "minimum": 1, "description": "1-based residue position of the peptide in the reference sequence." },
+        "mods": { "type": ["string", "null"] },
+        "frag_type": { "type": ["string", "null"] }
+      }
+    },
+
+    "confidence": {
+      "type": "object",
+      "description": "First-class, never inferred downstream. Mixing tiers in one panel is the fastest way to a confident wrong answer.",
+      "required": ["tier", "decoy_controlled"],
+      "additionalProperties": false,
+      "properties": {
+        "tier": {
+          "enum": ["bare_proximity", "pass2_confirmed", "atlas_consensus"],
+          "description": "bare_proximity = ppm window + >=2 consecutive scans, no MS2, no decoy test (the same bare mechanism that passed reversed-tryptic decoys at 33-70% elsewhere in this project). pass2_confirmed = decoy-controlled Pass2 targeting. atlas_consensus = held across samples in the Atlas."
+        },
+        "decoy_controlled": { "type": "boolean" },
+        "ppm_error": { "type": ["number", "null"] },
+        "score": { "type": ["number", "null"] },
+        "score_kind": { "type": ["string", "null"] }
+      }
+    },
+
+    "provenance": {
+      "type": "object",
+      "required": ["source_file", "vendor", "acquisition_method"],
+      "additionalProperties": false,
+      "properties": {
+        "source_file": { "type": "string" },
+        "vendor": { "type": "string" },
+        "acquisition_method": { "type": "string", "description": "DDA | HDMSE | SONAR | diaPASEF | ..." },
+        "has_ims": { "type": "boolean" },
+        "search_engine": { "type": ["string", "null"] },
+        "batch": { "type": ["string", "null"], "description": "Required for honest classifier holdout. Null means the classifier cannot be batch-held-out." },
+        "sample_class": { "type": ["string", "null"], "description": "HeLa, K562, ... The classification target. Null when unlabelled." }
+      }
+    },
+
+    "lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "parent_ion_uids": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "cluster_uid": { "type": ["string", "null"] },
+        "atlas_uid": { "type": ["string", "null"] }
+      }
+    },
+
+    "events": {
+      "type": "array",
+      "description": "Append-only. Ordered oldest first. Never rewritten: a correction is a new event, not an edit.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["stage", "at", "tool"],
+        "additionalProperties": false,
+        "properties": {
+          "stage": {
+            "enum": ["detected", "z1_filtered", "peg_filtered", "selected", "searched", "identified", "annotated", "merged", "clustered", "atlas_member", "rejected"]
+          },
+          "at": { "type": "string", "format": "date-time" },
+          "tool": { "type": "string" },
+          "tool_version": { "type": ["string", "null"] },
+          "params_hash": { "type": ["string", "null"], "description": "Hash of the parameter set, so a run is reproducible without storing every parameter per ion." },
+          "coord_snapshot": {
+            "type": ["object", "null"],
+            "description": "The ion's coordinate AT THIS EVENT. Recalibration moves ions; this is what makes the move visible instead of silent.",
+            "additionalProperties": false,
+            "properties": {
+              "mz": { "type": ["number", "null"] },
+              "rt_min": { "type": ["number", "null"] },
+              "drift": { "type": ["number", "null"] }
+            }
+          },
+          "note": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

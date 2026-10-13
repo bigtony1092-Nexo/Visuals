@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/bigtony1092-Nexo/Visuals/schema/protein_quant.schema.json",
+  "title": "Protein quant record",
+  "description": "One record per (protein, sample) in proteins.jsonl. Top3avg exactly as the method note defines it: per-peptide MAX matched_intensity, sorted descending, mean of the top 3 or fewer. Never padded.",
+  "type": "object",
+  "required": ["sample_id", "prot_accession", "top3avg", "n_peptides_used"],
+  "additionalProperties": false,
+  "properties": {
+    "sample_id": { "type": "string" },
+    "prot_accession": { "type": "string" },
+    "protein_name": { "type": ["string", "null"] },
+
+    "top3avg": { "type": "number", "description": "Mean of the top n_peptides_used per-peptide maxima." },
+    "n_peptides_used": {
+      "type": "integer", "minimum": 1, "maximum": 3,
+      "description": "1, 2 or 3. CRITICAL to carry: a 1-peptide Top3avg is not comparable to a 3-peptide one, and padding to 3 is forbidden."
+    },
+    "n_peptides_matched": { "type": "integer", "minimum": 1, "description": "All peptides matched, including those not used." },
+    "peptides_used": { "type": "array", "items": { "type": "string" } },
+
+    "rank": { "type": ["integer", "null"], "description": "Position within this sample, 1 = highest Top3avg." },
+    "percentile": {
+      "type": ["number", "null"], "minimum": 0, "maximum": 100,
+      "description": "Preferred over rank for cross-sample comparison, because protein counts differ per sample."
+    },
+
+    "normalized": {
+      "type": ["object", "null"],
+      "description": "Whichever normalizations the method asked for. Each is a deliberate choice with a cost, so each is named rather than implied.",
+      "additionalProperties": false,
+      "properties": {
+        "within_protein_max": { "type": ["number", "null"], "description": "Protein's own max across samples = 1.0. Keeps samples comparable; ERASES cross-sample scale anomalies." },
+        "absolute_log10": { "type": ["number", "null"], "description": "log10 of raw Top3avg. Preserves anomalies (e.g. a 300-1000x sample) at the cost of legibility on a linear axis." },
+        "median_scaled": { "type": ["number", "null"], "description": "Divided by the sample's median Top3avg. A loading correction." },
+        "reference_ratio": { "type": ["number", "null"], "description": "Ratio to the method's reference protein in the SAME run." }
+      }
+    },
+
+    "tier": { "enum": ["bare_proximity", "pass2_confirmed", "atlas_consensus"] },
+    "decoy_controlled": { "type": "boolean" }
+  }
+}
