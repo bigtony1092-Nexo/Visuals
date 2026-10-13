@@ -69,6 +69,26 @@ cleaved at K/R.
 
 Everything is deterministic — the same dataset on every load.
 
+### Loading a real export
+
+**Load export** (or drop the files anywhere on the page) reads an export written to
+`docs/export-contract.md`. `ions.jsonl` is required; `manifest.json` and `spectra.jsonl`
+are optional, and other contract files are accepted and ignored. Files are recognised
+by name. **Demo data** returns to the synthetic set.
+
+What the Atlas does with it, and never hides:
+
+- **Only real mobility goes on the vertical axis.** Ions whose `drift_kind` is not
+  `ion_mobility` (SONAR, DDA) are not drawn, and the count is shown. An export with no
+  mobility at all collapses to 2-D, m/z against RT.
+- **Isotopes come from the precursor.** `isotopes[]` on the ion record first, then the
+  raw `ms1_isotope` scan, and only failing both an averagine model, labelled *modelled*.
+- **Missing spectra stay missing.** No MS2 is synthesised for a loaded export; a panel
+  without data says which record is absent.
+- **Thinning is disclosed.** Above 9,000 ions it draws every annotated ion plus a seeded
+  sample of the rest, and says so; the manifest's own decimation ratio is shown too.
+- **Sample and confidence-tier filters** appear alongside charge, so tiers need not mix.
+
 ## The export contract
 
 ```
