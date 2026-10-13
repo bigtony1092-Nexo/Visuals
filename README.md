@@ -55,3 +55,48 @@ tryptic sequences and sequences generated at proteome residue frequencies and
 cleaved at K/R.
 
 Everything is deterministic — the same dataset on every load.
+
+## Working from another computer
+
+Every computer that pushes to this project must point at the same GitHub repo:
+
+```
+https://github.com/bigtony1092-Nexo/Visuals
+```
+
+**Check where a computer is pushing.** In a terminal, inside the project folder:
+
+```
+git remote -v
+```
+
+It should print:
+
+```
+origin  https://github.com/bigtony1092-Nexo/Visuals (fetch)
+origin  https://github.com/bigtony1092-Nexo/Visuals (push)
+```
+
+**If it shows a different URL,** point it here and push again:
+
+```
+git remote set-url origin https://github.com/bigtony1092-Nexo/Visuals
+git push -u origin HEAD
+```
+
+**If it shows nothing,** the folder was never connected to GitHub:
+
+```
+git remote add origin https://github.com/bigtony1092-Nexo/Visuals
+git push -u origin HEAD
+```
+
+The account doing the push needs write access to the repo. If GitHub refuses
+with "permission denied" or "403", the repo owner adds that account under
+**Settings → Collaborators** on GitHub.
+
+**To get everyone else's work:**
+
+```
+git pull
+```
