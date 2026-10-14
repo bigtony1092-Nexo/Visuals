@@ -420,7 +420,8 @@ function specFor(uid,kind){
 }
 function traceFor(uid){
   var t=state.data.traces,i;
-  for(i=0;i<t.length;i++) if(t[i].ion_uid===uid) return t[i];
+  /* the precursor XIC, not one of its per-isotope traces (isotope_k > 0) */
+  for(i=0;i<t.length;i++) if(t[i].ion_uid===uid&&!(t[i].isotope_k>0)) return t[i];
   return null;
 }
 function tables(){return (state.data.manifest&&state.data.manifest.tables)||{};}

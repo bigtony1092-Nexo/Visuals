@@ -147,6 +147,11 @@ canvas{display:block}
 
 .foot{padding:10px 16px 14px;font-size:11px;color:#46525c;line-height:1.55;border-top:1px solid var(--line)}
 
+.ratiow{padding:4px 16px 0}
+.ratiow canvas{width:100%;height:72px;display:block}
+.ikey{display:flex;flex-wrap:wrap;gap:4px 11px;margin-top:8px;font-family:var(--font-mono);font-size:9.5px;letter-spacing:.04em;color:var(--fg-3)}
+.ikey span{white-space:nowrap}
+.ikey i{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:4px}
 .specnote{padding:12px 0 0;font-size:11.5px;line-height:1.55;color:#5d6a75}
 .specnote b{color:var(--fg-2);font-weight:500}
 [hidden]{display:none!important}
@@ -193,6 +198,7 @@ canvas{display:block}
       <input type="file" id="fileIn" multiple accept=".json,.jsonl,.txt" hidden aria-label="Export files">
       <button class="btn" id="bRun">Replay acquisition</button>
       <button class="btn" id="bFill">Fill</button>
+      <button class="btn" id="bDeplete">Deplete</button>
       <button class="btn" id="bFlash">Flash protein</button>
       <button class="btn" id="bSpeed">1&times;</button>
       <button class="btn" id="bHome">Reset view</button>
@@ -225,7 +231,9 @@ canvas{display:block}
           <button data-m="protein" class="on">Protein</button>
           <button data-m="isotope">Isotope</button>
           <button data-m="charge">Charge</button>
+          <button data-m="intf">Purity</button>
         </div>
+        <div class="ikey" id="intfKey" hidden><span><i style="background:#3ddc97"></i>clean</span><span><i style="background:#ff5f56"></i>MS1 envelope</span><span><i style="background:#ffb340"></i>ratio drifts</span><span><i style="background:#c084fc"></i>product ion</span><span><i style="background:#5b6872"></i>not assessed</span></div>
         <div class="row" style="margin-top:9px"><span class="k">Isotopes</span></div>
         <div class="seg" id="imode">
           <button data-m="all" class="on">All 3</button>
@@ -238,6 +246,7 @@ canvas{display:block}
         </div>
         <div class="chips" style="margin-top:10px">
           <button class="chip on" id="cUnk"><span class="d"></span>Unassigned features</button>
+          <button class="chip on" id="cIntf" style="color:#ffb340"><span class="d"></span>Interference flags</button>
         </div>
       </div>
 
@@ -277,6 +286,10 @@ canvas{display:block}
         <div class="rsub" id="rsub"></div>
       </div>
       <div class="stats" id="stats"></div>
+      <div class="ratiow" id="ratioW" hidden>
+        <div class="speclab"><span>Isotope ratios across the peak</span><b id="mR"></b></div>
+        <canvas id="ratioCv"></canvas>
+      </div>
       <div class="ladwrap" id="ladwrap">
         <div class="ladder" id="ladder"></div>
         <div class="ladkey"><span><i style="background:#4d9bff"></i>b ions</span><span><i style="background:#ff5f56"></i>y ions</span></div>
@@ -320,6 +333,27 @@ function hydIndex(s){var v=0,i;for(i=0;i<s.length;i++)v+=HYD[s.charAt(i)]||0;
    (~400 A^2 for a 2+ at 1500 Da) then Mason-Schamp to reduced mobility */
 function ccsOf(mass,z,jit){return 5.40*Math.pow(mass,0.585)*(1+0.085*(z-1))*(1+0.055*(jit-0.5));}
 function invK0Of(ccs,mass,z){var mu=mass*N2/(mass+N2);return 1.049e-3*ccs*Math.sqrt(mu)/z;}
+
+/* expected M+0..M+2 from elemental composition (C,H,N,O,S per residue, + H2O).
+   Exact for an annotated, unmodified sequence; averagine only without one. */
+var RESCOMP={G:[2,3,1,1,0],A:[3,5,1,1,0],S:[3,5,1,2,0],P:[5,7,1,1,0],V:[5,9,1,1,0],T:[4,7,1,2,0],
+  C:[3,5,1,1,1],L:[6,11,1,1,0],I:[6,11,1,1,0],N:[4,6,2,2,0],D:[4,5,1,3,0],Q:[5,8,2,2,0],K:[6,12,2,1,0],
+  E:[5,7,1,3,0],M:[5,9,1,1,1],H:[6,7,3,1,0],F:[9,9,1,1,0],R:[6,12,4,1,0],Y:[9,9,1,2,0],W:[11,10,2,1,0]};
+var _envCache={};
+function conv3(a,b){return [a[0]*b[0], a[0]*b[1]+a[1]*b[0], a[0]*b[2]+a[1]*b[1]+a[2]*b[0]];}
+function binom3(n,p){var q=1-p;return [Math.pow(q,n), n*p*Math.pow(q,n-1), n>=2?n*(n-1)/2*p*p*Math.pow(q,n-2):0];}
+function pow3(v,n){var o=[1,0,0],i;for(i=0;i<n;i++)o=conv3(o,v);return o;}
+function norm3(e){var m=Math.max(e[0],e[1],e[2]);return [e[0]/m,e[1]/m,e[2]/m];}
+function expEnvelope(seq){
+  if(_envCache[seq]) return _envCache[seq];
+  var c=[0,2,0,1,0],i,j,r;
+  for(i=0;i<seq.length;i++){ r=RESCOMP[seq.charAt(i)]; if(r) for(j=0;j<5;j++) c[j]+=r[j]; }
+  var e=binom3(c[0],0.0107);
+  e=conv3(e,binom3(c[1],0.000115)); e=conv3(e,binom3(c[2],0.00364));
+  e=conv3(e,pow3([0.99757,0.00038,0.00205],c[3])); e=conv3(e,pow3([0.9499,0.0075,0.0425],c[4]));
+  return (_envCache[seq]=norm3(e));
+}
+function avgEnvelope(mass){var l=4.9e-4*mass;return norm3([1,l,l*l/2]);}
 
 /* deterministic hashing + PRNG so the dataset is identical on every load */
 function hash32(s){var h=2166136261,i;for(i=0;i<s.length;i++){h^=s.charCodeAt(i);
@@ -503,6 +537,47 @@ function addFeature(o){
     addFeature({kind:'unk', protein:null, pi:-1, pepIdx:-1, seq:null, z:z,
       mass:mass, rt:1.5+37*Math.pow(r(),0.92),
       ccs:ccsOf(mass,z,r()), inten:Math.pow(10,3.5+1.7*r()), spec:null});
+  }
+})();
+
+/* demo: per-isotope traces scan by scan, and a few interferers of each kind.
+   Synthetic like the rest of the demo. The Atlas then assesses them with the same
+   rules it applies to a real export, so nothing here is pre-labelled. */
+(function(){
+  var i,k,s,f,r,cls,sig=0.075,n=13;
+  for(i=0;i<features.length;i++){
+    f=features[i]; r=rng(hash32('scan|'+f.id));
+    var e=f.seq?expEnvelope(f.seq):avgEnvelope(f.mass), u=r();
+    cls='clean';
+    if(u<0.05) cls='ms1_envelope'; else if(u<0.10) cls='ms1_profile';
+    else if(u<0.14&&f.kind==='id') cls='product_ion';
+    var off=(r()<0.5?-1:1)*(1.3+0.6*r())*sig, bump=[0,0.25+0.35*r(),0.15+0.30*r()], tr={0:[],1:[],2:[]};
+    for(s=0;s<n;s++){
+      var t=f.rt+(s-(n-1)/2)*(4.8*sig/(n-1));
+      var g=Math.exp(-0.5*Math.pow((t-f.rt)/sig,2)), g2=Math.exp(-0.5*Math.pow((t-f.rt-off)/sig,2));
+      for(k=0;k<3;k++){
+        var v=g*e[k]*(1+(r()-0.5)*0.03);
+        if(cls==='ms1_envelope') v+=g*bump[k];          /* co-elutes and overlaps the envelope */
+        if(cls==='ms1_profile')  v+=g2*bump[k]*1.4;     /* elutes beside the target */
+        tr[k].push([+t.toFixed(4), v*f.inten]);
+      }
+    }
+    f.traces=tr; f.isoSource='observed';
+    var sum=[0,0,0],mx=0;
+    for(k=0;k<3;k++){ for(s=0;s<n;s++) sum[k]+=tr[k][s][1]; if(sum[k]>mx) mx=sum[k]; }
+    for(k=0;k<f.iso.length;k++){ var q=f.iso[k]; q.rel=sum[q.k]/mx; q.inten=f.inten*q.rel; }
+    if(f.kind==='id'&&f.spec){
+      /* a co-isolated precursor that begins and ends with the target: MS1 clean,
+         fragments not. Extra unexplained peaks, and every ar1 pulled down together. */
+      f.ar1Ratio = cls==='product_ion' ? 0.48+0.18*r() : 0.92+0.14*r();
+      if(cls==='product_ion'){
+        var ex=f.spec.exp=f.spec.exp.slice(), m2=0;
+        for(k=0;k<9;k++) ex.push({ion:null,idx:0,label:null,mz:150+(f.spec.span-200)*r(),int:22+50*r()});
+        ex.forEach(function(p){ if(p.int>m2) m2=p.int; });
+        f.spec.exp=ex.map(function(p){ var c={}; for(var key in p) c[key]=p[key]; c.int=100*p.int/m2; return c; })
+          .sort(function(a,b){return a.mz-b.mz;});
+      }
+    }
   }
 })();
 
@@ -770,6 +845,11 @@ function drawPanel(tr,t){
       ctx.lineWidth=2.2*SC;
       ctx.beginPath(); ctx.moveTo(x,mBase); ctx.lineTo(x,y); ctx.stroke();
       ctx.globalAlpha=1;
+      if(f.expEnv&&f.expEnv[dk]!=null&&envOn>0.5){       /* expected, from composition */
+        var ye=mBase-(mBase-mTop)*f.expEnv[dk]*0.96*envOn*(1-collapse*0.80);
+        ctx.strokeStyle='rgba(255,255,255,'+(0.6*envOn*(1-collapse)).toFixed(2)+')'; ctx.lineWidth=1;
+        ctx.beginPath(); ctx.moveTo(x-6*SC,ye); ctx.lineTo(x+6*SC,ye); ctx.stroke();
+      }
       if(envOn>0.75&&collapse<0.35)
         txt(f.iso[i].mz.toFixed(2),x,y-8,
           'rgba(150,163,174,'+(0.95*(1-collapse*2.8)).toFixed(2)+')',
@@ -831,7 +911,7 @@ function drawPanel(tr,t){
    ====================================================================== */
 var S={selProt:0, selPep:0, selFeat:null, hover:null, colorMode:'protein',
        isoMode:'all', spread:'wide', zOn:{1:true,2:true,3:true,4:true},
-       showUnk:true, speed:1, sOn:{}, tOn:{}};
+       showUnk:true, showIntf:true, speed:1, sOn:{}, tOn:{}};
 var CHG_COL={1:'#ffb340',2:'#4cc8ff',3:'#3ddc97',4:'#c084fc',5:'#f472b6',6:'#a3e635',7:'#fb923c',8:'#818cf8'};
 var TIER_COL={atlas_consensus:'#3ddc97',pass2_confirmed:'#4cc8ff',bare_proximity:'#ffb340'};
 var TIER_LBL={atlas_consensus:'Atlas consensus',pass2_confirmed:'Pass2 confirmed',bare_proximity:'Bare proximity'};
@@ -843,6 +923,7 @@ function dotColor(d){
   if(d.f.kind==='unk') return null;
   if(S.colorMode==='isotope') return ISO_COL[d.k];
   if(S.colorMode==='charge')  return CHG_COL[d.f.z]||'#8da0ad';
+  if(S.colorMode==='intf')    return intfCol(d.f);
   return d.f.protein.color;
 }
 function featVisible(f){
@@ -884,7 +965,8 @@ function drawDots(t){
   for(i=0;i<VIS.length;i++){
     d=VIS[i]; if(d.f.kind!=='unk') continue;
     r=dotRadius(d);
-    ctx.strokeStyle='rgba(205,220,232,'+(0.30*fade(d.sd)).toFixed(3)+')';
+    ctx.strokeStyle=S.colorMode==='intf'?hexA(intfCol(d.f),0.55*clamp(fade(d.sd),0.4,1.1))
+      :'rgba(205,220,232,'+(0.30*fade(d.sd)).toFixed(3)+')';
     ctx.beginPath(); ctx.arc(d.sx,d.sy,r,0,6.2832); ctx.stroke();
   }
   /* identified: additive fills so overlapping clouds glow */
@@ -902,6 +984,19 @@ function drawDots(t){
     ctx.fillStyle=c; ctx.beginPath(); ctx.arc(d.sx,d.sy,r,0,6.2832); ctx.fill();
   }
   ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
+  /* interference: a diamond on the monoisotopic dot of every flagged ion */
+  if(S.showIntf){
+    ctx.lineWidth=1.1;
+    for(i=0;i<VIS.length;i++){
+      d=VIS[i]; var fl=d.f.intf&&d.f.intf.flag;
+      if(!fl||fl==='none'||d!==d.f.iso[0]) continue;
+      if(S.selProt!==null&&d.f.kind==='id'&&d.f.pi!==S.selProt) continue;
+      r=dotRadius(d)+4.5;
+      ctx.strokeStyle=hexA(INTF_COL[fl],0.9);
+      ctx.beginPath(); ctx.moveTo(d.sx,d.sy-r); ctx.lineTo(d.sx+r,d.sy); ctx.lineTo(d.sx,d.sy+r);
+      ctx.lineTo(d.sx-r,d.sy); ctx.closePath(); ctx.stroke();
+    }
+  }
   /* selected peptide pulses */
   if(sel){
     for(i=0;i<sel.iso.length;i++){
@@ -933,12 +1028,14 @@ function landFeature(f){var i;for(i=0;i<f.iso.length;i++) f.iso[i].landed=true;}
 function startRun(){
   var i;
   for(i=0;i<dots.length;i++) dots[i].landed=false;
+  if(dep.on||dep.done) depReset();
   flights.length=0; run.on=true; run.t=0; run.i=0;
   run.order=features.slice().sort(function(a,b){return a.rt-b.rt;});
 }
 function fillAll(){
   var i; for(i=0;i<dots.length;i++) dots[i].landed=true;
   flights.length=0; run.on=false;
+  if(dep.on||dep.done) depReset();
 }
 function landedCount(){var i,n=0;for(i=0;i<dots.length;i++) if(dots[i].landed)n++;return n;}
 function updateRun(dt){
@@ -1131,6 +1228,7 @@ function drawHoverGuides(){
     txtL.push(['m/z '+d.mz.toFixed(4)+'   '+f.z+'+   iso '+d.k+(f.isoSource==='modelled'?' (modelled)':''),'#96a3ae']);
   }
   txtL.push([(f.k0==null?'no mobility':'1/K₀ '+f.k0.toFixed(3))+'   RT '+f.rt.toFixed(2)+' min'+(DS.demo?'':'   '+f.sample),'#96a3ae']);
+  if(f.intf&&f.intf.flag!=='none') txtL.push([INTF_LBL[f.intf.flag]+(f.intf.src==='viewer'?'  (estimate)':''),INTF_COL[f.intf.flag]]);
   ctx.font='500 10.5px '+MONO; w=0;
   for(i=0;i<txtL.length;i++) w=Math.max(w,ctx.measureText(txtL[i][0]).width);
   w+=18; h=txtL.length*14+12;
@@ -1238,7 +1336,7 @@ function fmtInt(v){
 function renderPanel(){
   var f=S.selFeat, i;
   if(!f){ elSeq.textContent='—'; elSub.innerHTML=''; elStats.innerHTML='';
-    elLadW.hidden=true; elMA.textContent=''; elMB.textContent='';
+    elLadW.hidden=true; elMA.textContent=''; elMB.textContent=''; $('ratioW').hidden=true;
     drawSpectrum($('specA'),null,0,false,null,false,'no ion selected');
     drawSpectrum($('specB'),null,0,true,null,false,' ');
     return; }
@@ -1253,6 +1351,8 @@ function renderPanel(){
     : '<span class="pill">no match</span><span>'+(DS.demo?'not in the spectral atlas':'no annotation in this export')+'</span>';
   if(!DS.demo) sub+='<span class="pill">'+esc(f.sample)+'</span>'+
     '<span class="pill" style="color:'+(TIER_COL[f.tier]||'#8da0ad')+'">'+esc(TIER_LBL[f.tier]||f.tier)+'</span>';
+  if(f.intf) sub+='<span class="pill" style="color:'+INTF_COL[f.intf.flag]+';border-color:'+hexA(INTF_COL[f.intf.flag],0.5)+'">'+
+    esc(INTF_LBL[f.intf.flag])+(f.intf.src==='viewer'?' \u00b7 estimate':'')+'</span>';
   elSub.innerHTML=sub;
   elStats.innerHTML=
     statHTML('m/z obs',f.mz.toFixed(4))+
@@ -1263,7 +1363,18 @@ function renderPanel(){
     statHTML('1/K₀',f.k0==null?'—':f.k0.toFixed(3),f.k0==null?'':'Vs/cm²')+
     statHTML('CCS',f.ccs==null?'—':f.ccs.toFixed(1),f.ccs==null?'':'Å²')+
     statHTML('intensity',fmtInt(f.inten))+
-    statHTML('dot product',sp&&isNum(sp.score)?sp.score.toFixed(3):'—');
+    statHTML('dot product',sp&&isNum(sp.score)?sp.score.toFixed(3):'—')+
+    statHTML('isotope fit',f.fit&&isNum(f.fit.rms)?f.fit.rms.toFixed(1):'—',
+      f.fit&&isNum(f.fit.rms)?'pts':'')+
+    statHTML('unexplained MS2',isNum(f.unexpl)?(100*f.unexpl).toFixed(0)+'%':'—')+
+    statHTML('ar1_sum vs clean',isNum(f.ar1Ratio)?f.ar1Ratio.toFixed(2)+'×':'—');
+  if(f.ratio&&(f.ratio.series[1]||f.ratio.series[2])){
+    $('ratioW').hidden=false;
+    var cvs=(f.fit&&f.fit.cv)||f.ratio.cv;
+    $('mR').textContent=(f.fit?'vs '+f.fit.basis+'  ·  ':'')+cvs.map(function(c){return 'M+'+c.k+' cv '+(100*c.cv).toFixed(0)+'%';}).join('  ·  ')+
+      (f.intf&&f.intf.rtS!=null?'  ·  departs '+f.intf.rtS.toFixed(2)+'–'+f.intf.rtE.toFixed(2):'');
+    drawRatio(f);
+  } else $('ratioW').hidden=true;
 
   /* fragments the scan actually carries; drives the ladder and the atlas colouring */
   var matched={};
@@ -1368,6 +1479,9 @@ function chipsHTML(keys,attr,colorFn,labelFn,on){
 }
 function uniqOf(fn){ var m={},out=[]; features.forEach(function(f){ var k=fn(f); if(!(k in m)){m[k]=1;out.push(k);} }); return out; }
 var TIER_ORDER=['atlas_consensus','pass2_confirmed','bare_proximity'];
+var INTF_COL={none:'#3ddc97',ms1_envelope:'#ff5f56',ms1_profile:'#ffb340',product_ion:'#c084fc'};
+var INTF_LBL={none:'clean',ms1_envelope:'MS1 envelope off',ms1_profile:'ratio drifts across the peak',product_ion:'product-ion interference'};
+function intfCol(f){ return f.intf?INTF_COL[f.intf.flag]||'#5b6872':'#5b6872'; }
 function renderChips(){
   var zs=uniqOf(function(f){return f.z;}).sort(function(a,b){return a-b;});
   $('zchips').innerHTML=chipsHTML(zs,'z',function(z){return CHG_COL[z]||'#8da0ad';},function(z){return z+'+';},S.zOn);
@@ -1400,12 +1514,14 @@ function seg(id,key,after){
     if(after) after();
   });
 }
-seg('cmode','colorMode'); seg('imode','isoMode'); seg('sspread','spread');
+seg('cmode','colorMode',function(){ $('intfKey').hidden=S.colorMode!=='intf'; }); seg('imode','isoMode'); seg('sspread','spread');
 $('cUnk').addEventListener('click',function(){
   S.showUnk=!S.showUnk; this.classList.toggle('on',S.showUnk); updateReadout();
 });
 $('bRun').addEventListener('click',function(){ startRun(); resetTrace(); });
 $('bFill').addEventListener('click',fillAll);
+$('bDeplete').addEventListener('click',startDepletion);
+$('cIntf').addEventListener('click',function(){ S.showIntf=!S.showIntf; this.classList.toggle('on',S.showIntf); });
 $('bFlash').addEventListener('click',doFlash);
 $('bHome').addEventListener('click',function(){
   cam.azBase=HOME.az; cam.el=HOME.el; cam.userZoom=1; cam.tx=250; cam.ty=0;
@@ -1485,6 +1601,14 @@ function hud(){
       ? trace.f.protein.gene+' · '+trace.f.seq+' '+trace.f.z+'+'
       : 'unassigned')+'</div>';
   if(S.selProt!==null) h+='<div>SELECTED  '+PROTEINS[S.selProt].gene+'</div>';
+  if(dep.on||dep.done){
+    h+='<div class="big">DEPLETION  ·  '+esc(dep.basis.toUpperCase())+'</div>';
+    dep.summary.forEach(function(x){
+      h+='<div>'+esc(x.label.toUpperCase())+'  −'+x.n.toLocaleString()+'  ·  '+x.left.toLocaleString()+' LEFT</div>'; });
+    if(dep.on) h+='<div class="trace">DEPLETING  '+esc(dep.passes[dep.i].label.toUpperCase())+'</div>';
+    else h+='<div class="trace">UNEXPLAINED  '+dep.left.toLocaleString()+' OF '+dep.total.toLocaleString()+
+      ' PRECURSORS ('+(100*dep.left/Math.max(1,dep.total)).toFixed(0)+'%)  ·  FILL RESTORES</div>';
+  }
   if(!DS.demo){
     h+='<div>EXPORT  '+esc(DS.id)+'</div>';
     if(DS.mode2d) h+='<div>2-D  ·  NO MOBILITY IN THIS EXPORT</div>';
@@ -1500,7 +1624,7 @@ var hudAcc=0, HUD_H=0;
 function frame(ms){
   var now=ms/1000, dt=tPrev?Math.min(0.05,now-tPrev):0.016; tPrev=now;
   var sdt=dt*S.speed;
-  updateRun(sdt); updateTrace(sdt); updateFlash(sdt);
+  updateRun(sdt); updateTrace(sdt); updateFlash(sdt); updateDepletion(sdt);
   if(!reduced && now-lastUser>12)
     cam.az=cam.azBase+0.10*Math.sin((now-lastUser-12)*0.10);
   else cam.az=cam.azBase;
@@ -1508,7 +1632,7 @@ function frame(ms){
   ctx.clearRect(0,0,V.w,V.h);
   drawTube(); drawFrame();
   projectDots(); drawDots(now);
-  drawFlights(); drawFlash();
+  drawFlights(); drawFlash(); drawDepletion(now);
   drawInlet(now); drawPanel(trace,now); drawTrace(now);
   drawHoverGuides();
   hudAcc+=dt; if(hudAcc>0.2){hudAcc=0;hud();updateReadout();}
@@ -1566,7 +1690,7 @@ function specOf(sx){
     score:isNum(m.dot_product)?m.dot_product:null,
     matched:isNum(m.n_matched)?m.n_matched:(exp?exp.filter(function(q){return q.label;}).length:null),
     nfrag:isNum(m.n_library)?m.n_library:(lib?lib.length:null),
-    libSource:m.library_source||null};
+    libSource:m.library_source||null, ar1Sum:(e&&isNum(e.ar1_sum))?e.ar1_sum:null};
 }
 /* isotopes ride on their precursor (contract section 2). Prefer the resolved
    isotopes[]; fall back to the raw ms1_isotope scan; model only as a last
@@ -1631,6 +1755,18 @@ function buildExport(ex){
   (ex.spectra||[]).forEach(function(sp){
     if(sp&&sp.ion_uid&&sp.kind&&sp.peaks) (spx[sp.ion_uid]=spx[sp.ion_uid]||{})[sp.kind]=sp; });
 
+  /* per-isotope traces (isotope_k) carry the envelope scan by scan */
+  var trx={};
+  (ex.traces||[]).forEach(function(t){
+    if(!t||!t.ion_uid||!t.points||!isNum(t.isotope_k)) return;
+    (trx[t.ion_uid]=trx[t.ion_uid]||{})[t.isotope_k]=t.points.filter(function(q){return q&&isNum(q[0])&&isNum(q[1]);});
+  });
+  function depPassOf(o){
+    var best=null; (o.events||[]).forEach(function(e){
+      if(e&&e.stage==='depleted'&&isNum(e.pass)&&(best===null||e.pass<best)) best=e.pass; });
+    return best;
+  }
+
   var prots=[], pmap={};
   use.forEach(function(o){
     var a=o.annotation; if(!a||!a.peptide_sequence) return;
@@ -1657,7 +1793,8 @@ function buildExport(ex){
       seq:a?a.peptide_sequence:null, z:z, mass:(c.mz-PROTON)*z, mz:c.mz, rt:c.rt_min,
       ccs:isNum(c.ccs)?c.ccs:null, k0:mode2d?null:k0Of(c), inten:Math.max(inten,1e-9),
       spec:specOf(sx), iso:[], sample:o.sample_id||'—', tier:conf.tier||'unknown',
-      ppm:isNum(conf.ppm_error)?conf.ppm_error:null};
+      ppm:isNum(conf.ppm_error)?conf.ppm_error:null, rec:o, depPass:depPassOf(o),
+      traces:trx[o.ion_uid]&&trx[o.ion_uid][0]?trx[o.ion_uid]:null};
     buildIso(f,o,sx.ms1_isotope);
     if(f.isoSource==='modelled') nModel++;
     feats.push(f); f.iso.forEach(function(d){dts.push(d);});
@@ -1668,6 +1805,15 @@ function buildExport(ex){
   prots.forEach(function(p){
     p.peps.sort(function(a,b){ return ((a.start==null?1e9:a.start)-(b.start==null?1e9:b.start))||(a.seq<b.seq?-1:1); });
     p.peps.forEach(function(pep,j){ pep.feats.forEach(function(f){ f.pepIdx=j; }); });
+  });
+  /* ar1_sum against the same peptide and charge in the other runs (never the library,
+     whose ar1 is null). Needs at least three runs to say anything. */
+  var ar1g={};
+  feats.forEach(function(f){ if(f.seq&&f.spec&&isNum(f.spec.ar1Sum)) (ar1g[f.seq+'|'+f.z]=ar1g[f.seq+'|'+f.z]||[]).push(f.spec.ar1Sum); });
+  feats.forEach(function(f){
+    var g=f.seq&&ar1g[f.seq+'|'+f.z]; if(!g||g.length<3||!isNum(f.spec.ar1Sum)) return;
+    var v=g.slice().sort(function(a,b){return a-b;}), md=v[v.length>>1];
+    if(md>0) f.ar1Ratio=f.spec.ar1Sum/md;
   });
   if(nModel) notes.push(nModel+' ion'+(nModel>1?'s have':' has')+' no resolved isotopes or MS1 scan; '+
     (nModel>1?'their envelopes are':'its envelope is')+' modelled (averagine) and labelled as such.');
@@ -1688,6 +1834,169 @@ function buildExport(ex){
         tables:Object.keys(ex).filter(function(k){return ex[k];})}};
 }
 
+/* ---- isotope fit and interference (contract section 11) ----
+   The export's own isotope_fit / interference win when present. Otherwise the Atlas
+   estimates from what it has, and labels the result an estimate. */
+var FIT_T=8, CV_T=0.15, UNX_T=0.35, AR1_T=0.75;
+function nearestPt(arr,rt){
+  var b=null,bd=0.02; arr.forEach(function(q){ var d=Math.abs(q[0]-rt); if(d<=bd){bd=d;b=q;} }); return b;
+}
+function ratioAcross(tr){
+  var t0=tr[0], mx=0, out={cv:[],series:{},rtS:null,rtE:null};
+  t0.forEach(function(q){ if(q[1]>mx) mx=q[1]; });
+  [1,2].forEach(function(k){
+    if(!tr[k]) return;
+    var ser=[];
+    t0.forEach(function(q){ if(q[1]<0.2*mx) return; var o=nearestPt(tr[k],q[0]); if(o) ser.push([q[0],o[1]/q[1]]); });
+    if(ser.length<3) return;
+    var v=ser.map(function(x){return x[1];}), m=v.reduce(function(a,b){return a+b;},0)/v.length;
+    var sd=Math.sqrt(v.reduce(function(a,b){return a+(b-m)*(b-m);},0)/v.length);
+    var md=v.slice().sort(function(a,b){return a-b;})[v.length>>1];
+    out.cv.push({k:k,cv:m>0?sd/m:0});
+    out.series[k]=ser.map(function(x){return [x[0],md>0?x[1]/md:1];});
+    ser.forEach(function(x){ if(md>0&&Math.abs(x[1]/md-1)>0.2){
+      out.rtS=out.rtS===null?x[0]:Math.min(out.rtS,x[0]); out.rtE=out.rtE===null?x[0]:Math.max(out.rtE,x[0]); } });
+  });
+  return out;
+}
+function assess(f){
+  if(f._as) return; f._as=true;
+  var X=f.rec&&f.rec.isotope_fit, I=f.rec&&f.rec.interference, i, ss=0, n=0;
+  f.expEnv=f.seq?expEnvelope(f.seq):avgEnvelope(f.mass);
+  if(X&&X.residual&&X.residual.length){
+    X.residual.forEach(function(q){ if(isNum(q.delta)){ ss+=q.delta*q.delta; n++; } });
+    f.fit={basis:X.expected_basis||'composition', rms:isNum(X.rms)?X.rms:(n?Math.sqrt(ss/n):null),
+           cv:X.ratio_cv||null, src:'export'};
+  } else if(f.isoSource==='observed'||f.isoSource==='scan'){
+    for(i=0;i<f.iso.length;i++){ var e=f.expEnv[f.iso[i].k]; if(e==null) continue;
+      var dl=100*(f.iso[i].rel-e); ss+=dl*dl; n++; }
+    f.fit={basis:f.seq?'composition':'averagine', rms:n?Math.sqrt(ss/n):null, cv:null, src:'viewer'};
+  } else f.fit=null;
+  if(f.traces&&f.traces[0]&&f.traces[1]){
+    f.ratio=ratioAcross(f.traces);
+    if(f.fit&&!f.fit.cv&&f.ratio.cv.length) f.fit.cv=f.ratio.cv;
+  }
+  var sp=f.spec;
+  if(sp&&sp.exp&&sp.exp.length){ var tot=0,un=0;
+    sp.exp.forEach(function(q){ tot+=q.int; if(!q.label) un+=q.int; }); f.unexpl=tot?un/tot:null; }
+  if(I&&I.flag){
+    f.intf={flag:I.flag, rtS:isNum(I.rt_start)?I.rt_start:null, rtE:isNum(I.rt_end)?I.rt_end:null, src:'export', note:I.note||null};
+    if(isNum(I.unexplained_ms2_fraction)) f.unexpl=I.unexplained_ms2_fraction;
+    if(isNum(I.ar1_sum_ratio)) f.ar1Ratio=I.ar1_sum_ratio;
+    return;
+  }
+  var cvMax=null; if(f.fit&&f.fit.cv) f.fit.cv.forEach(function(c){ if(isNum(c.cv)&&(cvMax===null||c.cv>cvMax)) cvMax=c.cv; });
+  if(cvMax!==null&&cvMax>CV_T) f.intf={flag:'ms1_profile',rtS:f.ratio?f.ratio.rtS:null,rtE:f.ratio?f.ratio.rtE:null,src:'viewer'};
+  else if(f.fit&&isNum(f.fit.rms)&&f.fit.rms>FIT_T) f.intf={flag:'ms1_envelope',src:'viewer'};
+  else if(f.kind==='id'&&((isNum(f.unexpl)&&f.unexpl>UNX_T)||(isNum(f.ar1Ratio)&&f.ar1Ratio<AR1_T)))
+    f.intf={flag:'product_ion',src:'viewer'};
+  else if(!f.fit&&!isNum(f.unexpl)&&!isNum(f.ar1Ratio)) f.intf=null;      /* nothing to assess with */
+  else f.intf={flag:'none',src:'viewer'};
+}
+function assessAll(){ features.forEach(assess); }
+
+/* ---- depletion replay: explained ions leave through the inlet, pass by pass ---- */
+var dep={on:false,done:false,t:0,i:0,passes:[],summary:[],basis:'',total:0,left:0};
+var DEP_FLASH=0.8, DEP_FLY=1.5, DEP_GAP=0.7;
+function depletionPasses(){
+  var ids=features.filter(function(f){return f.kind==='id';}), by={}, out=[], basis;
+  if(ids.some(function(f){return f.depPass!=null;})){
+    basis='from the export’s depleted events';
+    ids.forEach(function(f){ if(f.depPass!=null) (by[f.depPass]=by[f.depPass]||[]).push(f); });
+    Object.keys(by).map(Number).sort(function(a,b){return a-b;}).forEach(function(p){ out.push({label:'pass '+p,feats:by[p]}); });
+  } else if(!DS.demo){
+    basis='inferred from confidence tier: no depleted events in this export';
+    TIER_ORDER.forEach(function(t,j){ var fs=ids.filter(function(f){return f.tier===t;});
+      if(fs.length) out.push({label:'pass '+(j+1)+' · '+TIER_LBL[t].toLowerCase(),feats:fs}); });
+    var rest=ids.filter(function(f){return TIER_ORDER.indexOf(f.tier)<0;});
+    if(rest.length) out.push({label:'pass '+(out.length+1)+' · other tiers',feats:rest});
+  } else {
+    basis='demo: passes by match score';
+    var sc=function(f){return f.spec&&isNum(f.spec.score)?f.spec.score:0;};
+    [[0.95,2,'score ≥ 0.95'],[0.92,0.95,'0.92–0.95'],[-1,0.92,'below 0.92']].forEach(function(b,j){
+      var fs=ids.filter(function(f){var v=sc(f);return v>=b[0]&&v<b[1];});
+      if(fs.length) out.push({label:'pass '+(j+1)+' · '+b[2],feats:fs}); });
+  }
+  return {basis:basis,passes:out};
+}
+function depReset(){
+  dep.on=false; dep.done=false; dep.summary=[];
+  trace.on=!reduced; if(!trace.f) resetTrace();
+}
+function startDepletion(){
+  fillAll();
+  var P=depletionPasses();
+  if(!P.passes.length){ toast('Nothing to deplete: no annotated ions are drawn.',false); return; }
+  dep.passes=P.passes; dep.basis=P.basis; dep.i=0; dep.t=0; dep.on=true; dep.done=false; dep.summary=[];
+  dep.total=features.length; dep.left=features.length;
+  trace.on=false; trace.f=null;
+}
+function updateDepletion(dt){
+  if(!dep.on) return;
+  var ps=dep.passes[dep.i], was=dep.t;
+  dep.t+=dt;
+  if(was<DEP_FLASH&&dep.t>=DEP_FLASH) ps.feats.forEach(function(f){ f.iso.forEach(function(d){ d.landed=false; }); });
+  if(dep.t>=DEP_FLASH+DEP_FLY+DEP_GAP){
+    dep.left-=ps.feats.length;
+    dep.summary.push({label:ps.label,n:ps.feats.length,left:dep.left});
+    dep.i++; dep.t=0;
+    if(dep.i>=dep.passes.length){ dep.on=false; dep.done=true; }
+  }
+}
+function drawDepletion(now){
+  if(!dep.on) return;
+  var ps=dep.passes[dep.i], o=P(0,0,0), i,k,f,d,p,q,c,r;
+  if(!o.ok) return;
+  if(dep.t<DEP_FLASH){
+    var ph=dep.t/DEP_FLASH;
+    ctx.lineWidth=1.2;
+    for(i=0;i<ps.feats.length;i++){ f=ps.feats[i]; if(!featVisible(f)) continue;
+      d=f.iso[0]; if(!d.vis) continue;
+      ctx.strokeStyle=hexA(dotColor(d)||'#ffffff',0.9*(1-ph));
+      ctx.beginPath(); ctx.arc(d.sx,d.sy,dotRadius(d)+3+9*ph,0,6.2832); ctx.stroke(); }
+    return;
+  }
+  q=clamp((dep.t-DEP_FLASH)/DEP_FLY,0,1); q=q*q*q;
+  ctx.globalCompositeOperation='lighter';
+  for(i=0;i<ps.feats.length;i++){ f=ps.feats[i]; if(!featVisible(f)) continue;
+    for(k=0;k<f.iso.length;k++){ d=f.iso[k]; if(S.isoMode==='mono'&&d.k>0) continue;
+      p=P(lerp(wx(d),0,q),lerp(wy(d),0,q),lerp(wz(d),0,q)); if(!p.ok) continue;
+      c=dotColor(d)||'#cdd8e0';
+      ctx.strokeStyle=hexA(c,0.10); ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(o.x,o.y); ctx.lineTo(p.x,p.y); ctx.stroke();
+      r=clamp((2+5*Math.sqrt(d.inten/MAXINT))*p.k/_kmid*(1-0.6*q),0.8,10);
+      ctx.globalAlpha=0.9; ctx.fillStyle=c; ctx.beginPath(); ctx.arc(p.x,p.y,r,0,6.2832); ctx.fill(); ctx.globalAlpha=1;
+    } }
+  ctx.globalCompositeOperation='source-over';
+}
+
+function drawRatio(f){
+  var c=$('ratioCv'), m=sizeSpec(c), g=m.g, W=m.w, H=m.h, L=10, R=10, T=6, B=16, k, i;
+  g.clearRect(0,0,W,H);
+  var all=[]; [1,2].forEach(function(k){ if(f.ratio.series[k]) all=all.concat(f.ratio.series[k]); });
+  if(!all.length) return;
+  var t0=Math.min.apply(null,all.map(function(x){return x[0];})), t1=Math.max.apply(null,all.map(function(x){return x[0];}));
+  if(t1-t0<1e-6) t1=t0+0.01;
+  var X=function(t){return L+(t-t0)/(t1-t0)*(W-L-R);}, Y=function(v){return T+(1-(clamp(v,0.4,1.6)-0.4)/1.2)*(H-T-B);};
+  if(f.intf&&f.intf.rtS!=null&&f.intf.rtE!=null){
+    g.fillStyle=hexA(INTF_COL[f.intf.flag]||'#ffb340',0.13);
+    var xa=X(f.intf.rtS)-3, xb=X(f.intf.rtE)+3; g.fillRect(xa,T,Math.max(6,xb-xa),H-T-B);
+  }
+  g.strokeStyle='rgba(255,255,255,0.22)'; g.setLineDash([3,4]); g.lineWidth=1;
+  g.beginPath(); g.moveTo(L,Y(1)); g.lineTo(W-R,Y(1)); g.stroke(); g.setLineDash([]);
+  g.strokeStyle='rgba(255,255,255,0.08)';
+  [0.8,1.2].forEach(function(v){ g.beginPath(); g.moveTo(L,Y(v)); g.lineTo(W-R,Y(v)); g.stroke(); });
+  for(k=1;k<=2;k++){ var sr=f.ratio.series[k]; if(!sr) continue;
+    g.strokeStyle=ISO_COL[k]; g.fillStyle=ISO_COL[k]; g.lineWidth=1.4; g.beginPath();
+    for(i=0;i<sr.length;i++){ if(i===0) g.moveTo(X(sr[i][0]),Y(sr[i][1])); else g.lineTo(X(sr[i][0]),Y(sr[i][1])); }
+    g.stroke();
+    for(i=0;i<sr.length;i++){ g.beginPath(); g.arc(X(sr[i][0]),Y(sr[i][1]),1.8,0,6.2832); g.fill(); } }
+  g.fillStyle='#5d6a75'; g.font='500 9px '+MONO; g.textBaseline='top';
+  g.textAlign='left'; g.fillText(t0.toFixed(2)+' min',L,H-B+4);
+  g.textAlign='right'; g.fillText(t1.toFixed(2),W-R,H-B+4);
+  g.textAlign='right'; g.textBaseline='top'; g.fillText('1.0 = constant ratio',W-R-2,Y(1)+3);
+}
+
 function applyDataset(D){
   var k;
   PROTEINS=D.proteins; features=D.features; dots=D.dots;
@@ -1696,7 +2005,9 @@ function applyDataset(D){
   DS=D.ds;
   MAXINT=0; features.forEach(function(f){ if(f.inten>MAXINT) MAXINT=f.inten; }); if(!(MAXINT>0)) MAXINT=1;
   buildTIC();
+  assessAll();
   dots.forEach(function(d){ d.landed=true; });
+  dep.on=false; dep.done=false; dep.summary=[];
   run.on=false; flights.length=0; flash.on=false;
   S.hover=null; S.selFeat=null; S.selPep=0; S.selProt=PROTEINS.length?0:null;
   S.zOn={}; S.sOn={}; S.tOn={};
@@ -1794,6 +2105,7 @@ window.addEventListener('drop',function(e){ if(!hasFiles(e)) return; e.preventDe
    13. INIT
    ====================================================================== */
 function boot(){
+  assessAll();
   DEMO=snapshot();
   resize();
   renderList();

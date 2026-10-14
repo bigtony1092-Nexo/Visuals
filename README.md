@@ -89,6 +89,31 @@ What the Atlas does with it, and never hides:
   sample of the rest, and says so; the manifest's own decimation ratio is shown too.
 - **Sample and confidence-tier filters** appear alongside charge, so tiers need not mix.
 
+### Depletion and interference
+
+The method is in `docs/export-contract.md`, section 11.
+
+- **Deplete** replays depletion. Each pass's explained ions flash, then fly back out
+  through the inlet into the database, until only the unexplained remain. The HUD counts
+  each pass and the remainder. Passes come from the export's `depleted` events; without
+  them they are inferred from confidence tier, and the demo uses match score. The HUD
+  says which. **Fill** restores the cloud.
+- **Colour by Purity**: clean, MS1 envelope off, ratio drifting across the peak,
+  product-ion interference, or not assessed. **Interference flags** marks flagged ions
+  with a diamond in any colour mode.
+- **The match panel** adds isotope fit (RMS residual against the envelope expected from
+  the peptide's composition), the share of MS2 intensity the ladder leaves unexplained,
+  and `ar1_sum` against the same peptide in other runs. When the export carries one trace
+  per isotope, a strip plots each isotope ratio scan by scan across the peak and shades
+  where it departs. The liquid-phase panel marks the expected envelope over the observed
+  bars.
+
+An export's own `isotope_fit` and `interference` always win. Without them the Atlas
+estimates from what it has and labels the result an estimate. Its thresholds are first
+guesses, to be tuned on real data: isotope fit above 8 points, a ratio CV above 15%,
+more than 35% of MS2 intensity unexplained, or `ar1_sum` below 0.75 of the clean runs.
+`ar1_sum` needs the peptide in at least three runs; with fewer it shows a dash.
+
 ## The export contract
 
 ```

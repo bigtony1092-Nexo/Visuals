@@ -120,6 +120,151 @@
         }
       }
     },
+    "isotope_fit": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "How well the observed envelope matches the expected one, measured while the matches stream (contract section 11). Null when the envelope was not observed.",
+      "required": [
+        "expected_basis",
+        "residual"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "expected_basis": {
+          "enum": [
+            "composition",
+            "averagine"
+          ],
+          "description": "composition = exact distribution from the annotated sequence's elemental composition. averagine = only for ions without an identity."
+        },
+        "residual": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "description": "Observed minus expected, per isotope, in percentage points of the envelope's most intense peak (both envelopes scaled to max = 100).",
+          "items": {
+            "type": "object",
+            "required": [
+              "k",
+              "delta"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "k": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 7
+              },
+              "delta": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "rms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Root mean square of residual[].delta, percentage points."
+        },
+        "ratio_cv": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "description": "Coefficient of variation of each isotope ratio I_k/I_0 across the scans of the elution peak. A clean ion holds its ratios constant from leading edge to tail.",
+          "items": {
+            "type": "object",
+            "required": [
+              "k",
+              "cv"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "k": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 7
+              },
+              "cv": {
+                "type": "number",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "n_scans": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        }
+      }
+    },
+    "interference": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Evidence that another species shares this ion's window (contract section 11). Null when not assessed; flag none when assessed and clean.",
+      "required": [
+        "flag"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "flag": {
+          "enum": [
+            "none",
+            "ms1_envelope",
+            "ms1_profile",
+            "product_ion"
+          ],
+          "description": "ms1_envelope = summed envelope departs from expected. ms1_profile = isotope ratios drift across the peak, so an interferer enters or leaves during it. product_ion = MS1 looks clean but the fragments show a second precursor; the case where the interferer begins and ends with the target and m/z and drift cannot resolve it."
+        },
+        "rt_start": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Where the ratio departure begins, minutes."
+        },
+        "rt_end": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Where it ends, minutes."
+        },
+        "unexplained_ms2_fraction": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Share of experimental MS2 intensity not explained by the target's fragment ladder."
+        },
+        "ar1_sum_ratio": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "This ion's ar1_sum over the median ar1_sum of the same peptide and charge in runs where it is clean. An interferer inflates the precursor intensity, so every ar1 drops together and this ratio falls below 1. Not against the library: library spectra carry no precursor intensity, so their ar1 is null (section 6)."
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
     "intensity": {
       "type": "object",
       "description": "Field names mirror the pipeline's own CSVs so no renaming happens in transit.",
@@ -333,7 +478,8 @@
               "merged",
               "clustered",
               "atlas_member",
-              "rejected"
+              "rejected",
+              "depleted"
             ]
           },
           "at": {
@@ -389,6 +535,21 @@
               "string",
               "null"
             ]
+          },
+          "pass": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "description": "Depletion pass that explained the ion. Set on the depleted event only."
+          },
+          "explained_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What explained the ion at depletion: an atlas_uid or library entry id. Set on the depleted event only."
           }
         }
       }
