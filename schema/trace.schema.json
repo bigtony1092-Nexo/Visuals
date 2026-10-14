@@ -2,15 +2,46 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/bigtony1092-Nexo/Visuals/schema/trace.schema.json",
   "title": "Trace record",
-  "description": "One record per line in traces.jsonl: the extracted ion chromatogram for one ion. Optional file. Emitted only for selected or annotated ions, since a trace per library ion would dwarf the rest of the export.",
+  "description": "One record per line in traces.jsonl: the extracted ion chromatogram for one ion. Optional file. Emitted only for selected or annotated ions, since a trace per library ion would dwarf the rest of the export. An ion may have several traces: one per isotope when isotope_k is set.",
   "type": "object",
-  "required": ["ion_uid", "points"],
+  "required": [
+    "ion_uid",
+    "points"
+  ],
   "additionalProperties": false,
   "properties": {
-    "ion_uid": { "type": "string", "pattern": "^[0-9a-f]{16}$" },
-    "sample_id": { "type": ["string", "null"] },
-    "kind": { "enum": ["xic", "tic"], "default": "xic" },
-    "extraction_window_ppm": { "type": ["number", "null"] },
+    "ion_uid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$"
+    },
+    "sample_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "kind": {
+      "enum": [
+        "xic",
+        "tic"
+      ],
+      "default": "xic"
+    },
+    "isotope_k": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 7,
+      "description": "Which isotope this trace follows: 0 = monoisotopic, 1 = M+1, ... Null means the precursor XIC as a whole. Emitting k = 0, 1 and 2 for the same ion lets a consumer follow each isotope ratio scan by scan across the peak (contract section 11)."
+    },
+    "extraction_window_ppm": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
     "points": {
       "type": "array",
       "minItems": 2,
@@ -19,10 +50,22 @@
         "type": "array",
         "minItems": 2,
         "maxItems": 2,
-        "items": { "type": "number" }
+        "items": {
+          "type": "number"
+        }
       }
     },
-    "apex_rt_min": { "type": ["number", "null"] },
-    "fwhm_min": { "type": ["number", "null"] }
+    "apex_rt_min": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "fwhm_min": {
+      "type": [
+        "number",
+        "null"
+      ]
+    }
   }
 }
