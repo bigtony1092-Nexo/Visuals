@@ -69,6 +69,51 @@ cleaved at K/R.
 
 Everything is deterministic — the same dataset on every load.
 
+### Loading a real export
+
+**Load export** (or drop the files anywhere on the page) reads an export written to
+`docs/export-contract.md`. `ions.jsonl` is required; `manifest.json` and `spectra.jsonl`
+are optional, and other contract files are accepted and ignored. Files are recognised
+by name. **Demo data** returns to the synthetic set.
+
+What the Atlas does with it, and never hides:
+
+- **Only real mobility goes on the vertical axis.** Ions whose `drift_kind` is not
+  `ion_mobility` (SONAR, DDA) are not drawn, and the count is shown. An export with no
+  mobility at all collapses to 2-D, m/z against RT.
+- **Isotopes come from the precursor.** `isotopes[]` on the ion record first, then the
+  raw `ms1_isotope` scan, and only failing both an averagine model, labelled *modelled*.
+- **Missing spectra stay missing.** No MS2 is synthesised for a loaded export; a panel
+  without data says which record is absent.
+- **Thinning is disclosed.** Above 9,000 ions it draws every annotated ion plus a seeded
+  sample of the rest, and says so; the manifest's own decimation ratio is shown too.
+- **Sample and confidence-tier filters** appear alongside charge, so tiers need not mix.
+
+### Depletion and interference
+
+The method is in `docs/export-contract.md`, section 11.
+
+- **Deplete** replays depletion. Each pass's explained ions flash, then fly back out
+  through the inlet into the database, until only the unexplained remain. The HUD counts
+  each pass and the remainder. Passes come from the export's `depleted` events; without
+  them they are inferred from confidence tier, and the demo uses match score. The HUD
+  says which. **Fill** restores the cloud.
+- **Colour by Purity**: clean, MS1 envelope off, ratio drifting across the peak,
+  product-ion interference, or not assessed. **Interference flags** marks flagged ions
+  with a diamond in any colour mode.
+- **The match panel** adds isotope fit (RMS residual against the envelope expected from
+  the peptide's composition), the share of MS2 intensity the ladder leaves unexplained,
+  and `ar1_sum` against the same peptide in other runs. When the export carries one trace
+  per isotope, a strip plots each isotope ratio scan by scan across the peak and shades
+  where it departs. The liquid-phase panel marks the expected envelope over the observed
+  bars.
+
+An export's own `isotope_fit` and `interference` always win. Without them the Atlas
+estimates from what it has and labels the result an estimate. Its thresholds are first
+guesses, to be tuned on real data: isotope fit above 8 points, a ratio CV above 15%,
+more than 35% of MS2 intensity unexplained, or `ar1_sum` below 0.75 of the clean runs.
+`ar1_sum` needs the peptide in at least three runs; with fewer it shows a dash.
+
 ## The export contract
 
 ```
@@ -82,6 +127,8 @@ schema/spectrum.schema.json      MS/MS and MS1 isotope peaks (the conventional p
 schema/trace.schema.json         extracted ion chromatograms (optional)
 examples/                        a filled method and a matching export
 tools/plan_panels.py             says which panels will render, and why not
+tools/validate_export.py         checks a real export against the contract
+tools/test_validate_export.py    proves the validator catches what it claims to
 viewer/aria-ion-panels.html      the viewer — conventional and bridge panels, fed by an export
 ```
 
@@ -105,6 +152,41 @@ python3 tools/plan_panels.py examples/method.example.json examples/manifest.exam
 Reports per panel: `RENDER`, `PARTIAL` (with the samples it excludes and why) or `BLANK`
 (with the reason). Needs `jsonschema` for method validation; the feasibility report runs
 without it.
+
+## Validating an export
+
+`plan_panels.py` asks whether a panel *can* render. `validate_export.py` asks whether the
+export is honest — the rules a JSON Schema cannot state:
+
+```
+python3 tools/validate_export.py export/                 # a real export directory
+python3 tools/validate_export.py export/ --limit 100000  # spot-check a huge one
+python3 tools/validate_export.py export/ --strict        # warnings fail too
+```
+
+Findings are `ERROR` (the export violates the contract), `WARN` (legal but lossy or
+suspicious) or `NOTE`. Exit status is 1 on any error. Among the checks: a SONAR
+quadrupole position sitting in a mobility or CCS field (section 3), an isotope minted as
+its own ion or an envelope on a different basis (section 2), a tier disagreeing with
+whether decoys were controlled (section 4), a Top3avg padded past the peptides it matched
+(section 5), `ar1` without its basis or normalized inside its own spectrum until it
+carries nothing (section 6), a ledger out of order, a spectrum or trace naming an ion that
+is not in the export, and manifest counts that disagree with the records.
+
+Schema validation runs too when `jsonschema` is installed, and is skipped with a note when
+it is not — the contract checks never need it.
+
+The shipped examples are a 2-line excerpt of a 60,000-ion export, so the whole-export
+cross-checks are skipped with `--excerpt`:
+
+```
+python3 tools/validate_export.py examples/manifest.example.json --excerpt
+python3 tools/test_validate_export.py
+```
+
+The second injects one violation at a time and asserts the validator names it, with the
+unmutated examples as the control. Run it after changing either the schemas or the
+contract: a rule that stops firing is a rule that has quietly gone.
 
 ## Panel order
 

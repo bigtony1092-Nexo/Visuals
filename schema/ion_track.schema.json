@@ -4,7 +4,14 @@
   "title": "Ion track record",
   "description": "One record per ion, carried from first detection to Atlas membership. One JSON object per line in ions.jsonl. The events array is the forensic track; replaying it in order is also what drives the flight animation.",
   "type": "object",
-  "required": ["ion_uid", "sample_id", "coord", "provenance", "confidence", "events"],
+  "required": [
+    "ion_uid",
+    "sample_id",
+    "coord",
+    "provenance",
+    "confidence",
+    "events"
+  ],
   "additionalProperties": false,
   "properties": {
     "ion_uid": {
@@ -12,125 +19,538 @@
       "description": "Stable identity, assigned at first detection and never reassigned. Content-addressed: sha256(sample_id | source_file | mz@4dp | rt@3dp | drift@4dp-or-null | charge), first 16 hex chars. Survives re-merge and re-clustering.",
       "pattern": "^[0-9a-f]{16}$"
     },
-    "sample_id": { "type": "string", "minLength": 1 },
-
+    "sample_id": {
+      "type": "string",
+      "minLength": 1
+    },
     "coord": {
       "type": "object",
       "description": "Where the ion sits in the four real dimensions. drift_kind decides whether drift means anything at all.",
-      "required": ["mz", "rt_min", "charge", "drift_kind"],
+      "required": [
+        "mz",
+        "rt_min",
+        "charge",
+        "drift_kind"
+      ],
       "additionalProperties": false,
       "properties": {
-        "mz": { "type": "number", "exclusiveMinimum": 0 },
-        "rt_min": { "type": "number", "minimum": 0 },
-        "charge": { "type": "integer", "minimum": 1, "maximum": 8 },
+        "mz": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "rt_min": {
+          "type": "number",
+          "minimum": 0
+        },
+        "charge": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        },
         "drift": {
-          "type": ["number", "null"],
+          "type": [
+            "number",
+            "null"
+          ],
           "description": "Null for DDA. A number for HDMSE/diaPASEF (real mobility) and for SONAR (a quadrupole window position, NOT mobility). Read drift_kind before plotting this."
         },
         "drift_kind": {
-          "enum": ["ion_mobility", "quad_window", "absent"],
+          "enum": [
+            "ion_mobility",
+            "quad_window",
+            "absent"
+          ],
           "description": "ion_mobility = real drift (HDMSE, diaPASEF). quad_window = SONAR scanning-quadrupole position, physically unrelated to mobility. absent = DDA, drift is null."
         },
-        "one_over_k0": { "type": ["number", "null"], "description": "Only when drift_kind is ion_mobility." },
-        "ccs": { "type": ["number", "null"], "description": "Only when drift_kind is ion_mobility." }
+        "one_over_k0": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Only when drift_kind is ion_mobility."
+        },
+        "ccs": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Only when drift_kind is ion_mobility."
+        }
       }
     },
-
+    "isotopes": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "description": "The precursor's resolved isotope envelope. Isotopes are children of the precursor, never ion records of their own: they share its RT, drift, charge, identity and ion_uid, and differ only in m/z and intensity. k=0 is the monoisotopic peak at coord.mz. Null or absent when the envelope was not resolved; a consumer then models it (averagine) and must say so. The raw MS1 scan the envelope was read from, interferences included, is the separate ms1_isotope spectrum in spectra.jsonl.",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "required": [
+          "k",
+          "mz",
+          "rel"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "k": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 7,
+            "description": "Isotope index: 0 = monoisotopic, 1 = M+1, ..."
+          },
+          "mz": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Observed m/z of this isotope peak. Spacing is 1.00336/charge from k=0."
+          },
+          "rel": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "Intensity relative to the most intense isotope in the envelope = 100 (the spectra.jsonl base-peak convention)."
+          },
+          "observed": {
+            "type": "boolean",
+            "default": true,
+            "description": "false = modelled (averagine), not measured. A modelled envelope must never be drawn as if it were observed."
+          }
+        }
+      }
+    },
+    "isotope_fit": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "How well the observed envelope matches the expected one, measured while the matches stream (contract section 11). Null when the envelope was not observed.",
+      "required": [
+        "expected_basis",
+        "residual"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "expected_basis": {
+          "enum": [
+            "composition",
+            "averagine"
+          ],
+          "description": "composition = exact distribution from the annotated sequence's elemental composition. averagine = only for ions without an identity."
+        },
+        "residual": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "description": "Observed minus expected, per isotope, in percentage points of the envelope's most intense peak (both envelopes scaled to max = 100).",
+          "items": {
+            "type": "object",
+            "required": [
+              "k",
+              "delta"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "k": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 7
+              },
+              "delta": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "rms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Root mean square of residual[].delta, percentage points."
+        },
+        "ratio_cv": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "description": "Coefficient of variation of each isotope ratio I_k/I_0 across the scans of the elution peak. A clean ion holds its ratios constant from leading edge to tail.",
+          "items": {
+            "type": "object",
+            "required": [
+              "k",
+              "cv"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "k": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 7
+              },
+              "cv": {
+                "type": "number",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "n_scans": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        }
+      }
+    },
+    "interference": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Evidence that another species shares this ion's window (contract section 11). Null when not assessed; flag none when assessed and clean.",
+      "required": [
+        "flag"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "flag": {
+          "enum": [
+            "none",
+            "ms1_envelope",
+            "ms1_profile",
+            "product_ion"
+          ],
+          "description": "ms1_envelope = summed envelope departs from expected. ms1_profile = isotope ratios drift across the peak, so an interferer enters or leaves during it. product_ion = MS1 looks clean but the fragments show a second precursor; the case where the interferer begins and ends with the target and m/z and drift cannot resolve it."
+        },
+        "rt_start": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Where the ratio departure begins, minutes."
+        },
+        "rt_end": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Where it ends, minutes."
+        },
+        "unexplained_ms2_fraction": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Share of experimental MS2 intensity not explained by the target's fragment ladder."
+        },
+        "ar1_sum_ratio": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "This ion's ar1_sum over the median ar1_sum of the same peptide and charge in runs where it is clean. An interferer inflates the precursor intensity, so every ar1 drops together and this ratio falls below 1. Not against the library: library spectra carry no precursor intensity, so their ar1 is null (section 6)."
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
     "intensity": {
       "type": "object",
       "description": "Field names mirror the pipeline's own CSVs so no renaming happens in transit.",
       "additionalProperties": false,
       "properties": {
-        "matched_intensity": { "type": ["number", "null"], "description": "From direct_match_results.csv. Feeds Top3avg." },
-        "summed_precursor_intensity": { "type": ["number", "null"], "description": "From coordinate_target_summary.csv. Feeds the SeqStart panels." },
-        "cluster_rank": { "type": ["integer", "null"], "minimum": 1, "description": "1 = primary confirmed cluster. SeqStart panels use rank 1 only; pooling clusters was found to corrupt the pattern." },
-        "n_consecutive_scans": { "type": ["integer", "null"], "minimum": 1 }
+        "matched_intensity": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "From direct_match_results.csv. Feeds Top3avg."
+        },
+        "summed_precursor_intensity": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "From coordinate_target_summary.csv. Feeds the SeqStart panels."
+        },
+        "cluster_rank": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "description": "1 = primary confirmed cluster. SeqStart panels use rank 1 only; pooling clusters was found to corrupt the pattern."
+        },
+        "n_consecutive_scans": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        }
       }
     },
-
     "annotation": {
-      "type": ["object", "null"],
+      "type": [
+        "object",
+        "null"
+      ],
       "description": "Null while the ion is unassigned. Unassigned ions are still tracked and still render.",
       "additionalProperties": false,
       "properties": {
-        "peptide_sequence": { "type": "string", "pattern": "^[ACDEFGHIKLMNPQRSTVWY]+$" },
-        "prot_accession": { "type": "string" },
-        "protein_name": { "type": ["string", "null"] },
-        "seq_start": { "type": ["integer", "null"], "minimum": 1, "description": "1-based residue position of the peptide in the reference sequence." },
-        "mods": { "type": ["string", "null"] },
-        "frag_type": { "type": ["string", "null"] }
+        "peptide_sequence": {
+          "type": "string",
+          "pattern": "^[ACDEFGHIKLMNPQRSTVWY]+$"
+        },
+        "prot_accession": {
+          "type": "string"
+        },
+        "protein_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "seq_start": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "description": "1-based residue position of the peptide in the reference sequence."
+        },
+        "mods": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "frag_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     },
-
     "confidence": {
       "type": "object",
       "description": "First-class, never inferred downstream. Mixing tiers in one panel is the fastest way to a confident wrong answer.",
-      "required": ["tier", "decoy_controlled"],
+      "required": [
+        "tier",
+        "decoy_controlled"
+      ],
       "additionalProperties": false,
       "properties": {
         "tier": {
-          "enum": ["bare_proximity", "pass2_confirmed", "atlas_consensus"],
+          "enum": [
+            "bare_proximity",
+            "pass2_confirmed",
+            "atlas_consensus"
+          ],
           "description": "bare_proximity = ppm window + >=2 consecutive scans, no MS2, no decoy test (the same bare mechanism that passed reversed-tryptic decoys at 33-70% elsewhere in this project). pass2_confirmed = decoy-controlled Pass2 targeting. atlas_consensus = held across samples in the Atlas."
         },
-        "decoy_controlled": { "type": "boolean" },
-        "ppm_error": { "type": ["number", "null"] },
-        "score": { "type": ["number", "null"] },
-        "score_kind": { "type": ["string", "null"] }
+        "decoy_controlled": {
+          "type": "boolean"
+        },
+        "ppm_error": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "score_kind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     },
-
     "provenance": {
       "type": "object",
-      "required": ["source_file", "vendor", "acquisition_method"],
+      "required": [
+        "source_file",
+        "vendor",
+        "acquisition_method"
+      ],
       "additionalProperties": false,
       "properties": {
-        "source_file": { "type": "string" },
-        "vendor": { "type": "string" },
-        "acquisition_method": { "type": "string", "description": "DDA | HDMSE | SONAR | diaPASEF | ..." },
-        "has_ims": { "type": "boolean" },
-        "search_engine": { "type": ["string", "null"] },
-        "batch": { "type": ["string", "null"], "description": "Required for honest classifier holdout. Null means the classifier cannot be batch-held-out." },
-        "sample_class": { "type": ["string", "null"], "description": "HeLa, K562, ... The classification target. Null when unlabelled." }
+        "source_file": {
+          "type": "string"
+        },
+        "vendor": {
+          "type": "string"
+        },
+        "acquisition_method": {
+          "type": "string",
+          "description": "DDA | HDMSE | SONAR | diaPASEF | ..."
+        },
+        "has_ims": {
+          "type": "boolean"
+        },
+        "search_engine": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "batch": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Required for honest classifier holdout. Null means the classifier cannot be batch-held-out."
+        },
+        "sample_class": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "HeLa, K562, ... The classification target. Null when unlabelled."
+        }
       }
     },
-
     "lineage": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "parent_ion_uids": { "type": "array", "items": { "type": "string" }, "default": [] },
-        "cluster_uid": { "type": ["string", "null"] },
-        "atlas_uid": { "type": ["string", "null"] }
+        "parent_ion_uids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "cluster_uid": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "atlas_uid": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     },
-
     "events": {
       "type": "array",
       "description": "Append-only. Ordered oldest first. Never rewritten: a correction is a new event, not an edit.",
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["stage", "at", "tool"],
+        "required": [
+          "stage",
+          "at",
+          "tool"
+        ],
         "additionalProperties": false,
         "properties": {
           "stage": {
-            "enum": ["detected", "z1_filtered", "peg_filtered", "selected", "searched", "identified", "annotated", "merged", "clustered", "atlas_member", "rejected"]
+            "enum": [
+              "detected",
+              "z1_filtered",
+              "peg_filtered",
+              "selected",
+              "searched",
+              "identified",
+              "annotated",
+              "merged",
+              "clustered",
+              "atlas_member",
+              "rejected",
+              "depleted"
+            ]
           },
-          "at": { "type": "string", "format": "date-time" },
-          "tool": { "type": "string" },
-          "tool_version": { "type": ["string", "null"] },
-          "params_hash": { "type": ["string", "null"], "description": "Hash of the parameter set, so a run is reproducible without storing every parameter per ion." },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "tool": {
+            "type": "string"
+          },
+          "tool_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "params_hash": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Hash of the parameter set, so a run is reproducible without storing every parameter per ion."
+          },
           "coord_snapshot": {
-            "type": ["object", "null"],
+            "type": [
+              "object",
+              "null"
+            ],
             "description": "The ion's coordinate AT THIS EVENT. Recalibration moves ions; this is what makes the move visible instead of silent.",
             "additionalProperties": false,
             "properties": {
-              "mz": { "type": ["number", "null"] },
-              "rt_min": { "type": ["number", "null"] },
-              "drift": { "type": ["number", "null"] }
+              "mz": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "rt_min": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "drift": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
             }
           },
-          "note": { "type": ["string", "null"] }
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pass": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "description": "Depletion pass that explained the ion. Set on the depleted event only."
+          },
+          "explained_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What explained the ion at depletion: an atlas_uid or library entry id. Set on the depleted event only."
+          }
         }
       }
     }

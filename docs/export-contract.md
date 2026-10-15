@@ -86,6 +86,20 @@ Each event carries `at`, `tool`, `tool_version`, `params_hash` and an optional
 replay of `events[]` in order. Building the ledger is not extra work done for
 bookkeeping's sake — it is what the animation reads.
 
+### Isotopes belong to their precursor
+
+An isotope is never an ion record of its own. The M+1 and M+2 peaks share the
+precursor's RT, drift, charge, identity and `ion_uid`; only m/z and intensity differ.
+Separate records would triple `ions.jsonl`, mint `ion_uid`s for things that were never
+detected independently, and let one precursor's isotopes land in different clusters.
+
+So the envelope rides on the precursor as `isotopes[]`: one entry per peak with `k`
+(0 = monoisotopic, at `coord.mz`), observed `mz`, and `rel` (most intense isotope = 100).
+`observed: false` marks an averagine-modelled envelope, which a panel must label as
+modelled. The raw MS1 scan the envelope was read from, interferences included, stays in
+`spectra.jsonl` as the `ms1_isotope` spectrum: `isotopes[]` is the assignment, the
+spectrum is the evidence.
+
 ## 3. Drift is not always drift
 
 `coord.drift_kind` is mandatory on every ion:
@@ -251,6 +265,16 @@ python3 tools/plan_panels.py my_method.json                      # validate
 python3 tools/plan_panels.py my_method.json export/manifest.json # feasibility
 ```
 
+And check the export the run produced, which is the other half — the method can be
+sound and the export still break the rules the schemas cannot state:
+
+```
+python3 tools/validate_export.py export/                         # honesty
+```
+
+It exits non-zero on any contract violation, so it belongs at the end of a pipeline run
+rather than at the start of a reading of the panels.
+
 Per-panel requirements live in `schema/panels.json`, so a panel's needs are data, not
 code. `on_requirement_unmet` defaults to `blank_with_reason`: the panel stays visible and
 states why it is empty, so **a missing measurement is never mistaken for a zero**.
@@ -261,13 +285,91 @@ states why it is empty, so **a missing measurement is never mistaken for a zero*
 `manifest.decimation` records strategy, `kept`, `of` and `seed`, and
 `render.show_decimation_ratio` is `const: true`. A thinned plot states what it dropped.
 
-## 11. Open questions
+## 11. Depletion and interference
+
+**Status:** the fields are defined in the schemas below. The pipeline does not produce them
+yet. The Atlas reads them when present; when they are absent it computes the MS1 part
+itself from `isotopes[]` and per-isotope traces, and labels that as its own estimate.
+
+**No depletion pass exists yet.** MARCH, the current naming pathway, names every detection
+in one pass and never removes ions from a working list. The retired cube pathway
+(`match_targets_spatial_in_cube`) is where depletion was first described, but it no longer
+runs. Until a real depletion pass exists, exports leave `depleted` events out. MARCH's
+one-pass assignment must not be relabelled as depletion: an ion assigned in a single pass
+was never removed and searched around.
+
+### Depletion
+
+In a depletion pass, when an ion is annotated its spectra go into the database and the ion
+**leaves the working ion list**. Each later pass searches only what earlier passes did not
+explain. The remainder is the result: what is left after
+depletion is what the library cannot yet account for, and how fast it shrinks pass by pass
+is a measure of coverage.
+
+In the ledger this is one more event:
+
+```
+{"stage": "depleted", "pass": 1, "explained_by": "atl-Q99836-172-z2", ...}
+```
+
+The flight animation replays it: the cloud fills, then each pass's ions fly back out
+through the inlet into the database, until only the unexplained remain. An export without
+`depleted` events can still be replayed by confidence tier (atlas consensus, then Pass2,
+then bare proximity), and the Atlas says that is what it is doing.
+
+### Streaming the isotope patterns with the matches
+
+Every match already passes through the isotope envelope. Stream it alongside the match,
+**scan by scan across the elution**, not as one summed envelope:
+
+- **Expected envelope from composition, not averagine.** Once an ion is annotated its
+  sequence is known, so its elemental composition and exact isotope distribution are
+  known. Averagine is only for ions without an identity.
+- **Residual per isotope** (`isotope_fit.residual`): observed minus expected, in
+  percentage points with both envelopes scaled to a most-intense peak of 100.
+- **Variation across the peak** (`isotope_fit.ratio_cv`): the coefficient of variation of
+  each ratio `I_k / I_0` over the scans of the peak. A clean ion holds its ratios constant
+  from leading edge to tail. A ratio that drifts means something else enters and leaves
+  the window during the peak, and the scans where it departs (`interference.rt_start`,
+  `rt_end`) show where.
+
+The scan-by-scan intensities travel as **one trace per isotope** in `traces.jsonl`
+(`isotope_k` = 0, 1, 2 for the same `ion_uid`), so a consumer can redraw the ratio across
+the peak rather than trust a single number.
+
+### When the interference is invisible in MS1
+
+If the interferer begins and ends with the target, and there is not enough resolution in
+m/z or drift to separate them, MS1 cannot tell them apart: the ratios hold constant across
+the peak and the envelope can sit close to theory. **The only hope then is the product
+ions:**
+
+- **Unexplained fragments** (`interference.unexplained_ms2_fraction`): the share of
+  experimental MS2 intensity the target's ladder does not explain.
+- **`ar1_sum` falls** (`interference.ar1_sum_ratio`). `ar1 = I_product / I_precursor`.
+  If the precursor intensity includes an interferer, the denominator is inflated and
+  every one of the target's ar1 values drops together. Compare against the **same peptide
+  and charge in runs where it is clean**, not against the library: library spectra carry
+  no precursor intensity, so their ar1 is null (section 6). Loading-invariance is what
+  makes the drop meaningful instead of noise.
+
+### The fields
+
+| Where | Field | Meaning |
+|---|---|---|
+| `events[]` | `stage: depleted`, `pass`, `explained_by` | which pass explained the ion, and by what |
+| ion record | `isotope_fit` | `expected_basis`, `residual[]`, `rms`, `ratio_cv[]`, `n_scans` |
+| ion record | `interference` | `flag`: none / ms1_envelope / ms1_profile / product_ion, plus `rt_start`, `rt_end`, `unexplained_ms2_fraction`, `ar1_sum_ratio`, `note` |
+| `traces.jsonl` | `isotope_k` | one XIC per isotope, so ratios can be followed scan by scan |
+
+`interference: null` means not assessed; `flag: none` means assessed and clean. The two
+must not be conflated: an unassessed ion is not a clean one.
+
+## 12. Open questions
 
 - `ion_uid` hashes `source_file`. Re-converting a raw file to a new path mints new uids.
   Either freeze the path at first ingest or hash a stable file id instead.
 - `params_hash` needs a home: the parameter sets it points at must be stored somewhere
   resolvable, or the hash is an audit dead end.
-- Isotopes are not yet in the contract. The flight animation draws three per precursor;
-  decide whether an isotope is its own ion record or a child of one.
 - `atlas_consensus` needs a definition sharp enough to compute — how many samples, at
   what agreement.
