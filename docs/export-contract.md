@@ -281,11 +281,18 @@ states why it is empty, so **a missing measurement is never mistaken for a zero*
 yet. The Atlas reads them when present; when they are absent it computes the MS1 part
 itself from `isotopes[]` and per-isotope traces, and labels that as its own estimate.
 
+**No depletion pass exists yet.** MARCH, the current naming pathway, names every detection
+in one pass and never removes ions from a working list. The retired cube pathway
+(`match_targets_spatial_in_cube`) is where depletion was first described, but it no longer
+runs. Until a real depletion pass exists, exports leave `depleted` events out. MARCH's
+one-pass assignment must not be relabelled as depletion: an ion assigned in a single pass
+was never removed and searched around.
+
 ### Depletion
 
-When the spatial matcher (`match_targets_spatial_in_cube`) annotates an ion, its spectra
-go into the database and the ion **leaves the working ion list**. Each later pass searches
-only what earlier passes did not explain. The remainder is the result: what is left after
+In a depletion pass, when an ion is annotated its spectra go into the database and the ion
+**leaves the working ion list**. Each later pass searches only what earlier passes did not
+explain. The remainder is the result: what is left after
 depletion is what the library cannot yet account for, and how fast it shrinks pass by pass
 is a measure of coverage.
 
