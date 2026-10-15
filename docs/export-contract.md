@@ -20,6 +20,7 @@ pipeline (python, on the box with the data)        viewer (published page)
 | `proteins.jsonl` | one (protein, sample) per line | `schema/protein_quant.schema.json` |
 | `spectra.jsonl` | one spectrum per line, with per-peak `ar1` | `schema/spectrum.schema.json` |
 | `traces.jsonl` | one XIC per line, optional | `schema/trace.schema.json` |
+| `fragment_hits.jsonl` | one fragment-first candidate per line, optional | `schema/fragment_hit.schema.json` |
 
 `manifest.tables` declares which of these were emitted, so a panel whose table is absent
 blanks with a reason instead of failing on a missing file.
@@ -220,7 +221,89 @@ Only after those does a modification hypothesis earn its cost — and the residu
 N-terminal start → Met oxidation, N-terminal acetyl or a GG remnant; an S/T-rich stretch →
 phosphorylation; a K-rich stretch → ubiquitin GG or acetyl.
 
-## 7. Stoichiometry and flux
+## 7. Fragment-first: finding what the Atlas was never given
+
+ARiA matches names it has. A peptide carrying a modification nobody anticipated has a
+precursor at a mass nobody queried, so it is invisible to a precursor-first search — and
+indistinguishable from a peptide that simply is not there.
+
+The way in is that **a modification shifts only the fragments containing the modified
+residue.** The b ions before the site and the y ions after it sit at their unmodified
+masses. Querying that invariant subset needs no guess about what the modification is.
+
+In HDMSE and diaPASEF everything is fragmented, so those fragment ions are already in
+data that has been acquired. Nothing new has to be run.
+
+`fragment_hits.jsonl` records the result; `schema/fragment_hit.schema.json` defines it;
+`method.fragment_first` configures it. Matched fragments cite the `ion_uid` they came
+from, which is usually an ion the ledger already holds as unassigned — **the ledger of
+unclaimed detections is the search space**, and it is the one thing a precursor-first tool
+does not have.
+
+### k of n, and reading the misses
+
+Set `min_matched` below `fragments_per_peptide`. Demanding every queried fragment fails
+exactly when the modification is real, because some of the queried fragments contain the
+modified residue.
+
+Which fragments are missing is not a failure count. **It localizes the site**, before the
+precursor is examined. Worked on PAX8 `NLSTHQTYPVVADPHSPFAIK` with phospho on S16:
+
+| Queried | m/z (1+) | Outcome |
+| --- | --- | --- |
+| b3 | 315.1663 | found |
+| b5 | 553.2729 | found |
+| b7 | 782.3791 | found |
+| b9 | 1042.4952 | found |
+| y3 | 331.2340 | found |
+| y5 | 575.3551 | found |
+| y7 | 799.4461 | shifted, absent at this mass |
+| y9 | 1011.5258 | shifted, absent at this mass |
+
+Six of eight, against a required four. `y5` intact and `y7` shifted bounds the site to
+residues 15–16; H15 cannot carry phospho and S16 can, so the residue-plausibility rule
+resolves it to S16 — from the fragment query alone.
+
+`fragment_selection` defaults to `both_termini` for this reason: taking the most intense
+fragments regardless of position can put every queried ion on the same side of the site,
+leaving nothing invariant.
+
+### Drift is the second axis
+
+Where mobility separation precedes fragmentation, fragments carry their precursor's drift
+with a systematic offset — a flat −3.25 bins on Waters HDMSE. A group that co-elutes **and**
+co-drifts is far tighter than one that only co-elutes. This is unavailable on instruments
+without mobility, and it is the main reason this approach is more specific here than it
+would be elsewhere.
+
+### Modified K and R change the peptide
+
+A modified lysine is not cleaved. So GG or acetyl on a C-terminal K does not yield this
+peptide with a mass shift — it yields a longer peptide with a different fragment set
+entirely. `missed_cleavage_variants` queries both boundaries; leaving it off misses that
+whole class by construction.
+
+### The controls are the argument
+
+Fragment masses are shared across peptides. `controls.reversed_fragment_sets` is `const:
+true` and `report_rate` is `const: true`: every hit travels with the match count for the
+reversed sequence and for entrapment peptides that cannot be in the sample, queried in the
+same scans and the same drift window. Without that rate a hit is an anecdote.
+
+### When the precursor is not found
+
+Report it. `evidence: "fragment_only"` is a result — fragments co-eluting at the expected
+drift with the precursor unobserved, which is what low abundance looks like. It is kept out
+of `confidence.tier` deliberately: this is a different kind of claim, not another rung on
+the identification ladder.
+
+With a precursor, Δ = observed neutral mass − unmodified, matched against the catalog
+within the run's ppm **and** required to be chemically possible on a residue the peptide
+contains. Mass alone does not always decide: phospho and sulfo differ by 9.5 mDa, which is
+**3.96 ppm** at 2401 Da — inside a 10 ppm window. Report both candidates rather than
+picking one.
+
+## 8. Stoichiometry and flux
 
 - **Stoichiometry** ratios are computed **within one run only** (`require_same_run` is
   `const: true`). `min_peptides_both_sides` guards the 1-vs-3 peptide mismatch.
@@ -229,7 +312,7 @@ phosphorylation; a K-rich stretch → ubiquitin GG or acetyl.
   Top3avg tracked total sample signal only weakly (median r ≈ 0.23), so loading is not a
   universal explanation — but it is the first thing to rule out.
 
-## 8. Can an ion map tell HeLa from K562?
+## 9. Can an ion map tell HeLa from K562?
 
 Worth asking, and easy to answer wrongly. The defaults enforce the honest version:
 
@@ -247,7 +330,7 @@ diaPASEF), K562 only in `colorado-B` (Waters). Cell line is perfectly confounded
 both batch and vendor, so the panel refuses. Answering this question needs at least one
 cell line run on at least two instruments, or two batches of each class on one.
 
-## 9. The method lifecycle
+## 10. The method lifecycle
 
 `schema/method.schema.json` is the fillable form. Fill it, save it, point it at new
 samples, get the same panels back.
@@ -279,13 +362,13 @@ Per-panel requirements live in `schema/panels.json`, so a panel's needs are data
 code. `on_requirement_unmet` defaults to `blank_with_reason`: the panel stays visible and
 states why it is empty, so **a missing measurement is never mistaken for a zero**.
 
-## 10. Decimation is disclosed
+## 11. Decimation is disclosed
 
 "Complete library" can be millions of ions against a few thousand renderable marks.
 `manifest.decimation` records strategy, `kept`, `of` and `seed`, and
 `render.show_decimation_ratio` is `const: true`. A thinned plot states what it dropped.
 
-## 11. Depletion and interference
+## 12. Depletion and interference
 
 **Status:** the fields are defined in the schemas below. The pipeline does not produce them
 yet. The Atlas reads them when present; when they are absent it computes the MS1 part
@@ -365,7 +448,7 @@ ions:**
 `interference: null` means not assessed; `flag: none` means assessed and clean. The two
 must not be conflated: an unassessed ion is not a clean one.
 
-## 12. Open questions
+## 13. Open questions
 
 - `ion_uid` hashes `source_file`. Re-converting a raw file to a new path mints new uids.
   Either freeze the path at first ingest or hash a stable file id instead.

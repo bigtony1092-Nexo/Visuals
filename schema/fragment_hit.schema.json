@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/bigtony1092-Nexo/Visuals/schema/fragment_hit.schema.json",
+  "title": "Fragment-first hit",
+  "description": "One record per line in fragment_hits.jsonl: a candidate found by querying a peptide's fragment ions when its precursor could not be found, because the precursor was modified by something nobody guessed. A modification shifts only the fragments containing the modified residue, so the rest of the ladder is mass-invariant to it and can be queried without naming the modification first. Matched fragments cite the ion_uids they came from, so a hit is traceable back to detections already in the ledger.",
+  "type": "object",
+  "required": ["hit_id", "sample_id", "peptide", "queried", "matched", "k_of_n", "coelution", "evidence", "control"],
+  "additionalProperties": false,
+  "properties": {
+    "hit_id": { "type": "string" },
+    "sample_id": { "type": "string" },
+
+    "peptide": {
+      "type": "object",
+      "required": ["sequence", "boundary"],
+      "additionalProperties": false,
+      "properties": {
+        "sequence": { "type": "string", "pattern": "^[ACDEFGHIKLMNPQRSTVWY]+$" },
+        "prot_accession": { "type": ["string", "null"] },
+        "seq_start": { "type": ["integer", "null"], "minimum": 1 },
+        "boundary": {
+          "enum": ["tryptic", "missed_cleavage"],
+          "description": "A modification on K or R blocks cleavage, so the peptide itself changes. Both boundaries must be queried or that class of modification is missed by construction."
+        }
+      }
+    },
+
+    "queried": {
+      "type": "object",
+      "required": ["n_fragments", "ppm_tolerance"],
+      "additionalProperties": false,
+      "properties": {
+        "n_fragments": { "type": "integer", "minimum": 2, "description": "n in the k-of-n gate." },
+        "fragment_labels": { "type": "array", "items": { "type": "string" } },
+        "charges": { "type": "array", "items": { "type": "integer", "minimum": 1 } },
+        "ppm_tolerance": { "type": "number", "exclusiveMinimum": 0 },
+        "selection": { "enum": ["both_termini", "library_top_intensity", "ladder_spread"] }
+      }
+    },
+
+    "matched": {
+      "type": "array",
+      "description": "The fragments that were found. Each cites the detection it came from, so the hit is anchored in the ledger rather than asserted.",
+      "items": {
+        "type": "object",
+        "required": ["label", "mz"],
+        "additionalProperties": false,
+        "properties": {
+          "label": { "type": "string" },
+          "mz": { "type": "number" },
+          "charge": { "type": ["integer", "null"] },
+          "ion_uid": { "type": ["string", "null"], "description": "The detection in ions.jsonl this fragment is. Usually one that was unassigned." },
+          "apex_rt_min": { "type": ["number", "null"] },
+          "drift": { "type": ["number", "null"] },
+          "ppm_error": { "type": ["number", "null"] },
+          "intensity": { "type": ["number", "null"] }
+        }
+      }
+    },
+
+    "missed": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Queried fragments not found. Not merely a failure count: which ones are missing localizes the modification, since the shifted fragments are the ones containing the modified residue."
+    },
+
+    "k_of_n": {
+      "type": "object",
+      "required": ["matched", "queried", "required"],
+      "additionalProperties": false,
+      "properties": {
+        "matched": { "type": "integer", "minimum": 0 },
+        "queried": { "type": "integer", "minimum": 2 },
+        "required": { "type": "integer", "minimum": 2, "description": "k. Demanding all n fails exactly when the modification is real, because some queried fragments contain the modified residue." }
+      }
+    },
+
+    "coelution": {
+      "type": "object",
+      "required": ["rt_min", "consecutive_scans"],
+      "additionalProperties": false,
+      "properties": {
+        "rt_min": { "type": "number" },
+        "rt_span_min": { "type": ["number", "null"] },
+        "consecutive_scans": { "type": "integer", "minimum": 1 },
+        "drift": { "type": ["number", "null"] },
+        "drift_offset_bins_applied": {
+          "type": ["number", "null"],
+          "description": "Fragments carry their precursor's drift with a systematic offset where mobility separation precedes fragmentation. Requiring the group to agree in drift as well as time is what keeps chance groupings down."
+        }
+      }
+    },
+
+    "site_localization": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "residue_range": { "type": ["string", "null"], "description": "e.g. \"7-9\", read from which fragments shifted." },
+        "basis": { "type": ["string", "null"] }
+      }
+    },
+
+    "precursor": {
+      "type": ["object", "null"],
+      "description": "Null when the precursor was not found. That is a result, not a failure: fragment-only evidence is still evidence and is reported as such.",
+      "additionalProperties": false,
+      "properties": {
+        "found": { "type": "boolean" },
+        "mz": { "type": ["number", "null"] },
+        "charge": { "type": ["integer", "null"] },
+        "neutral_mass": { "type": ["number", "null"] },
+        "ion_uid": { "type": ["string", "null"] },
+        "isotope_spacing_confirms_charge": { "type": ["boolean", "null"] }
+      }
+    },
+
+    "delta_mass": {
+      "type": ["object", "null"],
+      "description": "Observed neutral mass minus the unmodified peptide's. Only computable when a precursor was found.",
+      "additionalProperties": false,
+      "properties": {
+        "value": { "type": "number" },
+        "ppm": { "type": ["number", "null"] },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "monoisotopic", "residues", "plausible"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string" },
+              "monoisotopic": { "type": "number" },
+              "residues": { "type": "string" },
+              "plausible": {
+                "type": "boolean",
+                "description": "False when the peptide carries none of the residues the modification needs. A mass match on an impossible residue is not a candidate."
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "evidence": {
+      "enum": ["fragment_only", "fragment_and_precursor"],
+      "description": "Kept separate from confidence.tier on purpose: this is a different kind of claim, not a rung on the identification ladder."
+    },
+
+    "control": {
+      "type": "object",
+      "description": "Non-negotiable. Fragment masses are not unique, so a hit means nothing without the same query run against sequences that cannot be there.",
+      "required": ["reversed_matched", "entrapment_matched"],
+      "additionalProperties": false,
+      "properties": {
+        "reversed_matched": { "type": "integer", "minimum": 0, "description": "Fragments matched for the reversed sequence, same scans, same drift window." },
+        "entrapment_matched": { "type": "integer", "minimum": 0, "description": "Same, for a peptide that cannot be in the sample (E. coli)." },
+        "cohort_false_rate": { "type": ["number", "null"], "description": "Share of control queries reaching k across the run. This is the number that makes a hit publishable." }
+      }
+    }
+  }
+}

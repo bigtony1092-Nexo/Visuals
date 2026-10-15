@@ -706,6 +706,184 @@
           }
         }
       }
+    },
+    "fragment_first": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Query a peptide's fragment ions when its precursor cannot be found. A modification shifts only the fragments containing the modified residue, so the invariant part of the ladder is a probe that needs no guess about what the modification is. This is how a name enters the Atlas without a conventional search putting it there.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "fragments_per_peptide": {
+          "type": "integer",
+          "minimum": 2,
+          "default": 8,
+          "description": "n in the k-of-n gate."
+        },
+        "min_matched": {
+          "type": "integer",
+          "minimum": 2,
+          "default": 4,
+          "description": "k. Never set this to n: demanding every queried fragment fails exactly when the modification is real, because some of them contain the modified residue."
+        },
+        "fragment_selection": {
+          "enum": [
+            "both_termini",
+            "library_top_intensity",
+            "ladder_spread"
+          ],
+          "default": "both_termini",
+          "description": "both_termini takes the most intense b ions from the N-terminal half and y ions from the C-terminal half, so a modification anywhere still leaves a usable invariant subset. Pure top-intensity selection can put every queried fragment on the same side of the site."
+        },
+        "fragment_charges": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "default": [
+            1,
+            2
+          ]
+        },
+        "ppm_tolerance": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 20
+        },
+        "coelution": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "min_consecutive_scans": {
+              "type": "integer",
+              "minimum": 2,
+              "default": 2
+            },
+            "rt_window_min": {
+              "type": "number",
+              "default": 0.3
+            },
+            "apex_agreement_min": {
+              "type": "number",
+              "default": 0.05,
+              "description": "Maximum spread in apex RT across the matched group."
+            }
+          }
+        },
+        "drift": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Where mobility separation precedes fragmentation, fragments carry their precursor's drift with a systematic offset. Requiring drift agreement as well as co-elution is the single biggest reduction in chance groupings, and is unavailable on instruments without mobility.",
+          "properties": {
+            "use": {
+              "type": "boolean",
+              "default": true
+            },
+            "fragment_offset_bins": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "default": null,
+              "description": "Measured per instrument, e.g. a flat -3.25 bins on Waters HDMSE."
+            },
+            "tolerance_bins": {
+              "type": "number",
+              "default": 2
+            }
+          }
+        },
+        "missed_cleavage_variants": {
+          "type": "boolean",
+          "default": true,
+          "description": "A modified K or R is not cleaved, so a modification there produces a longer peptide with a different fragment set. Querying only the tryptic boundary misses that class by construction."
+        },
+        "localize_site_from_misses": {
+          "type": "boolean",
+          "default": true,
+          "description": "Which queried fragments are absent bounds the modification site, before the precursor is looked at."
+        },
+        "precursor_lookup": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            },
+            "mz_tolerance_ppm": {
+              "type": "number",
+              "default": 10
+            },
+            "max_delta_mass": {
+              "type": "number",
+              "default": 500
+            },
+            "require_isotope_spacing": {
+              "type": "boolean",
+              "default": true,
+              "description": "Charge from the envelope, not assumed."
+            }
+          }
+        },
+        "delta_mass": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "catalog": {
+              "enum": [
+                "unimod",
+                "custom"
+              ],
+              "default": "unimod"
+            },
+            "tolerance_ppm": {
+              "type": "number",
+              "default": 10
+            },
+            "require_residue_present": {
+              "const": true,
+              "description": "A mass match on a residue the peptide does not contain is not a candidate."
+            },
+            "candidates": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            }
+          }
+        },
+        "controls": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The whole argument. Fragment masses are shared across peptides, so a hit without a control that cannot succeed is an anecdote.",
+          "properties": {
+            "reversed_fragment_sets": {
+              "const": true,
+              "description": "The same query on the reversed sequence, same scans, same drift window. Required."
+            },
+            "entrapment_peptides": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": "ecoli",
+              "description": "Peptides that cannot be in the sample, queried identically, to set the rate."
+            },
+            "report_rate": {
+              "const": true,
+              "description": "The control's own match rate travels with every hit."
+            }
+          }
+        }
+      }
     }
   }
 }

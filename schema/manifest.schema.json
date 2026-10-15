@@ -253,6 +253,11 @@
             ]
           },
           "default": []
+        },
+        "fragment_hits": {
+          "type": "boolean",
+          "default": false,
+          "description": "fragment_hits.jsonl \u2014 candidates found by fragment-first querying. Absent from most exports."
         }
       }
     },
