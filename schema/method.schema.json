@@ -4,47 +4,120 @@
   "title": "Visualization method",
   "description": "The fillable, saveable thing. Fill it once, save it, point it at new samples, get the same panels back. It records WHAT to show and HOW to compute it; it never contains results.",
   "type": "object",
-  "required": ["method_id", "name", "version", "inputs", "selection", "quant", "panels"],
+  "required": [
+    "method_id",
+    "name",
+    "version",
+    "inputs",
+    "selection",
+    "quant",
+    "panels"
+  ],
   "additionalProperties": false,
   "properties": {
-    "method_id": { "type": "string", "minLength": 1 },
-    "name": { "type": "string", "minLength": 1 },
-    "version": { "type": "string" },
-    "created_by": { "type": ["string", "null"] },
-    "created_at": { "type": ["string", "null"], "format": "date-time" },
-    "notes": { "type": ["string", "null"] },
-
+    "method_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string"
+    },
+    "created_by": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "created_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "notes": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "inputs": {
       "type": "object",
       "description": "Resolved by the pipeline on the machine holding the data. The browser viewer cannot open these and never tries.",
-      "required": ["raw_dir"],
+      "required": [
+        "raw_dir"
+      ],
       "additionalProperties": false,
       "properties": {
-        "atlas": { "type": ["string", "null"] },
-        "consensus_db": { "type": ["string", "null"] },
-        "raw_dir": { "type": "string" },
+        "atlas": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "consensus_db": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "raw_dir": {
+          "type": "string"
+        },
         "detect_vendor_from_files": {
-          "type": "boolean", "default": true,
+          "type": "boolean",
+          "default": true,
           "description": "Infer vendor / acquisition_method / has_ims from path and content, as populate_consensus_combined.py already does. Manual tagging is the fallback, not the default."
         },
         "manual_overrides": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["match", "set"],
+            "required": [
+              "match",
+              "set"
+            ],
             "additionalProperties": false,
             "properties": {
-              "match": { "type": "string", "description": "Glob against the source file path." },
+              "match": {
+                "type": "string",
+                "description": "Glob against the source file path."
+              },
               "set": {
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "vendor": { "type": "string" },
-                  "acquisition_method": { "type": "string" },
-                  "drift_kind": { "enum": ["ion_mobility", "quad_window", "absent"] },
-                  "sample_class": { "type": "string" },
-                  "batch": { "type": "string" },
-                  "role": { "enum": ["target", "control", "library", "blank"] }
+                  "vendor": {
+                    "type": "string"
+                  },
+                  "acquisition_method": {
+                    "type": "string"
+                  },
+                  "drift_kind": {
+                    "enum": [
+                      "ion_mobility",
+                      "quad_window",
+                      "absent"
+                    ]
+                  },
+                  "sample_class": {
+                    "type": "string"
+                  },
+                  "batch": {
+                    "type": "string"
+                  },
+                  "role": {
+                    "enum": [
+                      "target",
+                      "control",
+                      "library",
+                      "blank"
+                    ]
+                  }
                 }
               }
             }
@@ -52,124 +125,382 @@
         }
       }
     },
-
     "selection": {
       "type": "object",
       "description": "Targets, controls, or the whole library.",
-      "required": ["mode"],
+      "required": [
+        "mode"
+      ],
       "additionalProperties": false,
       "properties": {
-        "mode": { "enum": ["targets", "controls", "targets_and_controls", "library"] },
+        "mode": {
+          "enum": [
+            "targets",
+            "controls",
+            "targets_and_controls",
+            "library"
+          ]
+        },
         "targets": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Accessions or gene names, e.g. Q99836, MYD88."
         },
         "controls": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Reference proteins. Note: GAPDH swung from the 8th to the 96th percentile across one 27-sample cohort on this measurement, so a housekeeping control is not automatically a stable control."
         },
         "library_filter": {
-          "type": ["object", "null"],
+          "type": [
+            "object",
+            "null"
+          ],
           "additionalProperties": false,
           "properties": {
-            "mz_range": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
-            "rt_range": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
-            "charges": { "type": "array", "items": { "type": "integer" } },
-            "include_unassigned": { "type": "boolean", "default": true }
+            "mz_range": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "rt_range": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "charges": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "include_unassigned": {
+              "type": "boolean",
+              "default": true
+            }
+          }
+        },
+        "target_peptides": {
+          "type": "array",
+          "description": "Peptide-level targets. Use when the question is whether a specific ion is present in the raw data at all, rather than which proteins to plot \u2014 a search that never reported a peptide and a peptide that is genuinely absent look identical in search output, and only a coordinate extraction separates them.",
+          "items": {
+            "type": "object",
+            "required": [
+              "sequence"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "sequence": {
+                "type": "string",
+                "pattern": "^[ACDEFGHIKLMNPQRSTVWY]+$"
+              },
+              "prot_accession": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "seq_start": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 1
+              },
+              "charges": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 8
+                },
+                "description": "Charges to extract. Omit to take whatever the Atlas entry carries."
+              },
+              "mz": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "description": "Precomputed precursor m/z keyed by charge, so the extraction does not depend on the reader recomputing it."
+              },
+              "role": {
+                "enum": [
+                  "target",
+                  "positive_control"
+                ],
+                "default": "target",
+                "description": "positive_control marks a peptide the source is known to detect. Without at least one, a null result on the targets is uninterpretable: it cannot be told from the extraction itself failing."
+              },
+              "note": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
           }
         }
       }
     },
-
     "tier_policy": {
       "type": "object",
       "description": "Which confidence tier is allowed in. Defaults are deliberately strict.",
       "additionalProperties": false,
       "properties": {
-        "min_tier": { "enum": ["bare_proximity", "pass2_confirmed", "atlas_consensus"], "default": "pass2_confirmed" },
-        "mix_tiers": { "type": "boolean", "default": false, "description": "When false, a panel refuses rather than silently blending a decoy-controlled tier with an untested one." },
-        "label_tier_on_panels": { "type": "boolean", "default": true }
+        "min_tier": {
+          "enum": [
+            "bare_proximity",
+            "pass2_confirmed",
+            "atlas_consensus"
+          ],
+          "default": "pass2_confirmed"
+        },
+        "mix_tiers": {
+          "type": "boolean",
+          "default": false,
+          "description": "When false, a panel refuses rather than silently blending a decoy-controlled tier with an untested one."
+        },
+        "label_tier_on_panels": {
+          "type": "boolean",
+          "default": true
+        }
       }
     },
-
     "quant": {
       "type": "object",
       "description": "Protein-level amount. Top3avg is RELATIVE abundance unless a known-amount standard is declared below.",
-      "required": ["metric"],
+      "required": [
+        "metric"
+      ],
       "additionalProperties": false,
       "properties": {
-        "metric": { "enum": ["top3avg"], "default": "top3avg" },
-        "intensity_field": { "enum": ["matched_intensity", "summed_precursor_intensity"], "default": "matched_intensity" },
-        "peptide_aggregation": { "enum": ["max"], "default": "max", "description": "Per-peptide maximum across scans, one number per peptide." },
-        "top_n": { "type": "integer", "minimum": 1, "maximum": 3, "default": 3 },
-        "min_peptides": { "type": "integer", "minimum": 1, "default": 1 },
-        "pad_missing_peptides": { "const": false, "description": "Forbidden. Fewer than 3 peptides averages what is there." },
+        "metric": {
+          "enum": [
+            "top3avg"
+          ],
+          "default": "top3avg"
+        },
+        "intensity_field": {
+          "enum": [
+            "matched_intensity",
+            "summed_precursor_intensity"
+          ],
+          "default": "matched_intensity"
+        },
+        "peptide_aggregation": {
+          "enum": [
+            "max"
+          ],
+          "default": "max",
+          "description": "Per-peptide maximum across scans, one number per peptide."
+        },
+        "top_n": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3,
+          "default": 3
+        },
+        "min_peptides": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        },
+        "pad_missing_peptides": {
+          "const": false,
+          "description": "Forbidden. Fewer than 3 peptides averages what is there."
+        },
         "report": {
           "type": "array",
-          "items": { "enum": ["raw", "rank", "percentile"] },
-          "default": ["raw", "percentile"]
+          "items": {
+            "enum": [
+              "raw",
+              "rank",
+              "percentile"
+            ]
+          },
+          "default": [
+            "raw",
+            "percentile"
+          ]
         },
         "normalization": {
           "type": "array",
           "description": "Each named explicitly, because each hides something different.",
-          "items": { "enum": ["none", "within_protein_max", "absolute_log10", "median_scaled", "reference_ratio"] },
-          "default": ["median_scaled"]
+          "items": {
+            "enum": [
+              "none",
+              "within_protein_max",
+              "absolute_log10",
+              "median_scaled",
+              "reference_ratio"
+            ]
+          },
+          "default": [
+            "median_scaled"
+          ]
         },
-        "reference_protein": { "type": ["string", "null"], "description": "For reference_ratio normalization. Must be present in the same run." },
+        "reference_protein": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "For reference_ratio normalization. Must be present in the same run."
+        },
         "absolute_standard": {
-          "type": ["object", "null"],
+          "type": [
+            "object",
+            "null"
+          ],
           "description": "REQUIRED for any claim of absolute concentration. Without it, Top3avg is relative and panels must be labelled as relative abundance.",
-          "required": ["protein", "amount", "unit"],
+          "required": [
+            "protein",
+            "amount",
+            "unit"
+          ],
           "additionalProperties": false,
           "properties": {
-            "protein": { "type": "string" },
-            "amount": { "type": "number", "exclusiveMinimum": 0 },
-            "unit": { "enum": ["fmol", "pmol", "ng", "ug"] },
-            "spiked_per": { "enum": ["injection", "ug_total_protein"] }
+            "protein": {
+              "type": "string"
+            },
+            "amount": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "unit": {
+              "enum": [
+                "fmol",
+                "pmol",
+                "ng",
+                "ug"
+              ]
+            },
+            "spiked_per": {
+              "enum": [
+                "injection",
+                "ug_total_protein"
+              ]
+            }
           }
         }
       }
     },
-
     "stoichiometry": {
-      "type": ["object", "null"],
+      "type": [
+        "object",
+        "null"
+      ],
       "additionalProperties": false,
       "properties": {
         "pairs": {
           "type": "array",
-          "items": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 2 },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
           "description": "Numerator/denominator accession pairs."
         },
-        "basis": { "enum": ["top3avg", "top3avg_median_scaled"], "default": "top3avg" },
-        "require_same_run": { "const": true, "description": "Cross-run ratios mix biology with loading." },
-        "min_peptides_both_sides": { "type": "integer", "minimum": 1, "default": 2 }
+        "basis": {
+          "enum": [
+            "top3avg",
+            "top3avg_median_scaled"
+          ],
+          "default": "top3avg"
+        },
+        "require_same_run": {
+          "const": true,
+          "description": "Cross-run ratios mix biology with loading."
+        },
+        "min_peptides_both_sides": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 2
+        }
       }
     },
-
     "flux": {
-      "type": ["object", "null"],
+      "type": [
+        "object",
+        "null"
+      ],
       "description": "Change in a protein's amount across runs.",
       "additionalProperties": false,
       "properties": {
-        "group_by": { "enum": ["sample", "batch", "timepoint", "sample_class"], "default": "sample" },
-        "order_by": { "type": ["string", "null"], "description": "Manifest field giving run order, e.g. acquired_at or sample_id." },
-        "baseline": { "type": ["string", "null"], "description": "Group treated as the baseline; others expressed relative to it." },
-        "normalization": { "enum": ["median_scaled", "reference_ratio", "within_protein_max"], "default": "median_scaled" },
-        "show_loading_proxy": { "type": "boolean", "default": true, "description": "Overlays total_signal so a flux that is really a loading change is visible as one." }
+        "group_by": {
+          "enum": [
+            "sample",
+            "batch",
+            "timepoint",
+            "sample_class"
+          ],
+          "default": "sample"
+        },
+        "order_by": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Manifest field giving run order, e.g. acquired_at or sample_id."
+        },
+        "baseline": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Group treated as the baseline; others expressed relative to it."
+        },
+        "normalization": {
+          "enum": [
+            "median_scaled",
+            "reference_ratio",
+            "within_protein_max"
+          ],
+          "default": "median_scaled"
+        },
+        "show_loading_proxy": {
+          "type": "boolean",
+          "default": true,
+          "description": "Overlays total_signal so a flux that is really a loading change is visible as one."
+        }
       }
     },
-
     "classification": {
-      "type": ["object", "null"],
+      "type": [
+        "object",
+        "null"
+      ],
       "description": "Can an ion map tell HeLa from K562? Defaults enforce the honest version of that test.",
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean", "default": false },
-        "label_field": { "const": "provenance.sample_class" },
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "label_field": {
+          "const": "provenance.sample_class"
+        },
         "features": {
-          "enum": ["ion_map_grid", "protein_percentile_vector", "both"],
+          "enum": [
+            "ion_map_grid",
+            "protein_percentile_vector",
+            "both"
+          ],
           "default": "ion_map_grid",
           "description": "ion_map_grid = binned occupancy/intensity over (m/z, RT[, drift])."
         },
@@ -177,74 +508,201 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "mz_bins": { "type": "integer", "minimum": 4, "default": 40 },
-            "rt_bins": { "type": "integer", "minimum": 4, "default": 40 },
-            "drift_bins": { "type": ["integer", "null"], "default": null },
-            "value": { "enum": ["count", "log_intensity_sum"], "default": "log_intensity_sum" }
+            "mz_bins": {
+              "type": "integer",
+              "minimum": 4,
+              "default": 40
+            },
+            "rt_bins": {
+              "type": "integer",
+              "minimum": 4,
+              "default": 40
+            },
+            "drift_bins": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "default": null
+            },
+            "value": {
+              "enum": [
+                "count",
+                "log_intensity_sum"
+              ],
+              "default": "log_intensity_sum"
+            }
           }
         },
         "holdout": {
-          "enum": ["batch", "vendor", "batch_and_vendor"],
+          "enum": [
+            "batch",
+            "vendor",
+            "batch_and_vendor"
+          ],
           "default": "batch",
           "description": "Never random. A random split lets the model identify the instrument and the loading, score highly, and tell you nothing about cell line."
         },
         "within_stratum_only": {
-          "type": "boolean", "default": true,
+          "type": "boolean",
+          "default": true,
           "description": "Also run the test inside a single vendor+method stratum. If accuracy collapses there, the signal was acquisition, not biology."
         },
-        "report_confusion": { "type": "boolean", "default": true },
-        "min_samples_per_class": { "type": "integer", "minimum": 2, "default": 3 }
+        "report_confusion": {
+          "type": "boolean",
+          "default": true
+        },
+        "min_samples_per_class": {
+          "type": "integer",
+          "minimum": 2,
+          "default": 3
+        }
       }
     },
-
     "panels": {
       "type": "array",
       "minItems": 1,
       "description": "What the user ticked. ids come from schema/panels.json.",
       "items": {
         "type": "object",
-        "required": ["id"],
+        "required": [
+          "id"
+        ],
         "additionalProperties": false,
         "properties": {
-          "id": { "type": "string" },
-          "title_override": { "type": ["string", "null"] },
+          "id": {
+            "type": "string"
+          },
+          "title_override": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "scales": {
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "x": { "enum": ["linear", "log"] },
-              "y": { "enum": ["linear", "log"] }
+              "x": {
+                "enum": [
+                  "linear",
+                  "log"
+                ]
+              },
+              "y": {
+                "enum": [
+                  "linear",
+                  "log"
+                ]
+              }
             }
           },
-          "color_by": { "enum": ["protein", "charge", "isotope", "sample", "sample_class", "tier", "vendor"], "default": "protein" },
-          "split_by": { "enum": ["none", "sample", "sample_class", "vendor", "acquisition_method"], "default": "none" },
-          "normalization": { "enum": ["none", "within_protein_max", "absolute_log10", "median_scaled", "reference_ratio"] },
+          "color_by": {
+            "enum": [
+              "protein",
+              "charge",
+              "isotope",
+              "sample",
+              "sample_class",
+              "tier",
+              "vendor"
+            ],
+            "default": "protein"
+          },
+          "split_by": {
+            "enum": [
+              "none",
+              "sample",
+              "sample_class",
+              "vendor",
+              "acquisition_method"
+            ],
+            "default": "none"
+          },
+          "normalization": {
+            "enum": [
+              "none",
+              "within_protein_max",
+              "absolute_log10",
+              "median_scaled",
+              "reference_ratio"
+            ]
+          },
           "on_requirement_unmet": {
-            "enum": ["blank_with_reason", "omit", "degrade"],
+            "enum": [
+              "blank_with_reason",
+              "omit",
+              "degrade"
+            ],
             "default": "blank_with_reason",
             "description": "blank_with_reason keeps the panel visible and states why it is empty, so a missing measurement is never mistaken for a zero."
           }
         }
       }
     },
-
     "render": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "theme": { "enum": ["dark", "light"], "default": "dark" },
-        "max_points": { "type": "integer", "minimum": 100, "default": 60000 },
-        "decimation": { "enum": ["none", "top_intensity", "uniform_random", "grid_density", "per_sample_cap"], "default": "grid_density" },
-        "decimation_seed": { "type": ["integer", "null"], "default": 7 },
-        "show_decimation_ratio": { "const": true, "description": "Non-negotiable: a thinned plot states what it dropped." },
+        "theme": {
+          "enum": [
+            "dark",
+            "light"
+          ],
+          "default": "dark"
+        },
+        "max_points": {
+          "type": "integer",
+          "minimum": 100,
+          "default": 60000
+        },
+        "decimation": {
+          "enum": [
+            "none",
+            "top_intensity",
+            "uniform_random",
+            "grid_density",
+            "per_sample_cap"
+          ],
+          "default": "grid_density"
+        },
+        "decimation_seed": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "default": 7
+        },
+        "show_decimation_ratio": {
+          "const": true,
+          "description": "Non-negotiable: a thinned plot states what it dropped."
+        },
         "animate": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "enabled": { "type": "boolean", "default": true },
-            "mode": { "enum": ["trace_one", "replay_acquisition", "flash_group"], "default": "trace_one" },
-            "seconds_per_ion": { "type": "number", "exclusiveMinimum": 0, "default": 6.8 },
-            "speed": { "type": "number", "exclusiveMinimum": 0, "default": 1 }
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            },
+            "mode": {
+              "enum": [
+                "trace_one",
+                "replay_acquisition",
+                "flash_group"
+              ],
+              "default": "trace_one"
+            },
+            "seconds_per_ion": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "default": 6.8
+            },
+            "speed": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "default": 1
+            }
           }
         }
       }

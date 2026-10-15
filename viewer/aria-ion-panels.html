@@ -11,6 +11,7 @@
   --ion-b:#3987e5; --ion-y:#e66767; --ion-none:#6b7a85;
   --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s-other:#8a97a1;
   --good:#199e70; --warn:#c98500; --crit:#e66767;
+  --seq-1:#14364a; --seq-2:#1c5cab; --seq-3:#2a78d6; --seq-4:#5598e7; --seq-5:#9ec5f4;
   --font-ui:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
   --font-mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
 }
@@ -24,6 +25,7 @@
     --ion-b:#2a78d6; --ion-y:#e34948; --ion-none:#7b7a76;
     --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s-other:#6e6d69;
     --good:#1baf7a; --warn:#eda100; --crit:#e34948;
+    --seq-1:#cde2fb; --seq-2:#86b6ef; --seq-3:#3987e5; --seq-4:#1c5cab; --seq-5:#0d366b;
   }
 }
 :root[data-theme="light"]{
@@ -35,6 +37,7 @@
   --ion-b:#2a78d6; --ion-y:#e34948; --ion-none:#7b7a76;
   --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s-other:#6e6d69;
   --good:#1baf7a; --warn:#eda100; --crit:#e34948;
+  --seq-1:#cde2fb; --seq-2:#86b6ef; --seq-3:#3987e5; --seq-4:#1c5cab; --seq-5:#0d366b;
 }
 *{box-sizing:border-box}
 html,body{height:100%}
@@ -654,6 +657,10 @@ function scatterPanel(body,cfg){
       var pos=ys.filter(function(v){return v>0;});
       ylo=Math.pow(10,Math.floor(Math.log10(Math.min.apply(null,pos))));
       yhi=Math.pow(10,Math.ceil(Math.log10(Math.max.apply(null,pos))));
+    } else if(cfg.yZero===false){
+      var mn=Math.min.apply(null,ys), mx=Math.max.apply(null,ys);
+      var padY=(mx-mn)*0.08||Math.abs(mn||1)*0.05;
+      ylo=mn-padY; yhi=mx+padY;
     } else { ylo=0; yhi=Math.max.apply(null,ys)*1.1; }
     var xpad=(xhi-xlo)*0.05;
     var X=function(v){return pad.l+(v-(xlo-xpad))/((xhi+xpad)-(xlo-xpad))*(W-pad.l-pad.r);};
@@ -667,7 +674,7 @@ function scatterPanel(body,cfg){
       var py=Math.round(Y(t))+.5;
       g.beginPath(); g.moveTo(pad.l,py); g.lineTo(W-pad.r,py); g.stroke();
       g.textAlign='right'; g.textBaseline='middle';
-      g.fillText(cfg.logY?sciLabel(t):sciLabel(t),pad.l-8,py);
+      g.fillText(cfg.yFmt?cfg.yFmt(t):sciLabel(t),pad.l-8,py);
     });
     niceTicks(xlo,xhi,6).forEach(function(t){
       var px=Math.round(X(t))+.5;
@@ -870,7 +877,334 @@ var P_TOP3={
   }
 };
 
-var PANELS=[P_MIRROR,P_ISO,P_XIC,P_INT_RT,P_SEQ,P_TOP3];
+
+/* ---------- shared: which samples carry real mobility ---------- */
+function driftSamples(){
+  var ok={},bad=[];
+  state.data.manifest.samples.forEach(function(s){
+    if(s.drift_kind==='ion_mobility') ok[s.sample_id]=1;
+    else bad.push(s);
+  });
+  return {ok:ok,bad:bad};
+}
+function driftGate(){
+  var d=driftSamples(), nOk=Object.keys(d.ok).length;
+  function why(s){
+    return s.drift_kind==='quad_window'
+      ? s.sample_id+' ('+s.acquisition_method+'): quadrupole window position, not mobility'
+      : s.sample_id+' ('+s.acquisition_method+'): no drift column in the raw file';
+  }
+  if(!nOk) return ['BLANK','no sample has real ion mobility — '+d.bad.map(why).join('; ')];
+  if(d.bad.length) return ['PARTIAL','excludes '+d.bad.map(why).join('; ')];
+  return ['RENDER',''];
+}
+function driftIons(){
+  var ok=driftSamples().ok;
+  return state.data.ions.filter(function(i){
+    return ok[i.sample_id] && i.coord && i.coord.drift_kind==='ion_mobility' && i.coord.drift!=null;
+  });
+}
+
+/* ---------- shared: binned density on canvas ---------- */
+function densityPanel(body,cfg){
+  var wrap=document.createElement('div'); wrap.className='chartwrap';
+  var cv=document.createElement('canvas'); wrap.appendChild(cv); body.appendChild(wrap);
+  var tip=mkTip(wrap);
+  var H=cfg.height||430, pad={l:66,r:16,t:16,b:44}, NBX=cfg.bins||34, NBY=NBX;
+  var grid=null, xlo,xhi,ylo,yhi, cw,ch, maxN=0;
+  function paint(){
+    var W=wrap.clientWidth||760, dpr=Math.min(2,window.devicePixelRatio||1);
+    cv.width=W*dpr; cv.height=H*dpr; cv.style.height=H+'px';
+    var g=cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
+    var pts=cfg.points; if(!pts.length) return;
+    xlo=Math.min.apply(null,pts.map(function(p){return p.x;}));
+    xhi=Math.max.apply(null,pts.map(function(p){return p.x;}));
+    ylo=Math.min.apply(null,pts.map(function(p){return p.y;}));
+    yhi=Math.max.apply(null,pts.map(function(p){return p.y;}));
+    if(xhi===xlo) xhi=xlo+1; if(yhi===ylo) yhi=ylo+1;
+    /* square cells: bin the y axis to match the x cell size, so the map is a map */
+    var plotW=W-pad.l-pad.r, plotH=H-pad.t-pad.b;
+    cw=plotW/NBX; NBY=Math.max(6,Math.round(plotH/cw)); ch=plotH/NBY;
+    grid=[]; maxN=0;
+    pts.forEach(function(p){
+      var bx=clamp(Math.floor((p.x-xlo)/(xhi-xlo)*NBX),0,NBX-1);
+      var by=clamp(Math.floor((p.y-ylo)/(yhi-ylo)*NBY),0,NBY-1);
+      var k=by*NBX+bx; grid[k]=(grid[k]||0)+1;
+      if(grid[k]>maxN) maxN=grid[k];
+    });
+    var ramp=[tok('--seq-1'),tok('--seq-2'),tok('--seq-3'),tok('--seq-4'),tok('--seq-5')];
+    for(var k=0;k<NBX*NBY;k++){
+      var n=grid[k]; if(!n) continue;
+      var f=maxN>1?Math.log(1+n)/Math.log(1+maxN):1;
+      var ci=clamp(Math.floor(f*ramp.length),0,ramp.length-1);
+      var bx=k%NBX, by=(k/NBX)|0;
+      g.fillStyle=ramp[ci];
+      /* 1px gap keeps adjacent cells separable */
+      g.fillRect(pad.l+bx*cw, (H-pad.b)-(by+1)*ch, Math.max(1,cw-1), Math.max(1,ch-1));
+    }
+    var ink=tok('--fg-3'), line=tok('--line-2'); g.font='9.5px '+tok('--font-mono');
+    g.strokeStyle=line; g.lineWidth=1;
+    g.beginPath(); g.moveTo(pad.l,H-pad.b+.5); g.lineTo(W-pad.r,H-pad.b+.5); g.stroke();
+    g.fillStyle=ink; g.textAlign='center'; g.textBaseline='top';
+    niceTicks(xlo,xhi,6).forEach(function(t){
+      var px=pad.l+(t-xlo)/(xhi-xlo)*(W-pad.l-pad.r);
+      g.fillText(cfg.xFmt?cfg.xFmt(t):sciLabel(t),px,H-pad.b+8);
+    });
+    g.textAlign='right'; g.textBaseline='middle';
+    niceTicks(ylo,yhi,5).forEach(function(t){
+      var py=(H-pad.b)-(t-ylo)/(yhi-ylo)*(H-pad.t-pad.b);
+      g.fillText(cfg.yFmt?cfg.yFmt(t):sciLabel(t),pad.l-8,py);
+    });
+    g.textAlign='center'; g.fillText(cfg.xLabel,(pad.l+W-pad.r)/2,H-14);
+    g.save(); g.translate(16,(pad.t+H-pad.b)/2); g.rotate(-Math.PI/2);
+    g.textBaseline='middle'; g.fillText(cfg.yLabel,0,0); g.restore();
+  }
+  paint();
+  var ro=window.ResizeObserver?new ResizeObserver(paint):null;
+  if(ro) ro.observe(wrap); else window.addEventListener('resize',paint);
+  cv.addEventListener('mousemove',function(ev){
+    if(!grid) return;
+    var r=cv.getBoundingClientRect(), mx=ev.clientX-r.left, my=ev.clientY-r.top;
+    var bx=Math.floor((mx-pad.l)/cw), by=Math.floor(((H-pad.b)-my)/ch);
+    if(bx<0||by<0||bx>=NBX||by>=NBY){tip.hide();return;}
+    var n=grid[by*NBX+bx];
+    if(!n){tip.hide();return;}
+    var x0=xlo+(xhi-xlo)*bx/NBX, x1=xlo+(xhi-xlo)*(bx+1)/NBX;
+    var y0=ylo+(yhi-ylo)*by/NBY, y1=ylo+(yhi-ylo)*(by+1)/NBY;
+    tip.show('<span class=k>'+esc(cfg.xLabel)+'</span> '+fmt(x0,2)+'–'+fmt(x1,2)+
+             '<br><span class=k>'+esc(cfg.yLabel)+'</span> '+fmt(y0,3)+'–'+fmt(y1,3)+
+             '<br><span class=k>ions</span> '+fmtInt(n),mx,my);
+  });
+  cv.addEventListener('mouseleave',function(){tip.hide();});
+  return function(){return maxN;};
+}
+
+/* ---------- P7: drift vs retention time ---------- */
+var P_DRIFT_RT={
+  id:'drift_vs_time', title:'Drift vs retention time', familiarity:'bridge',
+  gate:driftGate,
+  draw:function(body){
+    var ids=state.data.manifest.samples.map(function(s){return s.sample_id;});
+    var cmap=sampleColors(ids);
+    var ions=driftIons();
+    var pts=ions.map(function(i){
+      return {x:i.coord.rt_min,y:i.coord.drift,color:cmap[i.sample_id]||tok('--s-other'),
+        tip:'<span class=k>'+esc(i.sample_id)+'</span> '+esc(i.annotation?i.annotation.peptide_sequence:'unassigned')+
+            '<br><span class=k>RT</span> '+fmt(i.coord.rt_min,2)+' min<br><span class=k>1/K0</span> '+fmt(i.coord.drift,4)+
+            '<br><span class=k>m/z</span> '+fmt(i.coord.mz,4)+' ('+i.coord.charge+'+)'};
+    });
+    scatterPanel(body,{points:pts,logY:false,yZero:false,xLabel:'retention time (min)',yLabel:'drift (1/K0)',
+      xFmt:function(t){return fmt(t,0);},yFmt:function(t){return fmt(t,3);}});
+    return {
+      readout:[['ions',fmtInt(pts.length)],['samples with real drift',Object.keys(driftSamples().ok).length]],
+      legend:ids.slice(0,3).map(function(id,i){return [SERIES[i],id];})
+        .concat(ids.length>3?[['--s-other','other ('+(ids.length-3)+')']]:[]),
+      foot:'Only samples whose drift is real ion mobility are plotted. SONAR and DDA samples are excluded rather than drawn on a mobility axis, because their drift column means something else or nothing.',
+      cols:['sample','peptide','RT (min)','drift (1/K0)','m/z','z'],
+      rows:ions.map(function(i){return [i.sample_id,i.annotation?i.annotation.peptide_sequence:'—',
+        fmt(i.coord.rt_min,3),fmt(i.coord.drift,4),fmt(i.coord.mz,4),i.coord.charge];})
+    };
+  }
+};
+
+/* ---------- P8: m/z vs drift ---------- */
+var P_MZ_DRIFT={
+  id:'mz_vs_drift', title:'m/z vs drift', familiarity:'bridge',
+  gate:driftGate,
+  draw:function(body){
+    var ions=driftIons();
+    var pts=ions.map(function(i){return {x:i.coord.drift,y:i.coord.mz};});
+    var maxOf=densityPanel(body,{points:pts,bins:30,height:430,xLabel:'drift (1/K0)',yLabel:'m/z',
+      xFmt:function(t){return fmt(t,2);},yFmt:function(t){return fmt(t,0);}});
+    return {
+      readout:[['ions',fmtInt(pts.length)],['cells','square, 30 across'],['densest cell',fmtInt(maxOf())+' ions']],
+      legend:[['--seq-1','1 ion'],['--seq-3','more'],['--seq-5','densest']],
+      foot:'Binned density, not a scatter: at real export sizes overplotting hides exactly the structure this panel is for. Colour is one hue on a log count scale. The diagonal band is the mobility\u2013mass relationship; departures from it are where charge states and conformers separate.',
+      cols:['drift (1/K0)','m/z','sample','peptide'],
+      rows:ions.map(function(i){return [fmt(i.coord.drift,4),fmt(i.coord.mz,4),i.sample_id,
+        i.annotation?i.annotation.peptide_sequence:'—'];})
+    };
+  }
+};
+
+
+/* ---------- P9: stoichiometry ---------- */
+var P_STOICH={
+  id:'stoichiometry', title:'Protein stoichiometry ratios', familiarity:'bridge',
+  gate:function(){
+    if(!tables().proteins) return ['BLANK','this export has no proteins.jsonl'];
+    var accs={}; state.data.proteins.forEach(function(p){accs[p.prot_accession]=1;});
+    var n=Object.keys(accs).length;
+    if(n<2) return ['BLANK','needs at least 2 proteins in the same run, export has '+n];
+    var num=state.protein||Object.keys(accs)[0];
+    var thin=state.data.proteins.filter(function(p){return p.n_peptides_used<2;}).length;
+    if(thin) return ['PARTIAL',thin+' of '+state.data.proteins.length+
+      ' quant records rest on a single peptide; those ratios are not the same measurement as a 3-peptide one'];
+    return ['RENDER',''];
+  },
+  draw:function(body){
+    var samples=state.data.manifest.samples.map(function(s){return s.sample_id;});
+    var by={};
+    state.data.proteins.forEach(function(p){
+      (by[p.prot_accession]=by[p.prot_accession]||{name:p.protein_name,rows:{}}).rows[p.sample_id]=p;
+    });
+    var accs=Object.keys(by);
+    var num=state.protein&&by[state.protein]?state.protein:accs[0];
+    var dens=accs.filter(function(a){return a!==num;}).slice(0,3);
+    var W=760,H=280,L=66,R=104,T=20,B=48;
+    var x=function(i){return L+(samples.length===1?0.5:i/(samples.length-1))*(W-L-R);};
+    var vals=[];
+    dens.forEach(function(d){
+      samples.forEach(function(sid){
+        var a=by[num].rows[sid], b=by[d].rows[sid];
+        if(a&&b&&b.top3avg>0) vals.push(a.top3avg/b.top3avg);
+      });
+    });
+    var lo=Math.min.apply(null,vals), hi=Math.max.apply(null,vals);
+    var flo=Math.pow(10,Math.floor(Math.log10(Math.min(lo,1)))), fhi=Math.pow(10,Math.ceil(Math.log10(Math.max(hi,1))));
+    var y=function(v){return (H-B)-(Math.log10(v)-Math.log10(flo))/(Math.log10(fhi)-Math.log10(flo))*((H-B)-T);};
+    var grid=tok('--line'), ink=tok('--fg-3');
+    var out=['<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Protein stoichiometry ratios">'];
+    for(var e=Math.log10(flo);e<=Math.log10(fhi)+1e-9;e++){
+      var v=Math.pow(10,e);
+      out.push('<line x1="'+L+'" y1="'+fmt(y(v),1)+'" x2="'+(W-R)+'" y2="'+fmt(y(v),1)+'" stroke="'+grid+'" stroke-width="1"/>');
+      out.push('<text x="'+(L-8)+'" y="'+fmt(y(v)+3,1)+'" fill="'+ink+'" font-family="'+tok('--font-mono')+
+        '" font-size="9.5" text-anchor="end">'+sciLabel(v)+'</text>');
+    }
+    /* parity line: equal amounts */
+    if(1>=flo&&1<=fhi){
+      out.push('<line x1="'+L+'" y1="'+fmt(y(1),1)+'" x2="'+(W-R)+'" y2="'+fmt(y(1),1)+
+        '" stroke="'+tok('--line-2')+'" stroke-width="1" stroke-dasharray="4,4"/>');
+      out.push('<text x="'+(W-R-4)+'" y="'+fmt(y(1)-6,1)+'" fill="'+ink+'" font-family="'+tok('--font-mono')+
+        '" font-size="9" text-anchor="end">equal</text>');
+    }
+    var rows=[];
+    dens.forEach(function(d,di){
+      var c=tok(SERIES[di]), path=[], last=null;
+      samples.forEach(function(sid,i){
+        var a=by[num].rows[sid], b=by[d].rows[sid];
+        if(!a||!b||!(b.top3avg>0)) return;
+        var r=a.top3avg/b.top3avg;
+        path.push((path.length?'L':'M')+fmt(x(i),1)+' '+fmt(y(r),1));
+        last={i:i,r:r};
+        out.push('<circle cx="'+fmt(x(i),1)+'" cy="'+fmt(y(r),1)+'" r="5" fill="'+c+'" stroke="'+tok('--surface')+
+          '" stroke-width="2" data-tip="<span class=k>'+esc(sid)+'</span> '+esc(num)+' / '+esc(d)+
+          '<br><span class=k>ratio</span> '+fmt(r,3)+
+          '<br><span class=k>'+esc(num)+'</span> '+fmt(a.top3avg,3)+' ('+a.n_peptides_used+' pep)'+
+          '<br><span class=k>'+esc(d)+'</span> '+fmt(b.top3avg,3)+' ('+b.n_peptides_used+' pep)"/>');
+        rows.push([sid,num,d,fmt(r,3),a.n_peptides_used+' / '+b.n_peptides_used]);
+      });
+      if(path.length>1) out.push('<path d="'+path.join(' ')+'" fill="none" stroke="'+c+'" stroke-width="2"/>');
+      if(last) out.push('<text x="'+fmt(x(last.i)+11,1)+'" y="'+fmt(y(last.r)+3.5,1)+'" fill="'+c+
+        '" font-family="'+tok('--font-mono')+'" font-size="10.5" font-weight="600">/ '+
+        esc((by[d].name||d).replace('_HUMAN',''))+'</text>');
+    });
+    out.push('<line x1="'+L+'" y1="'+(H-B)+'" x2="'+(W-R)+'" y2="'+(H-B)+'" stroke="'+tok('--line-2')+'" stroke-width="1"/>');
+    samples.forEach(function(sid,i){
+      out.push('<text x="'+fmt(x(i),1)+'" y="'+(H-B+18)+'" fill="'+ink+'" font-family="'+tok('--font-mono')+
+        '" font-size="9.5" text-anchor="middle">'+esc(sid)+'</text>');
+    });
+    out.push('<text x="'+((L+W-R)/2)+'" y="'+(H-8)+'" fill="'+ink+'" font-family="'+tok('--font-mono')+
+      '" font-size="9.5" text-anchor="middle">sample</text>');
+    out.push('</svg>');
+    body.innerHTML='<div class="chartwrap">'+out.join('')+'</div>';
+    attachSvgTips(body.firstChild);
+    return {
+      readout:[['numerator',esc((by[num].name||num))],['denominators',dens.length],['basis','Top3avg, same run only']],
+      legend:dens.map(function(d,i){return [SERIES[i],(by[num].name||num)+' / '+(by[d].name||d)];}),
+      foot:'Ratios are computed within one run only \u2014 a cross-run ratio mixes biology with loading. Peptide counts on both sides are in the hover: a 1-peptide against a 3-peptide Top3avg is not the same measurement. Pick a different numerator from the protein list.',
+      cols:['sample','numerator','denominator','ratio','peptides used'],
+      rows:rows
+    };
+  }
+};
+
+/* ---------- P10: flux across runs ---------- */
+var P_FLUX={
+  id:'flux', title:'Flux across runs', familiarity:'bridge',
+  gate:function(){
+    if(!tables().proteins) return ['BLANK','this export has no proteins.jsonl'];
+    if(state.data.manifest.samples.length<2) return ['BLANK','needs at least 2 samples'];
+    var withNorm=state.data.proteins.filter(function(p){
+      return p.normalized && (p.normalized.median_scaled!=null || p.normalized.within_protein_max!=null);});
+    if(withNorm.length) return ['RENDER',''];
+    /* fall back to viewer-side median scaling only when there are enough proteins for a median to mean anything */
+    var perSample={};
+    state.data.proteins.forEach(function(p){ (perSample[p.sample_id]=perSample[p.sample_id]||[]).push(p); });
+    var smallest=Math.min.apply(null,Object.keys(perSample).map(function(k){return perSample[k].length;}));
+    if(smallest<5) return ['BLANK','no normalized values in this export, and viewer-side median scaling needs more proteins per sample than this export carries (smallest sample has '+smallest+'). Raw Top3avg across runs mixes biology with loading, so this panel will not draw it'];
+    return ['PARTIAL','no normalized values in the export — median scaling computed in the viewer from Top3avg'];
+  },
+  draw:function(body){
+    var samples=state.data.manifest.samples.map(function(s){return s.sample_id;});
+    var perSample={};
+    state.data.proteins.forEach(function(p){ (perSample[p.sample_id]=perSample[p.sample_id]||[]).push(p); });
+    var med={};
+    samples.forEach(function(sid){
+      var v=(perSample[sid]||[]).map(function(p){return p.top3avg;}).sort(function(a,b){return a-b;});
+      med[sid]=v.length?v[Math.floor(v.length/2)]:1;
+    });
+    var by={},usedStored=false;
+    state.data.proteins.forEach(function(p){
+      var e=(by[p.prot_accession]=by[p.prot_accession]||{name:p.protein_name,rows:{}});
+      var v=(p.normalized&&p.normalized.median_scaled!=null)?p.normalized.median_scaled:(p.top3avg/(med[p.sample_id]||1));
+      if(p.normalized&&p.normalized.median_scaled!=null) usedStored=true;
+      e.rows[p.sample_id]={v:v,p:p};
+    });
+    var accs=Object.keys(by).slice(0,3);
+    var vals=[]; accs.forEach(function(a){samples.forEach(function(sid){var r=by[a].rows[sid]; if(r) vals.push(r.v);});});
+    var W=760,H=280,L=66,R=104,T=20,B=48;
+    var x=function(i){return L+(samples.length===1?0.5:i/(samples.length-1))*(W-L-R);};
+    var hi=Math.max.apply(null,vals)*1.1, lo=0;
+    var y=function(v){return (H-B)-(v-lo)/(hi-lo)*((H-B)-T);};
+    var grid=tok('--line'), ink=tok('--fg-3');
+    var out=['<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Flux across runs">'];
+    niceTicks(lo,hi,4).forEach(function(t){
+      out.push('<line x1="'+L+'" y1="'+fmt(y(t),1)+'" x2="'+(W-R)+'" y2="'+fmt(y(t),1)+'" stroke="'+grid+'" stroke-width="1"/>');
+      out.push('<text x="'+(L-8)+'" y="'+fmt(y(t)+3,1)+'" fill="'+ink+'" font-family="'+tok('--font-mono')+
+        '" font-size="9.5" text-anchor="end">'+sciLabel(t)+'</text>');
+    });
+    var rows=[];
+    accs.forEach(function(a,ai){
+      var c=tok(SERIES[ai]), path=[], last=null;
+      samples.forEach(function(sid,i){
+        var r=by[a].rows[sid]; if(!r) return;
+        path.push((path.length?'L':'M')+fmt(x(i),1)+' '+fmt(y(r.v),1));
+        last={i:i,v:r.v};
+        out.push('<circle cx="'+fmt(x(i),1)+'" cy="'+fmt(y(r.v),1)+'" r="5" fill="'+c+'" stroke="'+tok('--surface')+
+          '" stroke-width="2" data-tip="<span class=k>'+esc(sid)+'</span> '+esc(by[a].name||a)+
+          '<br><span class=k>median-scaled</span> '+fmt(r.v,3)+
+          '<br><span class=k>Top3avg</span> '+fmt(r.p.top3avg,3)+
+          '<br><span class=k>peptides used</span> '+r.p.n_peptides_used+'"/>');
+        rows.push([sid,a,fmt(r.v,3),fmt(r.p.top3avg,3),r.p.n_peptides_used]);
+      });
+      if(path.length>1) out.push('<path d="'+path.join(' ')+'" fill="none" stroke="'+c+'" stroke-width="2"/>');
+      if(last) out.push('<text x="'+fmt(x(last.i)+11,1)+'" y="'+fmt(y(last.v)+3.5,1)+'" fill="'+c+
+        '" font-family="'+tok('--font-mono')+'" font-size="10.5" font-weight="600">'+
+        esc((by[a].name||a).replace('_HUMAN',''))+'</text>');
+    });
+    out.push('<line x1="'+L+'" y1="'+(H-B)+'" x2="'+(W-R)+'" y2="'+(H-B)+'" stroke="'+tok('--line-2')+'" stroke-width="1"/>');
+    samples.forEach(function(sid,i){
+      out.push('<text x="'+fmt(x(i),1)+'" y="'+(H-B+18)+'" fill="'+ink+'" font-family="'+tok('--font-mono')+
+        '" font-size="9.5" text-anchor="middle">'+esc(sid)+'</text>');
+    });
+    out.push('<text x="'+((L+W-R)/2)+'" y="'+(H-8)+'" fill="'+ink+'" font-family="'+tok('--font-mono')+
+      '" font-size="9.5" text-anchor="middle">sample</text>');
+    out.push('</svg>');
+    body.innerHTML='<div class="chartwrap">'+out.join('')+'</div>';
+    attachSvgTips(body.firstChild);
+    return {
+      readout:[['normalization',usedStored?'median_scaled (from the export)':'median_scaled (computed here)'],
+               ['proteins',accs.length],['samples',samples.length]],
+      legend:accs.map(function(a,i){return [SERIES[i],(by[a].name||a)];}),
+      foot:'Median-scaled, so a run that simply had more on column does not read as a change in the protein. A flux that survives this is a candidate; one that disappears was loading.',
+      cols:['sample','accession','median-scaled','Top3avg','peptides used'],
+      rows:rows
+    };
+  }
+};
+
+var PANELS=[P_MIRROR,P_ISO,P_XIC,P_INT_RT,P_SEQ,P_TOP3,P_DRIFT_RT,P_MZ_DRIFT,P_STOICH,P_FLUX];
 
 /* ==================================================================
    5. Shell rendering

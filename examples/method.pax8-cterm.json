@@ -1,0 +1,100 @@
+{
+  "method_id": "pax8-cterm-extraction",
+  "name": "PAX8 C-terminal extraction — is the ion there at all?",
+  "version": "1.0.0",
+  "created_by": "bigtony1092",
+  "created_at": "2026-10-15T06:00:00Z",
+  "notes": "Colorado finds nothing past PAX8 residue 287 at any load; the Atlas finds both peptides that exist there. This method goes to the coordinate in the Colorado raw data instead of trusting the search to have reported it. Three positive controls are included so a null result on the targets is interpretable.",
+
+  "inputs": {
+    "atlas": "F:/ARiA/atlas/UID_Atlas.20261011T230350Z",
+    "consensus_db": "F:/ARiA/consensus/ARiA_Consensus.db",
+    "raw_dir": "E:/Colorado_search_tdc",
+    "detect_vendor_from_files": true,
+    "manual_overrides": [
+      { "match": "*/sonar/*", "set": { "drift_kind": "quad_window" } }
+    ]
+  },
+
+  "selection": {
+    "mode": "targets",
+    "targets": ["Q06710"],
+    "target_peptides": [
+      {
+        "sequence": "NLSTHQTYPVVADPHSPFAIK",
+        "prot_accession": "Q06710", "seq_start": 288, "charges": [2, 3],
+        "mz": { "2": 1161.5975, "3": 774.7341 },
+        "role": "target",
+        "note": "21 residues, fully tryptic, no Cys. The Atlas detects it. Colorado reports it in none of 10 runs across a 50-fold load range. This is the peptide the whole question rests on."
+      },
+      {
+        "sequence": "FPNSSLLSSPYYYSSTSRPSAPPTTATAFDHL",
+        "prot_accession": "Q06710", "seq_start": 419, "charges": [3, 4],
+        "mz": { "3": 1154.8878, "4": 866.4177 },
+        "role": "target",
+        "note": "The protein C-terminus, so no tryptic C-terminal residue. Harder, and a null here is weaker evidence than for the 288 peptide."
+      },
+      {
+        "sequence": "LLAEGVCDNDTVPSVSSINR",
+        "prot_accession": "Q06710", "seq_start": 111, "charges": [2, 3],
+        "mz": { "2": 1073.5259, "3": 716.0197 },
+        "role": "positive_control",
+        "note": "Colorado's strongest PAX8 ion, n=24. Carries one carbamidomethyl Cys."
+      },
+      {
+        "sequence": "TDAFSQHHLEPLECPFER",
+        "prot_accession": "Q06710", "seq_start": 225, "charges": [3, 4],
+        "mz": { "3": 738.3408, "4": 554.0075 },
+        "role": "positive_control",
+        "note": "n=24. One carbamidomethyl Cys."
+      },
+      {
+        "sequence": "LSIDSQSSSSGPR",
+        "prot_accession": "Q06710", "seq_start": 208, "charges": [2, 3],
+        "mz": { "2": 660.8231, "3": 440.8845 },
+        "role": "positive_control",
+        "note": "n=24, no Cys. Serine-rich, like the C-terminal region, so it controls for that composition too."
+      }
+    ]
+  },
+
+  "tier_policy": {
+    "min_tier": "bare_proximity",
+    "mix_tiers": false,
+    "label_tier_on_panels": true
+  },
+
+  "quant": {
+    "metric": "top3avg",
+    "intensity_field": "summed_precursor_intensity",
+    "peptide_aggregation": "max",
+    "top_n": 3,
+    "min_peptides": 1,
+    "pad_missing_peptides": false,
+    "report": ["raw"],
+    "normalization": ["none"],
+    "reference_protein": null,
+    "absolute_standard": null
+  },
+
+  "stoichiometry": null,
+  "flux": null,
+  "classification": null,
+
+  "panels": [
+    { "id": "xic", "on_requirement_unmet": "blank_with_reason" },
+    { "id": "isotope_envelope", "on_requirement_unmet": "blank_with_reason" },
+    { "id": "msms_mirror", "on_requirement_unmet": "blank_with_reason" },
+    { "id": "intensity_vs_time", "scales": { "y": "log" }, "color_by": "sample" },
+    { "id": "seqstart_vs_intensity", "scales": { "y": "log" }, "color_by": "sample" }
+  ],
+
+  "render": {
+    "theme": "dark",
+    "max_points": 60000,
+    "decimation": "none",
+    "decimation_seed": 7,
+    "show_decimation_ratio": true,
+    "animate": { "enabled": false, "mode": "trace_one", "seconds_per_ion": 6.8, "speed": 1 }
+  }
+}
