@@ -265,6 +265,16 @@ python3 tools/plan_panels.py my_method.json                      # validate
 python3 tools/plan_panels.py my_method.json export/manifest.json # feasibility
 ```
 
+And check the export the run produced, which is the other half — the method can be
+sound and the export still break the rules the schemas cannot state:
+
+```
+python3 tools/validate_export.py export/                         # honesty
+```
+
+It exits non-zero on any contract violation, so it belongs at the end of a pipeline run
+rather than at the start of a reading of the panels.
+
 Per-panel requirements live in `schema/panels.json`, so a panel's needs are data, not
 code. `on_requirement_unmet` defaults to `blank_with_reason`: the panel stays visible and
 states why it is empty, so **a missing measurement is never mistaken for a zero**.

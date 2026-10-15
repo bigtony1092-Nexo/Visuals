@@ -127,6 +127,8 @@ schema/spectrum.schema.json      MS/MS and MS1 isotope peaks (the conventional p
 schema/trace.schema.json         extracted ion chromatograms (optional)
 examples/                        a filled method and a matching export
 tools/plan_panels.py             says which panels will render, and why not
+tools/validate_export.py         checks a real export against the contract
+tools/test_validate_export.py    proves the validator catches what it claims to
 viewer/aria-ion-panels.html      the viewer — the six conventional panels, fed by an export
 ```
 
@@ -149,6 +151,41 @@ python3 tools/plan_panels.py examples/method.example.json examples/manifest.exam
 Reports per panel: `RENDER`, `PARTIAL` (with the samples it excludes and why) or `BLANK`
 (with the reason). Needs `jsonschema` for method validation; the feasibility report runs
 without it.
+
+## Validating an export
+
+`plan_panels.py` asks whether a panel *can* render. `validate_export.py` asks whether the
+export is honest — the rules a JSON Schema cannot state:
+
+```
+python3 tools/validate_export.py export/                 # a real export directory
+python3 tools/validate_export.py export/ --limit 100000  # spot-check a huge one
+python3 tools/validate_export.py export/ --strict        # warnings fail too
+```
+
+Findings are `ERROR` (the export violates the contract), `WARN` (legal but lossy or
+suspicious) or `NOTE`. Exit status is 1 on any error. Among the checks: a SONAR
+quadrupole position sitting in a mobility or CCS field (section 3), an isotope minted as
+its own ion or an envelope on a different basis (section 2), a tier disagreeing with
+whether decoys were controlled (section 4), a Top3avg padded past the peptides it matched
+(section 5), `ar1` without its basis or normalized inside its own spectrum until it
+carries nothing (section 6), a ledger out of order, a spectrum or trace naming an ion that
+is not in the export, and manifest counts that disagree with the records.
+
+Schema validation runs too when `jsonschema` is installed, and is skipped with a note when
+it is not — the contract checks never need it.
+
+The shipped examples are a 2-line excerpt of a 60,000-ion export, so the whole-export
+cross-checks are skipped with `--excerpt`:
+
+```
+python3 tools/validate_export.py examples/manifest.example.json --excerpt
+python3 tools/test_validate_export.py
+```
+
+The second injects one violation at a time and asserts the validator names it, with the
+unmutated examples as the control. Run it after changing either the schemas or the
+contract: a rule that stops firing is a rule that has quietly gone.
 
 ## Panel order
 
