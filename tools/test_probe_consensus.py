@@ -24,6 +24,7 @@ import json
 import math
 import os
 import random
+import re
 import sqlite3
 import subprocess
 import sys
@@ -371,7 +372,7 @@ def an_unfiltered_zero_carries_weight(db, tmp):
         bad.append("dismissed a zero that was not excluded by construction")
     if "carries weight" not in out:
         bad.append("did not credit a zero measured on a table that allows large errors")
-    if "Rows beyond" not in out:
+    if "measured rows beyond" not in out.lower():
         bad.append("did not report how many rows sit beyond the gate width")
     return bad
 
@@ -399,19 +400,76 @@ def a_computed_precursor_is_not_a_measurement(db, tmp):
     con.close()
     rc, out = run("--db", str(computed))
     bad = []
-    if "THE REPORTED m/z IS NOT MEASURED" not in out:
+    if "computed from the sequence, not measured" not in out:
         bad.append("read a computed precursor column as if it were measured")
     if "100%" not in out:
         bad.append("did not state what share of rows were computed")
+    if "Nothing measured remains" not in out:
+        bad.append("did not say the source is untestable when nothing measured is left")
+    # A bucket row is the label followed by two counts; prose is not.
+    if any(re.match(r"monoisotopic\s+\d+\s+\d+", l.strip()) for l in out.splitlines()):
+        bad.append("still classified computed rows into the monoisotopic bucket")
     return bad
 
 
 def a_measured_precursor_is_not_called_computed(db, tmp):
     """The planted database has real scatter; the computed warning must stay quiet."""
     rc, out = run("--db", str(db))
-    if "THE REPORTED m/z IS NOT MEASURED" in out:
+    if "computed from the sequence, not measured" in out:
         return ["called a measured column computed"]
     return []
+
+
+def a_measured_subset_survives_a_mostly_computed_table(db, tmp):
+    """The real database is 97% computed BY ROW but holds 48 measured samples.
+
+    Pooling the two buries the testable subset: a computed row has delta exactly
+    zero, so it lands in the monoisotopic bucket, holds the widest-error figure
+    down, and turns a usable result into "not evidence". The measured rows must
+    be reported on their own.
+    """
+    mixed = tmp / "mixed.db"
+    con = sqlite3.connect(mixed)
+    con.execute("""CREATE TABLE observations (
+        id INTEGER PRIMARY KEY, PeptideSequence TEXT, Charge INTEGER,
+        RunName TEXT, PrecMz REAL, CalcMz REAL)""")
+    rng = random.Random(23)
+    rid = 0
+    # 3000 computed rows in one run, 120 measured rows in another, 20 of which
+    # sit on A1. By row the table is 96% computed; the answer is in the other 4%.
+    for i in range(3000):
+        seq = "".join(rng.choice("GASPVTLINDQEMHFYW") for _ in range(12)) + "R"
+        z = 2
+        calc_mz = (WATER + sum(RESIDUE[c] for c in seq)) / z + pc.PROTON
+        rid += 1
+        con.execute("INSERT INTO observations VALUES (?,?,?,?,?,?)",
+                    (rid, seq, z, "computed_run", calc_mz, calc_mz))
+    for i in range(120):
+        seq = "".join(rng.choice("GASPVTLINDQEMHFYW") for _ in range(13)) + "K"
+        z = 2
+        calc_mz = (WATER + sum(RESIDUE[c] for c in seq)) / z + pc.PROTON
+        shift = pc.C13 if i < 20 else 0.0
+        rid += 1
+        con.execute("INSERT INTO observations VALUES (?,?,?,?,?,?)",
+                    (rid, seq, z, "measured_run",
+                     (calc_mz + shift / z) * (1 + 2.0 / 1e6), calc_mz))
+    con.commit()
+    con.close()
+    rc, out = run("--db", str(mixed))
+    bad = []
+    if "1 measured throughout, 1 computed throughout, 0 mixed" not in out:
+        bad.append("did not classify the runs as one measured and one computed")
+    if "the 120 measured rows" not in out:
+        bad.append("did not restrict the result to the measured rows")
+    a1 = [l for l in out.splitlines() if l.strip().startswith("A1 only:")]
+    if not a1 or "20 rows" not in a1[0]:
+        bad.append("lost the 20 planted A1 rows: %r" % (a1[0].strip() if a1 else "no line"))
+    if "THIS RESULT IS NOT EVIDENCE" in out:
+        bad.append("dismissed a result it actually found")
+    mono = [l for l in out.splitlines() if l.strip().startswith("monoisotopic")]
+    if mono and "3100" in mono[0]:
+        bad.append("counted the computed rows as monoisotopic")
+    return bad
 
 
 def limit_reads_a_spread_not_the_oldest(db, tmp):
@@ -449,7 +507,8 @@ STANDALONE = (refuses_a_published_shaped_table, refuses_a_file_that_is_not_a_dat
               neither_db_nor_find_is_an_error, a_mass_gated_table_is_not_evidence,
               an_unfiltered_zero_carries_weight, limit_reads_a_spread_not_the_oldest,
               a_computed_precursor_is_not_a_measurement,
-              a_measured_precursor_is_not_called_computed)
+              a_measured_precursor_is_not_called_computed,
+              a_measured_subset_survives_a_mostly_computed_table)
 
 
 def main(argv=None):

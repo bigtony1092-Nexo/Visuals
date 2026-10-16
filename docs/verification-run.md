@@ -206,6 +206,42 @@ figure of 33 picks cannot have come from this table. It must have come from
 upstream of the gate: the search output (DIA-NN report parquet, FragPipe
 `psm.tsv`, the Waters spectrum files) or whatever the gate quarantined.
 
+### The re-run, and the subset that was being buried
+
+Re-run on the production database with spread sampling, 2,000,000 rows in 740 s:
+pooled calibration 0.00 ppm, **0 isotope picks**, widest error 22.8 ppm, nothing
+beyond 50 ppm, and both guards fired — `THIS RESULT IS NOT EVIDENCE` and the
+computed-precursor warning at **1,943,552 of 2,000,000 rows (97%)**.
+
+A per-sample breakdown run alongside it showed what the pooled figure hid:
+
+| samples | |
+|---|---|
+| 780 | no row carrying **both** `precursor_mz` and `calc_mz` — untestable for mass error at all |
+| 48 | measured throughout |
+| 5 | computed throughout |
+| 30 | mixed |
+
+The 97% is by *row*, and it comes from a handful of very large computed or mixed
+samples — Waters UDMSE runs of 200–330k rows each. So the database is not
+uniformly untestable: **48 samples are measured**, and the question could be
+asked of them.
+
+The probe was burying them. A computed row has a delta of exactly zero, so it
+landed in the monoisotopic bucket, held the widest-error figure down, and turned
+a potentially usable subset into a blanket "not evidence". Computed rows are now
+**excluded from classification rather than counted**, in Test 1 and in the
+calibration of Test 2 — where they would otherwise peg every per-run offset at
+zero, which is exactly what the 0.00 ppm was. The output states the computed
+share, classifies each run as measured, computed or mixed, and reports on the
+measured rows alone. When nothing measured remains it says the source cannot be
+tested rather than reporting a result over arithmetic.
+
+A test plants the real shape: 3,000 computed rows in one run and 120 measured in
+another, 20 of them on A1 — 96% computed by row. It fails if the probe loses
+those 20, counts the computed rows as monoisotopic, or calls the result not
+evidence.
+
 ### Where the gate does apply, it still cannot fail
 
 For the vendor stores, **905 of 993 Thermo samples carry a computed precursor

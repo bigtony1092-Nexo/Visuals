@@ -104,7 +104,6 @@ GATE_PPM = 50.0
 # mass test over them is not a lenient test, it is no test. Real measured values
 # essentially never land exactly on the calculated one.
 IDENTICAL_TOL = 1e-9
-IDENTICAL_SHARE = 0.10
 
 # Candidate column names, normalized (lowercased, non-alphanumerics dropped) and
 # in priority order: the first one present wins.
@@ -329,14 +328,18 @@ def measure_calibration(records, cfg, out):
     run_col = cfg["roles"]["run"]
     ppm = defaultdict(list)
     for seq, z, raw, calc_mz, rest in records:
+        if abs(raw - calc_mz) < IDENTICAL_TOL:
+            continue        # computed, not measured: it would fix the offset at zero
         if abs((raw - calc_mz) * z) <= TOL:
             run = str(rest.get(run_col)) if run_col else "(all runs)"
             ppm[run].append((raw - calc_mz) / calc_mz * 1e6)
 
     out.append("TEST 2 - MASS CALIBRATION (measured first; test 1 uses it)")
     if not ppm:
-        out.append("  No row sat on its calculated m/z, so there is no cluster to")
-        out.append("  calibrate from. Test 1 runs on uncorrected deltas below.")
+        out.append("  No measured row sat on its calculated m/z, so there is no cluster to")
+        out.append("  calibrate from. Rows whose reported m/z equals the calculated one are")
+        out.append("  excluded here: they are computed, and would peg the offset at zero.")
+        out.append("  Test 1 runs on uncorrected deltas below.")
         return {}
     if not run_col:
         out.append("  No run column found, so this is pooled across every run in the table.")
@@ -351,6 +354,8 @@ def measure_calibration(records, cfg, out):
     out.append("  Pooled median %.2f ppm over %d measurements." % (
         statistics.median(allv), len(allv)))
     out.append("  This is the correction that was applied before publication.")
+    out.append("  Rows whose reported m/z equals the calculated one are excluded; they")
+    out.append("  would peg every offset at zero.")
     return offsets
 
 
@@ -363,10 +368,12 @@ def test_isotope(records, cfg, offsets, out):
     unexplained_eg = {}
     run_col = cfg["roles"]["run"]
     total = 0
+    measured = 0
     ambiguous = 0
     widest_ppm = 0.0
     beyond_gate = 0
     identical = 0
+    by_run = defaultdict(lambda: [0, 0])   # run -> [measured, computed]
 
     for seq, z, raw, calc_mz, rest in records:
         total += 1
@@ -378,7 +385,13 @@ def test_isotope(records, cfg, offsets, out):
         # is hundreds of ppm out, so the widest value seen bounds what this table
         # is capable of showing.
         if abs(raw - calc_mz) < IDENTICAL_TOL:
+            # Computed from the sequence, not measured. It can show no error of any
+            # size, so counting it as "monoisotopic" would be counting arithmetic.
             identical += 1
+            by_run[run][1] += 1
+            continue
+        measured += 1
+        by_run[run][0] += 1
         err_ppm = abs(corrected - calc_mz) / calc_mz * 1e6
         widest_ppm = max(widest_ppm, err_ppm)
         if err_ppm > GATE_PPM:
@@ -398,6 +411,21 @@ def test_isotope(records, cfg, offsets, out):
     out.append("")
     out.append("TEST 1 - ISOTOPE PICK")
     out.append("  %d rows carried both a reported and a calculated precursor." % total)
+    if identical:
+        meas_runs = sum(1 for m, c in by_run.values() if m and not c)
+        comp_runs = sum(1 for m, c in by_run.values() if c and not m)
+        mixed_runs = sum(1 for m, c in by_run.values() if m and c)
+        out.append("  %d of them (%.0f%%) have a reported m/z identical to the calculated"
+                   % (identical, 100.0 * identical / total if total else 0))
+        out.append("  one — computed from the sequence, not measured. A computed row can show")
+        out.append("  no error of any size, so it is EXCLUDED below rather than being counted")
+        out.append("  as a monoisotopic hit. What follows is the %d measured rows." % measured)
+        out.append("  By run: %d measured throughout, %d computed throughout, %d mixed."
+                   % (meas_runs, comp_runs, mixed_runs))
+        if not measured:
+            out.append("")
+            out.append("  Nothing measured remains. This source cannot be tested for mass error.")
+            return {"a1_ions": 0, "any_isotope_ions": 0, "rows": total, "measured": 0}
     if offsets:
         out.append("  Deltas below are after removing each run's calibration offset.")
     else:
@@ -433,19 +461,11 @@ def test_isotope(records, cfg, offsets, out):
     out.append("  Any isotope:   %d rows, %d ions." % (any_rows, any_ions))
     out.append("  The study's 33 is one of these two; which depends on whether it counted")
     out.append("  A1 alone. Compare ions, not rows: one ion appears once per run.")
-    if total and identical / total >= IDENTICAL_SHARE:
-        out.append("")
-        out.append("  THE REPORTED m/z IS NOT MEASURED. %d of %d rows (%.0f%%) carry a"
-                   % (identical, total, 100.0 * identical / total))
-        out.append("  reported m/z identical to the calculated one. A measured value does")
-        out.append("  not land exactly on the calculation; those rows were computed from")
-        out.append("  the sequence, so they cannot show a mass error of any size and no")
-        out.append("  mass test over them means anything. Exclude that source, or find a")
-        out.append("  column holding what the instrument actually reported.")
     out.append("")
-    out.append("  Widest error from a calculated m/z in this sample: %.1f ppm."
+    out.append("  Widest error from a calculated m/z, measured rows only: %.1f ppm."
                % widest_ppm)
-    out.append("  Rows beyond %.0f ppm: %d of %d." % (GATE_PPM, beyond_gate, total))
+    out.append("  Measured rows beyond %.0f ppm: %d of %d."
+               % (GATE_PPM, beyond_gate, measured))
     if any_ions == 0 and beyond_gate == 0:
         out.append("")
         out.append("  THIS RESULT IS NOT EVIDENCE. An isotope pick is 1.003/z Da from the")
@@ -485,7 +505,8 @@ def test_isotope(records, cfg, offsets, out):
             seq, z, raw, calc_mz = unexplained_eg[step]
             out.append("    %+9.2f Da  x%-6d  %s %d+" % (
                 step, n, seq[:30] + ("..." if len(seq) > 30 else ""), z))
-    return {"a1_ions": a1_ions, "any_isotope_ions": any_ions, "rows": total}
+    return {"a1_ions": a1_ions, "any_isotope_ions": any_ions, "rows": total,
+            "measured": measured, "computed": identical}
 
 
 def slope(xs, ys):
