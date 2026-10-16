@@ -90,10 +90,23 @@ Two of the three results above stop at the same wall: the published data carries
 already-corrected precursor m/z per PSM, and no record of what the instrument reported.
 A field scan confirms it — the embedded fields mentioning mass or m/z are
 `archive_precursors`, `colorado_mass_identity`, `explained_by_mass` and `mz`. There is no
-`PrecMz` and no `CalcMz`. Probing the ion keys directly recovered **one** A1 isotope pick
-of the 33 reported (`QHYPEAYASPSHTKGEQGLYPLPLLNST…` 6+, key m/z 806.91 against 806.7440
-monoisotopic, +0.166 = 1.0033/6); the other 32 were corrected before anything reached the
-page.
+`PrecMz` and no `CalcMz`.
+
+**Retracted:** this section previously reported that probing the ion keys recovered one A1
+isotope pick, `QHYPEAYASPSHTKGEQGLYPLPLLNST…` 6+ at key m/z 806.91 against 806.7440
+monoisotopic. That identification does not hold. The keys carry m/z to two decimals, which
+at z=6 is a window of ±0.030 Da on the neutral mass, and inside that window A1 and
+deamidation are not separable:
+
+| | neutral offset | m/z at z=6 | key |
+|---|---|---|---|
+| A1 isotope | +1.0034 | 806.9112 | **806.91** |
+| deamidation | +0.9840 | 806.9080 | **806.91** |
+
+They differ by 0.0193 Da, a third of the rounding window. The authoritative list of the 33
+(below) does not contain that ion, so it is the deamidation. The probe was built to keep
+exactly these two apart and the key-level shortcut walked into the confound anyway — the
+guard works on the data it was written for, not on a rounded summary.
 
 `tools/probe_consensus.py` runs the test where the uncorrected value survives:
 
@@ -567,3 +580,101 @@ charge, 16.00 Da apart — `QNPTMFAWEIR` at 696.84 and 704.84, `MDDSDQDSCR` at
 together: 8.8× and 8.5×, 4.3× and 5.1×, 3.6× and 3.7×. Two independent channels
 for the same molecule agreeing to within 20% is a genuine internal consistency
 check, and it passed without being set up as one.
+
+## The 33 are recovered, and they were never in a mass column
+
+`pax8_analysis.py` records an `isotope_pick` per PSM (0/1/2) during its
+mass-identity step, and the published 33 comes from that field. Re-run on the
+Colorado PAX8 data: **1,262 PSMs, all explained, 33 picks, every one A1**
+(+1 × 1.00335), spread over 22 runs and **7 distinct ions**:
+
+| ion | picks | of PSMs | runs |
+|---|---|---|---|
+| `LSIDSQSSSSGPR` 2+ | **17** | 49 | 14 |
+| `LSIDSQSSSSGPRK` 2+ | 4 | 31 | |
+| `DRLLAEGVCDNDTVPSVSSINR` 3+ | 3 | 31 | |
+| `LLAEGVCDNDTVPSVSSINR` 3+ | 3 | 50 | |
+| `VQQPFNLPMDSCVATK` 3+ | 3 | 59 | |
+| `SLSPGHTLIPSSAVTPPESPQSDSLGSTYSINGLLGIAQPGSDK` 4+ | 2 | 33 | |
+| `SLSPGHTLIPSSAVTPPESPQSDSLGSTYSINGLLGIAQPGSDKRK` 5+ | 1 | 15 | |
+
+The picks are **FragPipe PSMs whose observed precursor sits +1.00335/z above the
+monoisotope** — MSFragger's isotope-error allowance. So the A1 choice is the
+search engine's assignment, exactly as the circularity argument predicted. The
+whole mass-residual approach was looking for a decision in a place decisions are
+not stored.
+
+**What the 33 therefore measures.** It is a count of search-engine isotope-error
+assignments on this protein, not a count of ARiA mis-picks. 33 of 1,262 PSMs is
+2.6%, and it is concentrated: **one ion, `LSIDSQSSSSGPR` 2+, accounts for 17 of
+the 33** — 35% of that ion's own PSMs. Six other ions supply the rest. This is
+not a diffuse rate across the protein.
+
+**One correction for the published page.** Its method note reads "an isotope pick
+(A1/A2 chosen instead of the monoisotope)". All 33 are A1; no A2 occurred. The
+"A1/A2" implies a category that is empty.
+
+## Why no table could have held them
+
+### Waters
+
+Neither `ingest_rejected` nor `ingest_row_rejects` exists in the Waters store —
+its ingests all come from the older CPPIS route and predate the gate. No positive
+control there. The Waters CPPIS file also had **every precursor equal to
+`CalcMz`**, so it is computed, not measured.
+
+### Bruker
+
+`ingest_row_rejects(source_file, reason, n_rows, recorded_at)` — **tallies
+only**, 48 rows, mostly *"precursor outside 10 ppm of computed CalcMz"*. No
+rejected row, m/z, sequence or charge is kept. That is the probe's `tallies only`
+outcome: unusable as a control, and **not** a negative. `ingest_rejected` has 0
+rows, so no Bruker file was quarantined wholesale — the count is not short for
+that reason.
+
+Regenerating the rejected rows from a source spec file still on disk (PXD064532
+KO1): **2,613 rows / 1,154 precursors rejected at 10 ppm, all 10–30 ppm, with a
+maximum neutral offset of 0.0199 Da** and **zero** within 0.02 Da of ±1× or 2×
+1.00335.
+
+That 0.0199 Da is a hard cap, and the arithmetic says it is a cap in **daltons,
+not ppm** — which is what identifies it as DIA-NN's own MS1 tolerance rather than
+the ingest gate, whose threshold is stated in ppm:
+
+| reported ppm | implied neutral mass at 0.0199 Da |
+|---|---|
+| 10 ppm | 1,990 Da |
+| 20 ppm | 995 Da |
+| 30 ppm | 663 Da |
+
+A fixed 0.02 Da window across an ordinary tryptic mass range of roughly
+660–1,990 Da produces exactly the observed 10–30 ppm spread. So the Bruker route
+cannot emit a pick at all: bounded upstream, the same class of vacuity as Test
+1's zero.
+
+### And the gate's own reason is circular
+
+The rejection reason reads *"outside 10 ppm of computed CalcMz"*. The gate
+compares the reported precursor against a **computed** value — so where that
+computed value was derived from the search's own assignment, the gate inherits
+the circularity it was being asked to break.
+
+## Status of this line of work
+
+**Closed.** The question — how many ions were named on an isotope peak — is
+answered at 33, all A1, 7 ions, from the field that records the decision. The
+mass-residual approach is retired, not merely unavailable: an isotope pick in
+this pipeline is a choice recorded in an assignment, and no comparison of a
+reported against a calculated m/z was ever going to find it.
+
+Tests 1 and 2 of `probe_consensus.py` keep their value as **detectors of this
+class of defect** rather than as instruments for this question. They refuse a
+vacuous result four ways now — computed precursor, mass-gated sample, tally-only
+quarantine, and a taper that only rules out a cutoff where the data stops.
+
+Two routes stay open and are being fixed at the source: the Thermo MSFragger
+writer is being changed to write the observed `precursor_neutral_mass` and
+peak-read fragments. After that, MSFragger isotope-error PSMs will be rejected at
+10 ppm — **and the store will still only count them** unless
+`ingest_row_rejects` is extended to keep rows. Extending it is the one change
+that would make the quarantine answer this class of question in future.
