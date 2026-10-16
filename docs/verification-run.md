@@ -778,3 +778,53 @@ comparison could not support.
 different study and reports 0.61 for real against 0.51 for mismatched — the real
 pairing ahead, as it should be. The defect is in this PAX8 comparison, not in the
 measure itself.
+
+### It is the reference that is empty, not the extraction
+
+"It's odd that you don't match what's targeted" is the right instinct, and it
+points at the answer. The page's own summary carries the test: the share of b/y
+intensity landing on the bonds where fragmentation chemistry says it should
+concentrate, against the share expected if every backbone bond broke equally.
+
+| | Colorado | Thermo | if uniform |
+|---|---|---|---|
+| y-ion share | 0.696 | 0.483 | ~0.5 |
+| N-terminal to proline | 0.317 | 0.113 | 0.104 |
+| C-terminal to aspartate | 0.215 | 0.176 | 0.158 |
+
+As enrichment over uniform — the size of the chemical signal in each pattern:
+
+| | Colorado | Thermo |
+|---|---|---|
+| proline effect | **3.04×** | **1.08×** |
+| aspartate effect | 1.36× | 1.12× |
+
+**Colorado's extracted patterns carry real fragmentation chemistry.** 70% of
+intensity on y ions, and a 3× enrichment N-terminal to proline — the strongest
+and best-known rule in peptide fragmentation. Whatever else is wrong, the
+targeted extraction is producing physically sensible spectra.
+
+**The Thermo patterns carry essentially none.** 1.08× on proline is the uniform
+expectation to within rounding; 1.12× on aspartate likewise; a y-share of 0.483
+is a coin flip. On both chemical markers the reference sits where a pattern sits
+when it holds no fragmentation information at all.
+
+That is unsurprising given how thin it is — a median of three Thermo spectra per
+ion, **nine of 28 ions resting on a single spectrum**, each fragment re-labelled
+from its m/z rather than annotated — but it fully explains the invalid control. A
+flat reference cannot be matched by anything. Pair a real Colorado pattern with
+it and you get whatever the generic envelope gives you; pair a *wrong* peptide's
+equally flat pattern with it and you get about the same, or better.
+
+So the earlier framing was still too generous to the test. It is not that the
+comparison is uninterpretable for unknown reasons. **One side of it has no signal
+in it, and it is measurable which side.**
+
+The fragment *sets* overlap moderately — Jaccard median 0.34, with 50% of
+Colorado's ladder appearing in Thermo and 61% of Thermo's in Colorado — and
+Colorado's ladders are consistently the longer of the two. Presence agrees far
+better than intensity, which is the signature of a correct target with a
+reference too thin to weigh it against.
+
+Page at version 8: the finding and the section caveat now name which side failed
+and give the chemistry.
