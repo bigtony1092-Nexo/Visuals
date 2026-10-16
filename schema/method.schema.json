@@ -302,10 +302,12 @@
         },
         "peptide_aggregation": {
           "enum": [
-            "max"
+            "max",
+            "mean",
+            "integrated_area"
           ],
-          "default": "max",
-          "description": "Per-peptide maximum across scans, one number per peptide."
+          "default": "integrated_area",
+          "description": "The per-peptide number Top3avg averages. max is the original behaviour and is biased: the maximum of n scans rises with n, so a peptide observed more often scores higher for no abundance reason \u2014 about 13.6% between a peptide seen 3 times and one seen 20 times at equal true abundance. mean removes that; integrated_area removes it and is less noise-sensitive. See docs/top3-estimator.md."
         },
         "top_n": {
           "type": "integer",

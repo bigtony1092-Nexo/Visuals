@@ -1,0 +1,141 @@
+{
+  "method_id": "ar1-linearity",
+  "name": "AR1 linearity across the Colorado loading series",
+  "version": "1.0.0",
+  "created_by": "bigtony1092",
+  "created_at": "2026-10-16T08:00:00Z",
+  "notes": "Tests whether ar1 holds across a 50-fold on-column range, instead of assuming it. Regress log10(ar1_sum) on log10(amount) per ion; slope zero means invariant, a breakpoint marks the top of the linear range. Run the precursor-intensity control first: if precursor intensity does not rise with roughly unit slope against load, the loading series is not doing what it says. See docs/ar1-linearity.md.",
+  "inputs": {
+    "atlas": "F:/ARiA/atlas/UID_Atlas.20261011T230350Z",
+    "consensus_db": "F:/ARiA/consensus/ARiA_Consensus.db",
+    "raw_dir": "E:/Colorado_search_tdc",
+    "detect_vendor_from_files": true,
+    "manual_overrides": [
+      {
+        "match": "*/sonar/*",
+        "set": {
+          "drift_kind": "quad_window"
+        }
+      }
+    ]
+  },
+  "selection": {
+    "mode": "targets",
+    "targets": [
+      "Q06710"
+    ],
+    "target_peptides": [
+      {
+        "sequence": "LLAEGVCDNDTVPSVSSINR",
+        "prot_accession": "Q06710",
+        "seq_start": 111,
+        "charges": [
+          2,
+          3
+        ],
+        "mz": {
+          "2": 1073.5259,
+          "3": 716.0197
+        },
+        "role": "positive_control",
+        "note": "Colorado's strongest PAX8 ion, n=24. Carries one carbamidomethyl Cys."
+      },
+      {
+        "sequence": "TDAFSQHHLEPLECPFER",
+        "prot_accession": "Q06710",
+        "seq_start": 225,
+        "charges": [
+          3,
+          4
+        ],
+        "mz": {
+          "3": 738.3408,
+          "4": 554.0075
+        },
+        "role": "positive_control",
+        "note": "n=24. One carbamidomethyl Cys."
+      },
+      {
+        "sequence": "LSIDSQSSSSGPR",
+        "prot_accession": "Q06710",
+        "seq_start": 208,
+        "charges": [
+          2,
+          3
+        ],
+        "mz": {
+          "2": 660.8231,
+          "3": 440.8845
+        },
+        "role": "positive_control",
+        "note": "n=24, no Cys. Serine-rich, like the C-terminal region, so it controls for that composition too."
+      }
+    ],
+    "library_filter": {
+      "include_unassigned": false
+    }
+  },
+  "tier_policy": {
+    "min_tier": "pass2_confirmed",
+    "mix_tiers": false,
+    "label_tier_on_panels": true
+  },
+  "quant": {
+    "metric": "top3avg",
+    "intensity_field": "summed_precursor_intensity",
+    "peptide_aggregation": "integrated_area",
+    "top_n": 3,
+    "min_peptides": 1,
+    "pad_missing_peptides": false,
+    "report": [
+      "raw"
+    ],
+    "normalization": [
+      "none"
+    ],
+    "reference_protein": null,
+    "absolute_standard": null
+  },
+  "stoichiometry": null,
+  "flux": {
+    "group_by": "sample",
+    "order_by": "sample_id",
+    "baseline": null,
+    "normalization": "median_scaled",
+    "show_loading_proxy": true
+  },
+  "classification": null,
+  "panels": [
+    {
+      "id": "intensity_vs_time",
+      "scales": {
+        "y": "log"
+      },
+      "color_by": "sample"
+    },
+    {
+      "id": "xic"
+    },
+    {
+      "id": "msms_mirror"
+    },
+    {
+      "id": "flux",
+      "normalization": "median_scaled"
+    }
+  ],
+  "render": {
+    "theme": "dark",
+    "max_points": 60000,
+    "decimation": "none",
+    "decimation_seed": 7,
+    "show_decimation_ratio": true,
+    "animate": {
+      "enabled": false,
+      "mode": "trace_one",
+      "seconds_per_ion": 6.8,
+      "speed": 1
+    }
+  },
+  "fragment_first": null
+}

@@ -135,8 +135,12 @@ so a panel refuses rather than quietly blending it with a validated tier.
 
 Exactly as the method note defines it:
 
-1. per peptide, the **maximum** `matched_intensity` across every scan it hit — one number
-   per peptide, not per scan
+1. per peptide, one number across every scan it hit — not one per scan. **Use
+   `integrated_area` or `mean`, not `max`**: the maximum of n scans rises with n, so a
+   peptide observed more often scores higher for no abundance reason (about 13.6% between
+   a peptide seen 3 times and one seen 20 times at equal abundance). `max` is kept in
+   `peptide_aggregation` so existing methods still describe themselves. See
+   `docs/top3-estimator.md`
 2. sort those maxima descending
 3. average the top 3; with 2 peptides average 2, with 1 that value stands alone
 
@@ -179,7 +183,12 @@ precursor's:
 ar1 = I_product / I_precursor
 ```
 
-Scale the injection and both move together, so **ar1 does not change with load**. That is
+Scale the injection and both move together, so **ar1 does not change with load — within
+the linear dynamic range**. Detector saturation and ion suppression break it, and they
+break it at the top of a loading series. The range is measurable rather than assumable:
+`docs/ar1-linearity.md` and `examples/method.ar1-linearity.json` regress ar1 against a
+50-fold on-column series that has already been acquired. Until that slope is known, treat
+loading-invariance as the design intent, not as a measured property. That is
 the point of it: a difference in ar1 across runs is a difference in fragmentation, not in
 how much went on column. `ar1_sum`, the total over the assigned ladder, is the share of
 the precursor that converted to identified fragments — one number per ion, comparable
