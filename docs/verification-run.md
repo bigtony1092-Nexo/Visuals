@@ -963,3 +963,65 @@ The finding and the section caveat now say that neither side is a MARCH
 extraction, that MARCH has no PAX8 patterns to compare, and that the label
 explanation was tested and failed. The HeLa_120 result is cited as the place
 MARCH's own extraction *has* been checked.
+
+### WITHDRAWN: the 47% retention and the b-enrichment lead
+
+Both came from a **stale annotation file**. The script had read
+`HeLa_120_1_annotated_ions.parquet`, written 2026-10-13; the current MARCH output
+for that run is `HeLa_120_2uL_20260923_1_annotated_ions.parquet`, written
+2026-10-16. The 10-13 build predates the `uid_residues` fix, under which negative
+modification deltas — mostly pyro-Glu — put **b-ladders 17–18 Da off**, and it
+predates the two-pass changes.
+
+So the two things I drew from it are void:
+
+- **"MARCH retains 47% of FragPipe's proline signal"** — withdrawn. The real
+  figure is **0.91**, and it is not a dilution.
+- **"The y-shares diverge the wrong way, so the contamination has a shape"** —
+  withdrawn. The 0.11 y-share gap was the mis-massed b-ladders. On current
+  annotations the gap is 0.005–0.036, median **0.013**.
+
+The mechanism is worth keeping, because it is exactly what a wrong b-ladder
+produces: b ions matched at the wrong positions flatten the proline marker and
+inflate the b share. My reasoning about what a shaped contamination would look
+like was sound; the data under it was eight days out of date. The lesson is that
+"is this the current file?" belongs before any cross-tool comparison, not after
+an interesting result falls out of one.
+
+### MARCH's extraction, measured properly: six runs
+
+Current annotations, six Colorado HeLa runs, each against the FragPipe search of
+the **same raw file**. Retention is MARCH's excess over uniform divided by
+FragPipe's.
+
+| run | n | FragPipe proline | MARCH proline | retained | cosine real / mismatched | real wins |
+|---|---|---|---|---|---|---|
+| 120 #1 | 247 | 3.33× | 3.13× | 0.91 | 0.861 / 0.571 | 192/200 (96%) |
+| 120 #2 | 270 | 3.18× | **3.27×** | **1.04** | 0.849 / 0.584 | 189/205 (92%) |
+| 120 #3 | 184 | 3.20× | **3.34×** | **1.06** | 0.846 / 0.548 | 132/142 (93%) |
+| 120 #5 | 263 | 2.99× | 2.39× | 0.70 | 0.825 / 0.590 | 107/115 (93%) |
+| 60 #2 | 316 | 3.29× | 3.09× | 0.91 | 0.865 / 0.577 | 250/261 (96%) |
+| 60 #3 | 262 | 2.61× | 2.34× | 0.83 | 0.795 / 0.566 | 98/112 (88%) |
+
+**MARCH passes the gate on all six.** Retention median **0.91**, mean 0.91, range
+0.70–1.06 — and **it leads FragPipe on two of the six runs**. That rules out the
+dilution framing: a process that loses signal does not overshoot. The figure
+scatters around parity, with the two weakest runs (120 #5 and 60 #3) pulling the
+low end.
+
+**The pattern agreement is the strongest result in this document.** Pooled across
+all six runs the correct pairing beats a mismatched UID of the same charge and
+similar length in **968 of 1,035 pairs — 94%**, against a 50/50 null at
+p < 10⁻²⁰⁵. Cosine 0.80–0.87 real against 0.55–0.59 mismatched, a median gap of
+0.277.
+
+Set beside the PAX8 panel, where the control *won*, this is what the comparison
+looks like when the reference has chemistry in it. The difference is not the
+method; it is same-file against cross-platform-archive.
+
+**Bruker is not measured, and should be left that way for now.** There is no
+same-file FragPipe or MGF MS/MS reference for those runs, and DIA-NN's library
+spectra are *predicted* — comparing an extraction against a prediction is not an
+independent chemistry check. "Not measured" is the honest entry.
+
+Page at version 10, carrying the six-run figures in place of the withdrawn one.
