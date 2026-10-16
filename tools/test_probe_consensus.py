@@ -356,7 +356,7 @@ def a_mass_gated_table_is_not_evidence(db, tmp):
         bad.append("expected zero isotope picks in a table with none")
     if "THIS RESULT IS NOT EVIDENCE" not in out:
         bad.append("read its own zero as a finding on a table that cannot hold a pick")
-    for want in ("upstream", "quarantined"):
+    for want in ("upstream", "discarded"):
         if want not in out:
             bad.append("did not say where to ask instead (%r missing)" % want)
     return bad
@@ -472,6 +472,64 @@ def a_measured_subset_survives_a_mostly_computed_table(db, tmp):
     return bad
 
 
+def _ppm_db(path, sigma, hard_cut, n=4000, seed=5):
+    """Measured rows whose mass error is gaussian, optionally cut at hard_cut ppm."""
+    rng = random.Random(seed)
+    con = sqlite3.connect(path)
+    con.execute("""CREATE TABLE observations (
+        id INTEGER PRIMARY KEY, PeptideSequence TEXT, Charge INTEGER,
+        RunName TEXT, PrecMz REAL, CalcMz REAL)""")
+    rid = 0
+    while rid < n:
+        ppm = rng.gauss(0, sigma)
+        if hard_cut is not None and abs(ppm) > hard_cut:
+            continue                      # rejected before storage, as a gate would
+        seq = "".join(rng.choice("GASPVTLINDQEMHFYW") for _ in range(12)) + "K"
+        z = 2
+        calc_mz = (WATER + sum(RESIDUE[c] for c in seq)) / z + pc.PROTON
+        rid += 1
+        con.execute("INSERT INTO observations VALUES (?,?,?,?,?,?)",
+                    (rid, seq, z, "run_A", calc_mz * (1 + ppm / 1e6), calc_mz))
+    con.commit()
+    con.close()
+
+
+def a_cut_distribution_is_called_cut(db, tmp):
+    """Errors rejected past 10 ppm leave density at the edge; say so."""
+    cutdb = tmp / "cut.db"
+    _ppm_db(cutdb, sigma=8.0, hard_cut=10.0)
+    rc, out = run("--db", str(cutdb))
+    bad = []
+    if "was CUT at about" not in out:
+        bad.append("did not notice a distribution that stops dead at its cutoff")
+    if "In the last 5%" not in out:
+        bad.append("did not report the density at the edge")
+    return bad
+
+
+def a_tapered_distribution_is_not_called_cut(db, tmp):
+    """Unfiltered scatter thins out on its own; do not call that a cutoff."""
+    taper = tmp / "taper.db"
+    _ppm_db(taper, sigma=3.0, hard_cut=None)
+    rc, out = run("--db", str(taper))
+    bad = []
+    if "was CUT at about" in out:
+        bad.append("called ordinary scatter a cutoff")
+    if "looks like it ended rather than being cut" not in out:
+        bad.append("did not say the distribution tapered")
+    return bad
+
+
+def a_small_clean_sample_is_not_called_cut(db, tmp):
+    """The defect in a max/p99 ratio: it flags small clean samples. This must not."""
+    small = tmp / "small.db"
+    _ppm_db(small, sigma=3.0, hard_cut=None, n=300, seed=9)
+    rc, out = run("--db", str(small))
+    if "was CUT at about" in out:
+        return ["called a 300-row clean sample cut"]
+    return []
+
+
 def limit_reads_a_spread_not_the_oldest(db, tmp):
     """--limit must not silently mean 'the oldest rows'."""
     rc, out = run("--db", str(db), "--limit", "200")
@@ -508,7 +566,10 @@ STANDALONE = (refuses_a_published_shaped_table, refuses_a_file_that_is_not_a_dat
               an_unfiltered_zero_carries_weight, limit_reads_a_spread_not_the_oldest,
               a_computed_precursor_is_not_a_measurement,
               a_measured_precursor_is_not_called_computed,
-              a_measured_subset_survives_a_mostly_computed_table)
+              a_measured_subset_survives_a_mostly_computed_table,
+              a_cut_distribution_is_called_cut,
+              a_tapered_distribution_is_not_called_cut,
+              a_small_clean_sample_is_not_called_cut)
 
 
 def main(argv=None):

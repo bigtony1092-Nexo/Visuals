@@ -105,6 +105,20 @@ GATE_PPM = 50.0
 # essentially never land exactly on the calculated one.
 IDENTICAL_TOL = 1e-9
 
+# A fixed width threshold cannot tell a filtered distribution from a clean one.
+# The giveaway for a cutoff is density right at the edge: a distribution that was
+# cut still has appreciable weight in its last few ppm and then nothing, while one
+# that ended naturally has thinned to a handful of rows by the time it reaches its
+# own maximum. A ratio of maximum to 99th percentile will not do, because for
+# ordinary scatter that ratio depends on how many rows were read — about 1.4 at a
+# few hundred rows and 1.9 at a hundred thousand — so it would call a small clean
+# sample cut. Density at the edge does not have that defect.
+EDGE_FRACTION = 0.05    # the top 5% of the observed range is "the edge"
+EDGE_SHARE = 0.005      # density there above this share of all rows means cut
+EDGE_MIN = 5            # and at least this many rows, so small samples stay quiet
+PPM_BIN = 0.1          # histogram resolution, ppm
+PPM_BINS = 4000        # up to 400 ppm, then an overflow bin
+
 # Candidate column names, normalized (lowercased, non-alphanumerics dropped) and
 # in priority order: the first one present wins.
 HINTS = {
@@ -374,6 +388,7 @@ def test_isotope(records, cfg, offsets, out):
     beyond_gate = 0
     identical = 0
     by_run = defaultdict(lambda: [0, 0])   # run -> [measured, computed]
+    hist = [0] * (PPM_BINS + 1)            # |ppm| distribution of measured rows
 
     for seq, z, raw, calc_mz, rest in records:
         total += 1
@@ -394,6 +409,7 @@ def test_isotope(records, cfg, offsets, out):
         by_run[run][0] += 1
         err_ppm = abs(corrected - calc_mz) / calc_mz * 1e6
         widest_ppm = max(widest_ppm, err_ppm)
+        hist[min(int(err_ppm / PPM_BIN), PPM_BINS)] += 1
         if err_ppm > GATE_PPM:
             beyond_gate += 1
         label, k = classify(delta)
@@ -461,11 +477,37 @@ def test_isotope(records, cfg, offsets, out):
     out.append("  Any isotope:   %d rows, %d ions." % (any_rows, any_ions))
     out.append("  The study's 33 is one of these two; which depends on whether it counted")
     out.append("  A1 alone. Compare ions, not rows: one ion appears once per run.")
+    def pct(q):
+        """The |ppm| value at quantile q, from the histogram."""
+        want = q * measured
+        seen = 0
+        for i, n in enumerate(hist):
+            seen += n
+            if seen >= want:
+                return i * PPM_BIN
+        return widest_ppm
+
     out.append("")
-    out.append("  Widest error from a calculated m/z, measured rows only: %.1f ppm."
-               % widest_ppm)
+    out.append("  Mass error of the measured rows, |ppm|:")
+    out.append("    median %.1f   p95 %.1f   p99 %.1f   max %.1f"
+               % (pct(0.5), pct(0.95), pct(0.99), widest_ppm))
     out.append("  Measured rows beyond %.0f ppm: %d of %d."
                % (GATE_PPM, beyond_gate, measured))
+    edge_from = widest_ppm * (1 - EDGE_FRACTION)
+    edge_rows = sum(n for i, n in enumerate(hist) if i * PPM_BIN >= edge_from)
+    cut = (measured and edge_rows >= EDGE_MIN
+           and edge_rows / measured >= EDGE_SHARE)
+    if measured:
+        out.append("  In the last 5%% of that range (%.1f to %.1f ppm): %d rows, %.2f%% of all."
+                   % (edge_from, widest_ppm, edge_rows, 100.0 * edge_rows / measured))
+    if cut:
+        out.append("  That is appreciable density right at the edge, then nothing. The")
+        out.append("  distribution was CUT at about %.0f ppm rather than ending there, so"
+                   % widest_ppm)
+        out.append("  what lies past the cut was never stored and cannot be counted here.")
+    elif measured:
+        out.append("  The distribution has thinned to almost nothing by its own maximum, so")
+        out.append("  it looks like it ended rather than being cut.")
     if any_ions == 0 and beyond_gate == 0:
         out.append("")
         out.append("  THIS RESULT IS NOT EVIDENCE. An isotope pick is 1.003/z Da from the")
@@ -474,10 +516,18 @@ def test_isotope(records, cfg, offsets, out):
         out.append("  not have been stored here and could not have been found. Zero is a")
         out.append("  property of this table, not a measurement of the pipeline.")
         out.append("")
-        out.append("  Something filtered these rows on mass before they were written — an")
-        out.append("  ingest tolerance, or a search engine that only emits matches. Ask")
-        out.append("  upstream of it instead: the search output (DIA-NN report, FragPipe")
-        out.append("  psm.tsv, vendor spectrum files) or whatever the filter quarantined.")
+        out.append("  Something bounded these errors before they were written — an ingest")
+        out.append("  tolerance, or a search engine that only emits matches inside its own")
+        out.append("  tolerance. Ask upstream of it: the search output (DIA-NN report,")
+        out.append("  FragPipe psm.tsv, vendor spectrum files) or whatever it discarded.")
+        out.append("")
+        out.append("  AND CHECK ONE THING THERE FIRST. This test assumes the calculated m/z")
+        out.append("  was derived from the sequence alone. If it was instead chosen to")
+        out.append("  explain the observation — the modification or isotope that leaves the")
+        out.append("  smallest residual — then the difference between reported and")
+        out.append("  calculated is small by construction, for a pick as much as for a")
+        out.append("  monoisotope, and no mass test over those two columns can ever find")
+        out.append("  anything. The pick is recorded in the assignment, not the residual.")
     elif any_ions == 0:
         out.append("")
         out.append("  Zero picks, and %d rows do sit beyond %.0f ppm, so a pick was not"

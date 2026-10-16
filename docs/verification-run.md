@@ -242,6 +242,65 @@ another, 20 of them on A1 — 96% computed by row. It fails if the probe loses
 those 20, counts the computed rows as monoisotopic, or calls the result not
 evidence.
 
+### The measured subset, run on its own
+
+The 48 measured samples were copied read-only into a scratch database — 350,419
+rows — and the probe run over all of them, no sampling:
+
+| | |
+|---|---|
+| still computed, excluded | 9,485 rows (3%) |
+| measured | 340,934 rows |
+| by run | 24 measured throughout, 24 mixed |
+| calibration, measured rows only | **+0.14 ppm** over 275,181 measurements |
+| isotope picks | **0** |
+| monoisotopic | 275,629 rows / 12,265 ions |
+| unexplained | 65,305 rows, ±0.01 to 0.05 Da |
+| widest error | 28.1 ppm, none beyond 50 |
+
+The **+0.14 ppm** replaces the earlier 0.00 ppm, which was arithmetic fitted to
+itself and should not be cited anywhere. And the answer is still zero picks from
+a sample whose widest error is 28.1 ppm — an order of magnitude short of the 358
+ppm a pick needs. No consensus table on that machine can answer the question.
+
+### Telling a cut distribution from one that simply ended
+
+That left the verdict resting on a fixed 50 ppm threshold, which cannot
+distinguish *filtered* from *clean*. A first attempt compared the maximum error
+with the 99th percentile, on the reasoning that a cutoff leaves them close
+together. **That heuristic is wrong**: for ordinary scatter the ratio depends on
+how many rows were read — about 1.4 at a few hundred rows against 1.9 at a
+hundred thousand — so it calls a small clean sample cut. It was replaced before
+it ever ran on real data.
+
+What does work is density at the edge. A distribution that was cut still carries
+appreciable weight in its last few ppm and then stops; one that ended naturally
+has thinned to a handful of rows by the time it reaches its own maximum. The
+probe now reports the |ppm| quantiles, the share of rows in the top 5% of the
+observed range, and which of the two it looks like. Three tests: gaussian error
+rejected past 10 ppm must be called cut, unfiltered scatter must not, and a
+300-row clean sample must not — the case the ratio heuristic got wrong.
+
+### The thing to check upstream before anything else
+
+Worth stating plainly, because it would make every mass test above vacuous no
+matter which table it ran on. **This test assumes the calculated m/z was derived
+from the sequence alone.** The PAX8 analysis's own method note says identity was
+"taken from mass": carbamidomethyl assumed, then the residual explained as
+oxidation, deamidation or an isotope pick, within 10 ppm — and
+`explained_by_mass` is 1262 of 1262 PSMs. Every PSM was forced into an
+explanation. So the ppm figures that analysis reports are residuals *after*
+choosing the explanation, not raw mass errors, and its 33 isotope picks are
+recorded in the assignment rather than left as 1.003 Da outliers in the data.
+
+If a `calc_mz` column was written downstream of that choice, then reported minus
+calculated is small by construction — for a pick exactly as much as for a
+monoisotope — and no comparison of those two columns can ever find a pick. The
+probe now says this in its own output when it refuses a result. The search
+output is the right place to look not merely because it sits upstream of a
+filter, but because that is where the reported precursor and a sequence-derived
+theoretical mass are still independent of each other.
+
 ### Where the gate does apply, it still cannot fail
 
 For the vendor stores, **905 of 993 Thermo samples carry a computed precursor
