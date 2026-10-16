@@ -162,3 +162,32 @@ not a database search. The speaker note gives the defensible sentence:
 
 The "confirm those two denominators before saying it aloud" instruction is gone,
 because they have been confirmed.
+
+### Does the handicap reach the other decoy results?
+
+The reversed ladder being ~6.5% shorter is a defect in the control itself, so the
+first question is how far it propagates. It depends on whether the measure is an
+**absolute count** or a **rate**.
+
+**`replication` — the gate is "5+ fragments", an absolute count. Material.**
+Trimming 6.5% of a ladder shifts every peptide down the count axis, and the loss
+lands exactly where the gate sits: peptides at 5 or 6 fragments fall below the
+bar. A threshold amplifies a proportional trim, which is why a 6.5% shorter
+ladder costs 15–25% of reversed survivors. The 14.5% is a floor, and the slide
+now says so.
+
+**`pattern` — the measure is a share of the discovery spectrum. Not material.**
+A rate has no threshold to fall below; 6.5% fewer ions means 6.5% fewer chances
+to match, not a disproportionate loss. The result is 67% for real sequences
+against **0 of 187** reversed. For trimming to explain that gap it would have to
+account for all 67 points, and it cannot. The conclusion stands.
+
+One wording point does follow: the 95% upper bound of 3/187 = **1.6%** was
+computed over a test whose reversed ladders carried 6.5% fewer ions, so it bounds
+the trimmed comparison rather than a symmetric one. Worth saying if anyone presses
+on it, but it does not change the number.
+
+**So the fix is still worth making at source — trim both ladders or neither —
+and exactly one published number moves when it lands.** That is a cheap thing to
+know before the fix, because it means `pattern` does not need revisiting and
+`replication` does.
