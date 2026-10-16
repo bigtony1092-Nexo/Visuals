@@ -451,7 +451,7 @@ ions:**
   If the precursor intensity includes an interferer, the denominator is inflated and
   every one of the target's ar1 values drops together. Compare against the **same peptide
   and charge in runs where it is clean**, not against the library: library spectra carry
-  no precursor intensity, so their ar1 is null (section 6). Loading-invariance is what
+  no precursor intensity, so their ar1 is null (section 6, AR1). Loading-invariance is what
   makes the drop meaningful instead of noise.
 
 ### The fields

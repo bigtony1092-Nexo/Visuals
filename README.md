@@ -91,7 +91,7 @@ What the Atlas does with it, and never hides:
 
 ### Depletion and interference
 
-The method is in `docs/export-contract.md`, section 11.
+The method is in `docs/export-contract.md`, section 12 (depletion and interference).
 
 - **Deplete** replays depletion. Each pass's explained ions flash, then fly back out
   through the inlet into the database, until only the unexplained remain. The HUD counts
@@ -117,19 +117,27 @@ more than 35% of MS2 intensity unexplained, or `ar1_sum` below 0.75 of the clean
 ## The export contract
 
 ```
-docs/export-contract.md          the spec — read this first
-schema/method.schema.json        the fillable method (what to plot, how to compute it)
-schema/panels.json               panel catalog; each panel declares what it requires
-schema/manifest.schema.json      per-export manifest (samples, counts, decimation)
-schema/ion_track.schema.json     one ion, with its append-only event ledger
-schema/protein_quant.schema.json Top3avg per (protein, sample)
-schema/spectrum.schema.json      MS/MS and MS1 isotope peaks (the conventional panels)
-schema/trace.schema.json         extracted ion chromatograms (optional)
-examples/                        a filled method and a matching export
-tools/plan_panels.py             says which panels will render, and why not
-tools/validate_export.py         checks a real export against the contract
-tools/test_validate_export.py    proves the validator catches what it claims to
-viewer/aria-ion-panels.html      the viewer — conventional and bridge panels, fed by an export
+docs/export-contract.md           the spec — read this first
+docs/replication-fdr.md           what requiring a second run is worth, derived
+docs/top3-estimator.md            why max-across-scans is biased, and the fix
+docs/ar1-linearity.md             how to measure the range ar1 is invariant over
+docs/pax8-cterm-extraction.md     a worked targeted extraction, with its controls
+
+schema/method.schema.json         the fillable method (what to plot, how to compute it)
+schema/panels.json                panel catalog; each panel declares what it requires
+schema/manifest.schema.json       per-export manifest (samples, counts, decimation)
+schema/ion_track.schema.json      one ion, with its append-only event ledger
+schema/protein_quant.schema.json  Top3avg per (protein, sample)
+schema/spectrum.schema.json       MS/MS and MS1 isotope peaks, with per-peak ar1
+schema/trace.schema.json          extracted ion chromatograms (optional)
+schema/fragment_hit.schema.json   fragment-first candidates (optional)
+
+examples/                         four filled methods and a matching export
+tools/plan_panels.py              says which panels will render, and why not
+tools/validate_export.py          checks a real export against the contract
+tools/test_validate_export.py     proves the validator catches what it claims to
+viewer/aria-ion-panels.html       the viewer — conventional and bridge panels
+ion-flight-atlas.html             the 3-D flight map, standalone and synthetic
 ```
 
 ## Viewer
@@ -166,11 +174,11 @@ python3 tools/validate_export.py export/ --strict        # warnings fail too
 
 Findings are `ERROR` (the export violates the contract), `WARN` (legal but lossy or
 suspicious) or `NOTE`. Exit status is 1 on any error. Among the checks: a SONAR
-quadrupole position sitting in a mobility or CCS field (section 3), an isotope minted as
-its own ion or an envelope on a different basis (section 2), a tier disagreeing with
-whether decoys were controlled (section 4), a Top3avg padded past the peptides it matched
-(section 5), `ar1` without its basis or normalized inside its own spectrum until it
-carries nothing (section 6), a ledger out of order, a spectrum or trace naming an ion that
+quadrupole position sitting in a mobility or CCS field (section 3, drift is not always drift), an isotope minted as
+its own ion or an envelope on a different basis (section 2, the forensic track), a tier disagreeing with
+whether decoys were controlled (section 4, confidence tier), a Top3avg padded past the peptides it matched
+(section 5, Top3avg), `ar1` without its basis or normalized inside its own spectrum until it
+carries nothing (section 6, AR1), a ledger out of order, a spectrum or trace naming an ion that
 is not in the export, and manifest counts that disagree with the records.
 
 Schema validation runs too when `jsonschema` is installed, and is skipped with a note when
@@ -187,6 +195,24 @@ python3 tools/test_validate_export.py
 The second injects one violation at a time and asserts the validator names it, with the
 unmutated examples as the control. Run it after changing either the schemas or the
 contract: a rule that stops firing is a rule that has quietly gone.
+
+## The example methods
+
+Four filled methods, each answering a different question. Run any of them through
+`plan_panels.py` to see which panels it can honestly draw.
+
+| File | The question it asks |
+| --- | --- |
+| `method.example.json` | the general case: targets and controls, conventional panels first |
+| `method.pax8-cterm.json` | is this ion in the raw data at all? A targeted extraction, with positive controls so a null result can be read |
+| `method.pax8-fragment-first.json` | the second pass, when the precursor is missing because it was modified by something nobody guessed |
+| `method.ar1-linearity.json` | over what loading range is `ar1` actually invariant? |
+
+`examples/` also holds one small export — manifest, ions, proteins, spectra, traces and a
+fragment hit — consistent with itself and used as the validator's own fixture. It is an
+**excerpt**: the manifest describes a realistic 2.1M-ion export while the tables hold a
+handful of records, so validate it with `--excerpt` or the totals check will object,
+correctly.
 
 ## Panel order
 

@@ -37,10 +37,10 @@ ROOT = Path(__file__).resolve().parent.parent
 
 ERROR, WARN, NOTE = "ERROR", "WARN", "NOTE"
 
-# Tiers that the contract defines as decoy-controlled (section 4).
+# Tiers that the contract defines as decoy-controlled (section 4, confidence tier).
 DECOY_CONTROLLED = {"bare_proximity": False, "pass2_confirmed": True, "atlas_consensus": True}
 
-# The m/z grid the ion_uid hash rounds to (section 2), and so the finest
+# The m/z grid the ion_uid hash rounds to (section 2, the forensic track), and so the finest
 # distinction two m/z values in this export are allowed to claim.
 MZ_TOL = 1e-4
 
@@ -53,7 +53,7 @@ TABLES = {
 }
 
 # Monoisotopic residue masses, for recomputing what a record claims about mass
-# (section 7). Carbamidomethyl is fixed on Cys, so the unmodified mass of a
+# (section 7, fragment-first). Carbamidomethyl is fixed on Cys, so the unmodified mass of a
 # peptide is computable and a stated delta can be checked rather than trusted.
 RESIDUE = {
     "G": 57.02146, "A": 71.03711, "S": 87.03203, "P": 97.05276, "V": 99.06841,
@@ -213,7 +213,8 @@ def check_manifest(report, manifest, export_dir, validators, names, where):
     if not (export_dir / names["ions"]).exists():
         report.error(where, f"{names['ions']} is missing; it is the one table the contract requires")
 
-    # Decimation has to be disclosed and has to be arithmetically possible (section 10).
+    # Decimation has to be disclosed and has to be arithmetically possible (section 11,
+    # decimation is disclosed).
     dec = manifest.get("decimation")
     if dec and dec.get("strategy") != "none":
         kept, of = dec.get("kept"), dec.get("of")
@@ -230,7 +231,7 @@ def check_manifest(report, manifest, export_dir, validators, names, where):
         if dec.get("seed") is None and dec.get("strategy") == "uniform_random":
             report.warn(where, "uniform_random decimation without a seed cannot be reproduced")
 
-    # Top3avg is relative unless a spike-in is declared (section 5).
+    # Top3avg is relative unless a spike-in is declared (section 5, Top3avg).
     quant = manifest.get("quant") or {}
     if quant and not quant.get("absolute_standard_declared"):
         report.note(
@@ -249,7 +250,7 @@ def check_ion(report, where, line, ion, samples, seen_uids):
     sample_id = ion.get("sample_id")
     at = f"line {line}"
 
-    # ion_uid is assigned once and never reassigned (section 2).
+    # ion_uid is assigned once and never reassigned (section 2, the forensic track).
     if uid in seen_uids:
         report.error(
             where,
@@ -501,7 +502,7 @@ def check_spectra(report, path, uids, samples, validators, limit):
             report.warn(
                 where,
                 f"{at}: a library spectrum carries ar1. Library sources record no precursor"
-                " intensity, so their ar1 is null by construction (section 6)",
+                " intensity, so their ar1 is null by construction (section 6, AR1)",
             )
     return kinds
 
