@@ -1025,3 +1025,74 @@ spectra are *predicted* — comparing an extraction against a prediction is not 
 independent chemistry check. "Not measured" is the honest entry.
 
 Page at version 10, carrying the six-run figures in place of the withdrawn one.
+
+### The intensities are real measurements, square-root compressed
+
+Settling the owner's question directly: **nothing here is simulated.** The Thermo
+MSFragger-route fragment intensities are read from measured peaks. Verified
+against the mzML on PXD000155, 300 PSMs and 3,039 matched fragments: the stored
+value is exactly `100 × √(peak / base peak)` — median absolute difference 0.003,
+98.6% within 0.5, and within-scan Spearman against mzML peak height has a median
+of **1.000**. Real peak heights, square-root transformed and base-peak scaled.
+Linear relative intensity is recovered as `(v/100)²`.
+
+What *is* computed on those rows is the **m/z**: the old writer took `ProdMz` from
+the theoretical ladder, never from a peak. Today's fix reads m/z from the mzML
+peaks instead.
+
+### But sqrt compression does not explain the flat archive
+
+Squaring the stored values linearizes them. Run on the PAX8 archive rows, it does
+nothing at all:
+
+| side | | y-share | proline | aspartate |
+|---|---|---|---|---|
+| Colorado | as stored | 0.696 | 2.04× | 1.33× |
+| Colorado | squared | 0.731 | **2.61×** | 1.43× |
+| Thermo | as stored | 0.483 | 1.01× | 1.18× |
+| Thermo | squared | 0.471 | **1.01×** | 1.21× |
+
+**The invariance is the finding.** Squaring sharpens any distribution onto its
+largest peaks, so "squaring raises proline" proves nothing on its own — which is
+why the Colorado side is the control here. Colorado moves **+0.57** under
+squaring, because it has structure for sharpening to concentrate. Thermo moves
+**0.00**. A vector with chemical structure responds to being sharpened; a vector
+of coincidental intensities does not, at any scale you put it on.
+
+That points at the remaining explanation rather than away from it. PXD000155 is
+2010 low-resolution ion-trap MS2, and the mzML peak nearest each "matched" ladder
+m/z sits at a median **235 ppm**. At the tolerance a search must use there, many
+ladder matches are coincidental peaks — and coincidental matches are flat by
+construction, invariantly so. It is a resolution-and-tolerance effect on old
+public data, not thinness and not fabrication.
+
+Enrichment against spectra per ion, the discriminator, is suggestive but not
+conclusive on this data:
+
+| Thermo spectra per ion | ions | y-share | proline |
+|---|---|---|---|
+| = 1 | 9 | 0.481 | 1.10× |
+| 2–3 | 6 | 0.552 | 1.01× |
+| 4–9 | 9 | 0.493 | 1.04× |
+| ≥ 10 | 4 | 0.361 | **1.43×** |
+
+The top bin rises, but it is four ions and the trend is not monotone. It is a
+hint that real signal is in there somewhere, not a result.
+
+**The split that would settle it is one I cannot run.** It needs each source
+dataset's instrument or method to separate high-resolution Orbitrap MS2 from
+ion-trap MS2, and the page carries no instrument metadata — the store's own
+`ProdMz` cannot tell you, because it is computed. That has to come from the
+source datasets.
+
+Also recorded: with the Thermo side linearized, the cosine comparison gets *worse*
+in the same wrong direction — real 0.371 against control 0.526, against 0.535 and
+0.613 as stored. (These differ from the page's 0.777/0.847 because the page
+transforms intensities before its cosine and uses a different shared-key rule;
+the direction is what matters, and it is unchanged.)
+
+**For the writer fix:** the intensity choice should follow the m/z choice. If m/z
+now comes from the mzML peak, the intensity should be that peak's height, not
+MSFragger's sqrt-scaled value — otherwise one column is a measurement and the
+other is a transform of one, and every downstream comparison inherits the
+mismatch silently.
