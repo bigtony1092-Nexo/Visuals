@@ -466,8 +466,60 @@ detector; it was the load axis. Within a matched series intensity tracks amount,
 so ar1's loading-invariance can be tested — and the dynamic-range ceiling this
 document warned about does not exist at these loads.
 
-One caveat kept in view: 27 ions from one 100ng run against three 500ng runs,
-one sample, one instrument, one day. The quartile spread (4.79× to 8.61×) is
-wide, and two ions move 49× and 65×, which is more than a 5-fold step can
-explain and worth looking at on its own. This is a clean negative for
-compression, not a calibration of the response.
+One caveat was kept in view: 27 ions from one 100ng run against three 500ng
+runs, with two ions moving 49× and 65× — more than a 5-fold step can explain.
+Chasing those two corrected the headline number. See below.
+
+### Correction: the 5.89× was inflated by taking the best of three replicates
+
+Those 500ng figures were the **maximum** per ion across three replicate runs.
+Taking the maximum of three draws and comparing it against a single draw
+inflates the ratio, and this repository had already documented exactly that bias
+in another place — `docs/top3-estimator.md`, where a peptide seen 20 times scores
+13.6% above one seen 3 times at equal abundance. Same defect, new location.
+
+Restricting to the 24 ions present in all four runs and taking the **median** of
+the three replicates:
+
+| | max of 3 | **median of 3** | min of 3 |
+|---|---|---|---|
+| median ratio | 7.40× | **5.37×** | 4.64× |
+| p90 | 12.95× | 8.79× | 7.68× |
+| largest | 65.45× | 23.26× | 17.75× |
+
+So the honest figure is **5.37× against 5.0× nominal, an implied slope of
++1.044**, not the +1.102 reported earlier. Quartiles 3.44× to 8.20×, and 23 of
+24 ions rose. The conclusion is unchanged and slightly stronger — the response is
+proportional — but the number in the earlier section was biased upward and this
+is the one to use.
+
+### Both outliers were one irreproducible ion
+
+`TDAFSQHHLEPLECPFER|554.01|4`, the 65× ion, spans **47,452 to 44,841,857 across
+the three 500ng replicates — a factor of 945**. The 65× was max-of-3 selecting
+that top replicate. On the median it moves 1.13×. It is not a load effect; the
+ion is not reproducible.
+
+That sets a floor on what this comparison can resolve. Across all 24 ions the
+replicate spread is **1.69× at the median** and 4.07× at p90, so a single run at
+the low end cannot distinguish a 5× step from a 3× or an 8× one per ion. It is
+only the median over ions that is informative.
+
+### The low end is unresolvable, and says so
+
+At peptide level, collapsing charge channels, `TDAFSQHHLEPLECPFER` moves 1.67×
+against a nominal 5×, and `QNPTMFAWEIR` moves 8.72×. The low one is not
+interpretable: that peptide took **25.6%** of the 100ng run's entire PAX8 ion
+current against 10.2% across all runs. Its denominator is high, so its ratio is
+low, and with one run at 100ng there is no way to separate "under-responds" from
+"measured high once". One ion fell outright —
+`KMDDSDQDSCRLSIDSQSSSSGPR|665.29|4` at 0.84×.
+
+### One thing that did check out
+
+The data carries oxidised and unoxidised forms of the same peptide at the same
+charge, 16.00 Da apart — `QNPTMFAWEIR` at 696.84 and 704.84, `MDDSDQDSCR` at
+614.71 and 622.71, `VQQPFNLPMDSCVATK` at 612.30 and 617.63. Each pair responds
+together: 8.8× and 8.5×, 4.3× and 5.1×, 3.6× and 3.7×. Two independent channels
+for the same molecule agreeing to within 20% is a genuine internal consistency
+check, and it passed without being set up as one.
