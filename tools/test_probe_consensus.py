@@ -555,6 +555,91 @@ def a_small_clean_sample_is_not_called_cut(db, tmp):
     return []
 
 
+def _ar1_db(path, normalized, seed=41, n_prec=200, frags=8):
+    """Precursors with fragments, either absolute or normalized within spectrum."""
+    rng = random.Random(seed)
+    con = sqlite3.connect(path)
+    con.execute("""CREATE TABLE observations (
+        id INTEGER PRIMARY KEY, peptide_sequence TEXT, charge_state INTEGER,
+        sample_name TEXT, precursor_mz REAL, calc_mz REAL,
+        precursor_intensity REAL, intensity REAL, frag_type TEXT)""")
+    rid = 0
+    for p_i in range(n_prec):
+        seq = "".join(rng.choice("GASPVTLINDQEMHFYW") for _ in range(12)) + "K"
+        z = 2
+        calc_mz = (WATER + sum(RESIDUE[c] for c in seq)) / z + pc.PROTON
+        prec = 10 ** rng.uniform(4, 7)
+        # Absolute fragment intensities: each a fixed share of the precursor, so
+        # ar1 is meaningful and ar1_sum is well below 1.
+        raw = [prec * rng.uniform(0.01, 0.12) for _ in range(frags)]
+        vals = [v / sum(raw) for v in raw] if normalized else raw
+        for j, v in enumerate(vals):
+            rid += 1
+            con.execute("INSERT INTO observations VALUES (?,?,?,?,?,?,?,?,?)",
+                        (rid, seq, z, "run_A", calc_mz * (1 + 2.0 / 1e6), calc_mz,
+                         prec, v, ("y%d" % (j + 1)) if j % 2 else ("b%d" % (j + 1))))
+    con.commit()
+    con.close()
+
+
+def ar1_is_computed_from_absolute_intensities(db, tmp):
+    """Each fragment is 1-12% of its precursor, so ar1 must land in that band."""
+    adb = tmp / "ar1.db"
+    _ar1_db(adb, normalized=False)
+    rc, out = run("--db", str(adb))
+    bad = []
+    if "TEST 4" not in out:
+        return ["test 4 did not appear"]
+    t4 = out.split("TEST 4")[1]
+    if "SKIPPED" in t4:
+        bad.append("skipped with both intensity columns present: %r" % t4.strip()[:90])
+    if "NORMALIZED" in t4:
+        bad.append("called absolute intensities normalized")
+    med = re.search(r"ar1 per row\s+median ([\d.]+)", t4)
+    if not med:
+        bad.append("no median ar1 line")
+    elif not 0.01 <= float(med.group(1)) <= 0.12:
+        bad.append("median ar1 %s outside the planted 0.01-0.12 band" % med.group(1))
+    if "By fragment type" not in t4:
+        bad.append("did not break ar1 down by fragment type")
+    if "Loading invariance is NOT tested" not in t4:
+        bad.append("did not say loading invariance was untested")
+    return bad
+
+
+def ar1_refuses_normalized_fragments(db, tmp):
+    """Fragments stored as shares of their own spectrum carry no precursor scale.
+
+    This is the defect the published PAX8 fragment tables have: every spectrum
+    sums to 1.0000. Dividing a share by the precursor intensity returns the share
+    scaled, not a product-to-precursor ratio.
+    """
+    ndb = tmp / "ar1norm.db"
+    _ar1_db(ndb, normalized=True)
+    rc, out = run("--db", str(ndb))
+    bad = []
+    t4 = out.split("TEST 4")[1] if "TEST 4" in out else ""
+    if "THE PRODUCT INTENSITIES ARE NORMALIZED" not in t4:
+        bad.append("computed ar1 from fragments that sum to 1 per spectrum")
+    if "100%" not in t4:
+        bad.append("did not state what share of precursors summed to 1")
+    if re.search(r"ar1 per row\s+median", t4):
+        bad.append("reported an ar1 distribution anyway")
+    return bad
+
+
+def ar1_skips_without_a_product_column(db, tmp):
+    """The planted database has a precursor intensity only; say so, do not guess."""
+    rc, out = run("--db", str(db))
+    t4 = out.split("TEST 4")[1] if "TEST 4" in out else ""
+    bad = []
+    if "SKIPPED" not in t4:
+        bad.append("ran ar1 with no product intensity column")
+    if "product intensity" not in t4:
+        bad.append("did not name the missing column")
+    return bad
+
+
 def limit_reads_a_spread_not_the_oldest(db, tmp):
     """--limit must not silently mean 'the oldest rows'."""
     rc, out = run("--db", str(db), "--limit", "200")
@@ -595,7 +680,10 @@ STANDALONE = (refuses_a_published_shaped_table, refuses_a_file_that_is_not_a_dat
               a_cut_distribution_is_called_cut,
               a_tapered_distribution_is_not_called_cut,
               a_taper_does_not_rescue_a_zero,
-              a_small_clean_sample_is_not_called_cut)
+              a_small_clean_sample_is_not_called_cut,
+              ar1_is_computed_from_absolute_intensities,
+              ar1_refuses_normalized_fragments,
+              ar1_skips_without_a_product_column)
 
 
 def main(argv=None):

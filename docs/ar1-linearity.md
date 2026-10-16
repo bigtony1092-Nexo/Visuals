@@ -58,3 +58,47 @@ It converts an assumption into a number, and the number is useful either way. If
 flat across 50-fold, the loading-invariance claim stops being an argument and becomes a
 measurement. If it bends, you have found the linear range of your own instrument — which
 every quantitative claim downstream depends on and which nobody has stated yet.
+
+## ar1 is now runnable, and not from the published data
+
+The published PAX8 fragment tables **cannot** support ar1. Each spectrum's
+fragments are stored as shares of their own spectrum, summing to exactly
+`1.0000` per precursor — checked across the first five ions: 15, 34, 23, 22 and
+6 fragments, every one summing to 1.0000. Dividing a share by a precursor
+intensity returns the share, scaled. It says nothing about the product-to-
+precursor ratio. That is the defect `docs/export-contract.md` §6 warns about —
+"`ar1` normalized inside its own spectrum until it carries no information" —
+present in our own published figure.
+
+The consensus `observations` table does carry what ar1 needs, on one row:
+`intensity` (product), `precursor_intensity`, `frag_type`, `product_mz`. So ar1
+is computable there for any of the 863 samples — though **not for PAX8**, which
+was never ingested.
+
+`tools/probe_consensus.py` Test 4 does it:
+
+```
+python3 tools/probe_consensus.py --db <db> --limit 2000000
+```
+
+It reports ar1 per row (median, p05, p95, max), the share of rows where the
+product exceeds the precursor, `ar1_sum` per precursor, and a breakdown by
+fragment type. Before any of that it checks the normalization, on the **raw**
+product intensities rather than on ar1: a spectrum divided by its total has
+`sum(product) = 1` per precursor, one divided by its base peak has
+`max(product) = 1`. Either refuses the test.
+
+A first version of that guard summed **ar1** and looked for 1.0, which is wrong
+— ar1 sums to `1/precursor_intensity`, not to a constant, so it caught neither
+form of normalization. The test case with normalized fragments failed and
+exposed it before it ran on anything.
+
+### What Test 4 does not do
+
+Loading invariance is not tested. It needs the same ion at two known loads, so
+it needs a load map and a run column, and the claim only holds **inside the
+linear range** — which has to be stated before it can be checked. The load
+control itself has now passed on real data for the first time: within a matched
+series, precursor intensity tracks amount at a slope of **+1.102** over a 5-fold
+step (`docs/verification-run.md`). That was the gate on this work, and it is
+open.

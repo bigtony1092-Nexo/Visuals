@@ -36,8 +36,11 @@ columns it needs are absent:
      assumed. Reported first because test 1 depends on it.
   3. LOAD RESPONSE  log-log slope of precursor intensity against ng loaded, per
      ion. Should sit near 1. Recomputed from the published data it came out at
-     +0.239, which is either real detector compression or an artifact of
-     whatever that page called intensity. Needs --load-map.
+     +0.239, which turned out to be the load axis rather than the detector.
+     Needs --load-map.
+  4. AR1            product intensity over precursor intensity, on the same row.
+     Refuses first if the fragments were normalized within their own spectrum,
+     which destroys the scale ar1 depends on.
 
 Exit status is 0 if every requested test ran, 1 if any was skipped for want of
 a column, 2 if the database could not be opened.
@@ -122,6 +125,9 @@ PPM_BINS = 4000        # up to 400 ppm, then an overflow bin
 # Candidate column names, normalized (lowercased, non-alphanumerics dropped) and
 # in priority order: the first one present wins.
 HINTS = {
+    "product_intensity": ("intensity", "productintensity", "fragmentintensity",
+                          "prodintensity", "fragintensity"),
+    "frag_type": ("fragtype", "fragmenttype", "iontype", "fragion", "annotation"),
     "raw_mz": ("precmz", "precursormz", "reportedmz", "observedmz", "obsmz",
                "rawmz", "mzreported", "mzobserved", "measuredmz", "mzprec"),
     "calc_mz": ("calcmz", "calculatedmz", "theoreticalmz", "theormz",
@@ -581,6 +587,113 @@ def slope(xs, ys):
     return sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx
 
 
+def test_ar1(con, cfg, limit, out):
+    """Test 4: ar1, the product intensity over the precursor intensity on the same row.
+
+    The quantity asked for is per-row and needs no fitting. What it needs is for
+    the product intensity to be ABSOLUTE. A pipeline that normalizes each
+    spectrum — dividing every fragment by the spectrum's total, or by its base
+    peak — destroys the scale that makes ar1 mean anything, and the published
+    PAX8 fragment tables do exactly that, summing to 1.0000 per precursor. So the
+    first thing this does is check for it, by summing ar1 across each precursor:
+    sums piling up at 1.0 mean the fragments are shares of their own spectrum,
+    and the ratio carries no information about the precursor at all.
+    """
+    out.append("")
+    out.append("TEST 4 - AR1, PRODUCT OVER PRECURSOR")
+    r = cfg["roles"]
+    prod = r.get("product_intensity")
+    prec = r.get("intensity")
+    if prod and prec and prod == prec:
+        prod = None
+    if not prod or not prec:
+        missing = "a product intensity" if not prod else "a precursor intensity"
+        out.append("  SKIPPED: no column for %s in %s. ar1 needs both on the same row;"
+                   % (missing, cfg["table"]))
+        out.append("  pass --product-intensity / --intensity if they are named differently.")
+        return False
+
+    cols = [r["seq"], r["charge"], prod, prec]
+    if r.get("frag_type"):
+        cols.append(r["frag_type"])
+    sql = 'SELECT %s FROM "%s" WHERE "%s" > 0 AND "%s" > 0' % (
+        ", ".join('"%s"' % c for c in cols), cfg["table"], prod, prec)
+    if limit:
+        sql += " LIMIT %d" % limit
+
+    ratios = []
+    per_precursor = defaultdict(float)     # ar1 summed, for reporting
+    prod_sum = defaultdict(float)          # raw product intensity summed, for the guard
+    prod_max = defaultdict(float)
+    by_type = defaultdict(list)
+    for row in con.execute(sql):
+        seq, z, ip, iprec = row[0], row[1], row[2], row[3]
+        ftype = row[4] if len(row) > 4 else None
+        try:
+            ar1 = float(ip) / float(iprec)
+        except (TypeError, ValueError, ZeroDivisionError):
+            continue
+        if ar1 <= 0:
+            continue
+        ratios.append(ar1)
+        key = (seq, z)
+        per_precursor[key] += ar1
+        prod_sum[key] += float(ip)
+        prod_max[key] = max(prod_max[key], float(ip))
+        if ftype:
+            by_type[str(ftype)].append(ar1)
+
+    if len(ratios) < 20:
+        out.append("  SKIPPED: only %d rows carried both intensities." % len(ratios))
+        return False
+
+    sums = sorted(per_precursor.values())
+    n_prec = len(prod_sum)
+    out.append("  %d rows, %d precursors." % (len(ratios), n_prec))
+
+    # The guard is on the RAW product intensities, not on ar1. A spectrum
+    # normalized to its total has sum(product) == 1 per precursor; one normalized
+    # to its base peak has max(product) == 1. Summing ar1 instead would test
+    # 1/precursor, which is not a constant and catches neither.
+    by_total = sum(1 for v in prod_sum.values() if abs(v - 1.0) < 0.01)
+    by_base = sum(1 for v in prod_max.values() if abs(v - 1.0) < 0.01)
+    for count, how, what in ((by_total, "its own total", "sum"),
+                             (by_base, "its base peak", "largest fragment")):
+        if n_prec and count / n_prec >= 0.5:
+            out.append("")
+            out.append("  THE PRODUCT INTENSITIES ARE NORMALIZED. %d of %d precursors (%.0f%%)"
+                       % (count, n_prec, 100.0 * count / n_prec))
+            out.append("  have a %s of exactly 1.000, so each spectrum was divided by"
+                       % what)
+            out.append("  %s before storage. That removes the scale ar1 depends on:" % how)
+            out.append("  dividing a share by a precursor intensity returns the share,")
+            out.append("  scaled, and says nothing about the product-to-precursor ratio.")
+            out.append("  ar1 needs absolute fragment intensities. This is the defect the")
+            out.append("  published PAX8 fragment tables carry — they sum to 1.0000.")
+            return False
+
+    ratios.sort()
+    def q(f):
+        return ratios[min(int(f * len(ratios)), len(ratios) - 1)]
+    out.append("  ar1 per row     median %.4f   p05 %.4f   p95 %.4f   max %.3f"
+               % (q(0.5), q(0.05), q(0.95), ratios[-1]))
+    out.append("  ar1 > 1 (product above precursor): %d rows, %.1f%%"
+               % (sum(1 for v in ratios if v > 1), 100.0 * sum(1 for v in ratios if v > 1) / len(ratios)))
+    out.append("  ar1_sum per precursor   median %.4f   p95 %.4f"
+               % (sums[len(sums)//2], sums[min(int(0.95*len(sums)), len(sums)-1)]))
+    if by_type:
+        out.append("")
+        out.append("  By fragment type (median ar1, rows):")
+        for t in sorted(by_type, key=lambda t: -len(by_type[t]))[:8]:
+            v = sorted(by_type[t])
+            out.append("    %-12s %.4f   %d" % (t[:12], v[len(v)//2], len(v)))
+    out.append("")
+    out.append("  Loading invariance is NOT tested here: it needs the same ion at two known")
+    out.append("  loads, which needs a load map and a run column. ar1 is only expected to")
+    out.append("  hold steady inside the linear range, so a stated range must come first.")
+    return True
+
+
 def test_load(con, cfg, load_map, limit, out):
     """Test 3: does precursor intensity track how much was loaded?"""
     out.append("")
@@ -677,6 +790,9 @@ def main(argv=None):
     p.add_argument("--charge", help="precursor charge column")
     p.add_argument("--run", help="run or file column")
     p.add_argument("--intensity", help="precursor intensity column")
+    p.add_argument("--product-intensity", dest="product_intensity",
+                   help="product (fragment) intensity column, for ar1")
+    p.add_argument("--frag-type", dest="frag_type", help="fragment type column, for ar1")
     p.add_argument("--load-map", help="JSON file mapping run name or substring to ng loaded")
     p.add_argument("--limit", type=int, default=0, help="read at most N rows per test")
     p.add_argument("--order", choices=("spread", "oldest", "newest"), default="spread",
@@ -744,7 +860,9 @@ def main(argv=None):
     for role, flag in (("raw_mz", args.raw_mz), ("calc_mz", args.calc_mz),
                        ("calc_mass", args.calc_mass), ("seq", args.seq),
                        ("charge", args.charge), ("run", args.run),
-                       ("intensity", args.intensity)):
+                       ("intensity", args.intensity),
+                       ("product_intensity", args.product_intensity),
+                       ("frag_type", args.frag_type)):
         if flag:
             roles[role] = flag
     cfg = {"table": chosen["table"], "roles": roles}
@@ -786,6 +904,7 @@ def main(argv=None):
         with open(args.load_map) as fh:
             load_map = json.load(fh)
     ran_load = test_load(con, cfg, load_map, args.limit, out)
+    test_ar1(con, cfg, args.limit, out)
 
     print("\n".join(out))
     return 0 if (ran_load or not args.load_map) else 1

@@ -136,7 +136,7 @@ examples/                         four filled methods and a matching export
 tools/plan_panels.py              says which panels will render, and why not
 tools/validate_export.py          checks a real export against the contract
 tools/test_validate_export.py     proves the validator catches what it claims to
-tools/probe_consensus.py          asks the consensus database the three questions
+tools/probe_consensus.py          asks the consensus database the four questions
                                   the published data cannot answer (--find locates it)
 tools/test_probe_consensus.py     proves the probe recovers planted answers
 viewer/aria-ion-panels.html       the viewer — conventional and bridge panels
