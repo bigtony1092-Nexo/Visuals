@@ -49,7 +49,29 @@ TABLES = {
     "proteins": "protein_quant",
     "spectra": "spectrum",
     "traces": "trace",
+    "fragment_hits": "fragment_hit",
 }
+
+# Monoisotopic residue masses, for recomputing what a record claims about mass
+# (section 7). Carbamidomethyl is fixed on Cys, so the unmodified mass of a
+# peptide is computable and a stated delta can be checked rather than trusted.
+RESIDUE = {
+    "G": 57.02146, "A": 71.03711, "S": 87.03203, "P": 97.05276, "V": 99.06841,
+    "T": 101.04768, "C": 103.00919, "L": 113.08406, "I": 113.08406, "N": 114.04293,
+    "D": 115.02694, "Q": 128.05858, "K": 128.09496, "E": 129.04259, "M": 131.04049,
+    "H": 137.05891, "F": 147.06841, "R": 156.10111, "Y": 163.06333, "W": 186.07931,
+}
+WATER = 18.010565
+CARBAMIDOMETHYL = 57.02146
+DELTA_TOL = 0.01
+
+
+def peptide_mass(sequence):
+    """Unmodified neutral mass, carbamidomethyl fixed on every Cys."""
+    if not sequence or any(c not in RESIDUE for c in sequence):
+        return None
+    return (WATER + sum(RESIDUE[c] for c in sequence)
+            + CARBAMIDOMETHYL * sequence.count("C"))
 
 
 class Report:
@@ -521,6 +543,130 @@ def check_traces(report, path, uids, validators, limit):
                 )
 
 
+def check_fragment_hits(report, path, uids, samples, validators, limit):
+    """Section 7. A fragment-first hit is a claim built from fragments whose
+    masses are shared across peptides, so almost every rule here is about
+    whether the claim can be told apart from one that cannot be true."""
+    where = path.name
+    for line, hit in read_jsonl(path, limit):
+        if isinstance(hit, json.JSONDecodeError):
+            report.error(where, f"line {line}: not valid JSON — {hit.msg}")
+            continue
+        if not check_schema(report, (validators or {}).get("fragment_hits"), where, hit, line):
+            continue
+        at = f"line {line}"
+
+        sample = hit.get("sample_id")
+        if samples and sample not in samples:
+            report.error(where, f"{at}: sample_id {sample!r} is not a sample in the manifest")
+
+        matched = hit.get("matched") or []
+        missed = hit.get("missed") or []
+        kn = hit.get("k_of_n") or {}
+        need = kn.get("required")
+        got = kn.get("matched")
+        queried = kn.get("queried")
+
+        # --- the control gate: a bar a decoy clears is not a bar -----------------
+        control = hit.get("control") or {}
+        for field, what in (("reversed_matched", "the reversed sequence"),
+                            ("entrapment_matched", "an entrapment peptide")):
+            n = control.get(field)
+            if isinstance(n, int) and isinstance(need, int) and n >= need:
+                report.error(
+                    where,
+                    f"{at}: {what} matched {n} fragments, reaching the same bar of {need}."
+                    " A control that clears the gate means the gate did not discriminate;"
+                    " this hit does not stand",
+                )
+
+        # --- the gate itself -----------------------------------------------------
+        if isinstance(need, int) and isinstance(queried, int) and need >= queried:
+            report.error(
+                where,
+                f"{at}: k_of_n requires {need} of {queried}. Never n of n — demanding every"
+                " queried fragment fails exactly when the modification is real, because"
+                " some queried fragments carry the modified residue",
+            )
+        if isinstance(need, int) and isinstance(got, int) and got < need:
+            report.error(where, f"{at}: {got} fragments matched but {need} were required —"
+                                " this is not a hit")
+
+        # --- internal arithmetic -------------------------------------------------
+        if isinstance(got, int) and got != len(matched):
+            report.error(where, f"{at}: k_of_n.matched is {got} but matched[] holds"
+                                f" {len(matched)} fragment(s)")
+        if isinstance(queried, int) and queried != len(matched) + len(missed):
+            report.error(where, f"{at}: k_of_n.queried is {queried} but matched[] and missed[]"
+                                f" hold {len(matched)} + {len(missed)} together")
+        n_declared = (hit.get("queried") or {}).get("n_fragments")
+        if isinstance(n_declared, int) and isinstance(queried, int) and n_declared != queried:
+            report.error(where, f"{at}: queried.n_fragments is {n_declared} but k_of_n.queried"
+                                f" is {queried}")
+        both = sorted({m.get("label") for m in matched} & set(missed))
+        if both:
+            report.error(where, f"{at}: {', '.join(both)} listed as both matched and missed")
+
+        # --- fragments must be detections the ledger holds ----------------------
+        for m in matched:
+            uid = m.get("ion_uid")
+            if uid and uids and uid not in uids:
+                report.error(where, f"{at}: fragment {m.get('label')} cites ion_uid {uid},"
+                                    " which is not an ion in ions.jsonl")
+
+        co = hit.get("coelution") or {}
+        scans = co.get("consecutive_scans")
+        if isinstance(scans, int) and scans < 2:
+            report.error(where, f"{at}: coelution over {scans} scan(s). A single scan is a blip,"
+                                " not a peak")
+
+        # --- evidence must match what was actually found -------------------------
+        prec = hit.get("precursor") or {}
+        found = bool(prec.get("found"))
+        evidence = hit.get("evidence")
+        if found and evidence != "fragment_and_precursor":
+            report.error(where, f"{at}: a precursor was found but evidence is {evidence!r}")
+        if not found and evidence != "fragment_only":
+            report.error(where, f"{at}: no precursor was found but evidence is {evidence!r}")
+
+        delta = hit.get("delta_mass")
+        if delta is not None and not found:
+            report.error(where, f"{at}: delta_mass is given with no precursor. The delta is"
+                                " observed mass minus unmodified; without a precursor there is"
+                                " nothing to subtract from")
+
+        # --- the delta is derivable, so it is checkable --------------------------
+        sequence = (hit.get("peptide") or {}).get("sequence")
+        base = peptide_mass(sequence)
+        if delta is not None and found and base is not None:
+            observed = prec.get("neutral_mass")
+            stated = delta.get("value")
+            if isinstance(observed, (int, float)) and isinstance(stated, (int, float)):
+                expect = observed - base
+                if abs(expect - stated) > DELTA_TOL:
+                    report.error(
+                        where,
+                        f"{at}: delta_mass.value is {stated:.5f} but the precursor's neutral"
+                        f" mass {observed:.4f} less the unmodified peptide {base:.4f} is"
+                        f" {expect:.5f}",
+                    )
+            for cand in (delta.get("candidates") or []):
+                residues = cand.get("residues") or ""
+                sites = [r for r in residues if r in RESIDUE]
+                if sites and sequence and cand.get("plausible") is True:
+                    if not any(r in sequence for r in sites):
+                        report.error(
+                            where,
+                            f"{at}: {cand.get('name')} is marked plausible but needs one of"
+                            f" {residues}, and {sequence} carries none of them",
+                        )
+
+        # --- localization only means something when something shifted -----------
+        if hit.get("site_localization") and not missed:
+            report.warn(where, f"{at}: a site is localized although no queried fragment is"
+                               " missing. Nothing shifted, so nothing bounds the site")
+
+
 def check_proteins(report, path, samples, peptides, validators, limit, excerpt):
     where = path.name
     seen = {}
@@ -708,6 +854,10 @@ def main():
         )
     if declared.get("traces"):
         check_traces(report, export_dir / names["traces"], uids, validators, args.limit)
+    if declared.get("fragment_hits"):
+        check_fragment_hits(
+            report, export_dir / names["fragment_hits"], uids, samples, validators, args.limit
+        )
     if declared.get("proteins"):
         check_proteins(
             report, export_dir / names["proteins"], samples, peptides, validators,

@@ -283,12 +283,21 @@ peptide with a mass shift — it yields a longer peptide with a different fragme
 entirely. `missed_cleavage_variants` queries both boundaries; leaving it off misses that
 whole class by construction.
 
-### The controls are the argument
+### The controls are the argument, and the validator enforces them
 
 Fragment masses are shared across peptides. `controls.reversed_fragment_sets` is `const:
 true` and `report_rate` is `const: true`: every hit travels with the match count for the
 reversed sequence and for entrapment peptides that cannot be in the sample, queried in the
 same scans and the same drift window. Without that rate a hit is an anecdote.
+
+Reporting the control is not enough. **A hit whose reversed or entrapment control reaches
+the same k does not stand**, and `validate_export.py` fails the export when it does — a
+bar a decoy clears is not a bar. The validator also refuses `k` equal to `n`, recomputes
+`delta_mass.value` from the sequence (the unmodified mass is derivable, carbamidomethyl
+fixed on Cys, so a stated delta is checkable rather than trusted), rejects a modification
+marked plausible on a residue the peptide does not carry, requires `evidence` to agree with
+whether a precursor was actually found, and refuses a group that co-elutes over a single
+scan.
 
 ### When the precursor is not found
 

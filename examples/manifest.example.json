@@ -91,7 +91,8 @@
       "ms2_experimental",
       "ms2_library",
       "ms1_isotope"
-    ]
+    ],
+    "fragment_hits": true
   },
   "quant": {
     "metric": "top3avg",

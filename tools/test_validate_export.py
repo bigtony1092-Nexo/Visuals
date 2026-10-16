@@ -22,7 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 EXAMPLES = ROOT / "examples"
 VALIDATOR = ROOT / "tools" / "validate_export.py"
-TABLES = ("ions", "proteins", "spectra", "traces")
+TABLES = ("ions", "proteins", "spectra", "traces", "fragment_hits")
 
 
 def build(directory, mutate):
@@ -171,6 +171,55 @@ def table_present_but_undeclared(manifest, tables):
     manifest["tables"]["traces"] = False
 
 
+# --- fragment-first, section 7 -----------------------------------------------------
+
+
+def _hit(tables):
+    return tables["fragment_hits"][0]
+
+
+def control_clears_the_gate(manifest, tables):
+    _hit(tables)["control"]["reversed_matched"] = 3
+
+
+def entrapment_clears_the_gate(manifest, tables):
+    _hit(tables)["control"]["entrapment_matched"] = 5
+
+
+def gate_demands_every_fragment(manifest, tables):
+    _hit(tables)["k_of_n"]["required"] = 8
+
+
+def matched_count_disagrees_with_list(manifest, tables):
+    _hit(tables)["k_of_n"]["matched"] = 3
+
+
+def label_both_matched_and_missed(manifest, tables):
+    _hit(tables)["missed"].append("b3")
+    _hit(tables)["k_of_n"]["queried"] = 9
+    _hit(tables)["queried"]["n_fragments"] = 9
+
+
+def evidence_disagrees_with_precursor(manifest, tables):
+    _hit(tables)["precursor"]["found"] = False
+
+
+def delta_mass_not_derivable(manifest, tables):
+    _hit(tables)["delta_mass"]["value"] = 42.0
+
+
+def candidate_needs_a_residue_the_peptide_lacks(manifest, tables):
+    _hit(tables)["delta_mass"]["candidates"][0]["residues"] = "W"
+
+
+def fragment_cites_an_absent_ion(manifest, tables):
+    _hit(tables)["matched"][0]["ion_uid"] = "0000000000000bad"
+
+
+def coelution_over_one_scan(manifest, tables):
+    _hit(tables)["coelution"]["consecutive_scans"] = 1
+
+
 def unmutated(manifest, tables):
     """The control. The shipped examples must validate clean."""
 
@@ -197,6 +246,16 @@ CASES = [
     (protein_twice_in_one_sample, "already appears on line", 1),
     (impossible_decimation, "exceeds decimation.of", 1),
     (table_present_but_undeclared, "does not declare it", 0),
+    (control_clears_the_gate, "reversed sequence matched 3 fragments", 1),
+    (entrapment_clears_the_gate, "entrapment peptide matched 5 fragments", 1),
+    (gate_demands_every_fragment, "Never n of n", 1),
+    (matched_count_disagrees_with_list, "k_of_n.matched is 3", 1),
+    (label_both_matched_and_missed, "listed as both matched and missed", 1),
+    (evidence_disagrees_with_precursor, "no precursor was found but evidence is", 1),
+    (delta_mass_not_derivable, "delta_mass.value is 42.00000", 1),
+    (candidate_needs_a_residue_the_peptide_lacks, "carries none of them", 1),
+    (fragment_cites_an_absent_ion, "is not an ion in ions.jsonl", 1),
+    (coelution_over_one_scan, "A single scan is a blip", 1),
     (unmutated, "", 0),
 ]
 
