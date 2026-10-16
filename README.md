@@ -139,6 +139,9 @@ tools/test_validate_export.py     proves the validator catches what it claims to
 tools/probe_consensus.py          asks the consensus database the four questions
                                   the published data cannot answer (--find locates it)
 tools/test_probe_consensus.py     proves the probe recovers planted answers
+tools/fragment_chemistry.py       asks whether fragment patterns carry chemistry
+                                  at all, before a comparison is read
+tools/test_fragment_chemistry.py  proves it tells a real pattern from a flat one
 viewer/aria-ion-panels.html       the viewer — conventional and bridge panels
 ion-flight-atlas.html             the 3-D flight map, standalone and synthetic
 ```

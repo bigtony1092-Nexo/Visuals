@@ -828,3 +828,50 @@ reference too thin to weigh it against.
 
 Page at version 8: the finding and the section caveat now name which side failed
 and give the chemistry.
+
+### The comparison to make instead: same file, same run
+
+The Thermo archive was always the wrong reference — cross-platform, cross-study,
+median three spectra per ion. The right reference is a search of **the same raw
+file** MARCH targeted: DIA-NN or FragPipe output from that run, where the
+fragmentation is the same instrument's and carries real chemistry.
+
+That comparison partly exists already. MARCH's `pattern` slide reports 187
+peptides identified by FragPipe in Colorado HeLa_120 against MARCH's annotation
+of the same raw run: 67% of discovery fragment ions found again, 0 of 187 for
+the reversed sequence, and intensity similarity 0.61 against 0.51 for a
+mismatched peptide. **The real pairing is ahead of its control there**, unlike
+the PAX8 section — which is what a reference with signal in it looks like.
+
+What that comparison has never had is the chemistry check on both sides. Until
+it does, 0.61 against 0.51 could be two real patterns agreeing moderately, or it
+could be a milder version of the same flat-reference problem.
+
+`tools/fragment_chemistry.py` runs it:
+
+```
+python3 tools/fragment_chemistry.py march_fragments.jsonl fragpipe_fragments.jsonl
+```
+
+One JSON line per fragment — `source`, `sequence`, `charge`, `fragment` (`y7`,
+`b4-1`), `intensity`. Absolute or relative both work, since only shares within a
+source are used. For each source it prints the y-share and the proline and
+aspartate enrichment over the share expected if every bond broke equally **given
+the same observed fragments**, so each side is judged against its own
+opportunity. It exits 1 if any source's proline enrichment falls below 1.25×,
+which is the gate: a flat source is not a reference and a comparison against it
+should not be read.
+
+Bond mapping, since it is easy to get wrong: `b(n)` reports the bond between
+residues *n* and *n+1*; `y(n)` reports the bond at index *L−n*. The proline
+marker fires on the bond **N-terminal** to a proline, not on proline's own bond;
+the aspartate marker on the bond **C-terminal** to an aspartate. Five tests,
+including one that plants a 4× proline boost and requires it recovered, one that
+plants a flat source and requires it refused, and one that checks the bond
+arithmetic directly.
+
+**For PAX8 specifically**, the fix is the same move: those Colorado runs were
+searched with MSFragger, so section 3 can be redone against their own
+`psm.tsv` MS2 spectra instead of the Thermo archive. Same file, same instrument,
+same day — and a reference that will pass the chemistry check, since
+`pax8_analysis.py` already found the 33 isotope picks in that search output.
