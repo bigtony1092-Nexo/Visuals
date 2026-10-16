@@ -717,3 +717,64 @@ Not changed, and worth a look by someone who can render it: the page states
 780 of 863 have no row carrying both a reported and a calculated m/z — but 48
 samples are measured throughout, so the claim is too broad as written. Whether
 any of those 48 carry PAX8 has not been checked.
+
+## The fragmentation section was a broken comparison, not a negative result
+
+Asked whether the fragment patterns really are that different, the answer turned
+out to be that the question cannot be answered from this section. Recomputed from
+the page's own 28 ions:
+
+| measure | correct pairing | mismatched control | real beats control | sign test |
+|---|---|---|---|---|
+| Spearman of ranks | +0.119 | +0.000 | 10 of 21 | p = 1.000 |
+| Cosine of vectors | **0.777** | **0.847** | **6 of 23** | **p = 0.035** |
+
+**The control beats the test.** Not ties it — beats it, significantly. Pairing a
+Colorado pattern with a *wrong* PAX8 peptide's Thermo pattern scores higher than
+pairing it with the right one.
+
+A control that reliably outperforms the thing it controls is not a weak negative.
+It is an invalid null, and nothing can be read off it in either direction.
+
+### Three explanations, two of them killed
+
+**Thin Thermo data — refuted, and backwards.** 9 of 28 ions rest on a single
+Thermo spectrum and 15 on three or fewer, so thinness was the obvious candidate.
+Restricting to better-evidenced ions makes it *worse*:
+
+| subset | ions | cosine real / control | real wins | p |
+|---|---|---|---|---|
+| all | 28 | 0.777 / 0.847 | 6 of 23 | 0.035 |
+| ≥5 Thermo spectra | 12 | 0.777 / 0.850 | **1 of 11** | **0.012** |
+| ≥10 Thermo spectra | 4 | 0.702 / 0.836 | 0 of 4 | 0.125 |
+| ≥5 spectra and ≥6 shared | 10 | 0.787 / 0.840 | 1 of 10 | 0.021 |
+
+**Cosine inflated by a smaller shared set — refuted.** The hypothesis was that a
+mismatched peptide shares fewer fragment labels and cosine over fewer dimensions
+is trivially higher. Within the real pairings the Spearman between shared-fragment
+count and cosine is **−0.016**, and ions with ≤6 shared fragments score 0.769
+against 0.796 for those with ≥10. No such effect. The rank measure, which carries
+no dimension bias at all, is a plain coin flip.
+
+**How the control's partner is chosen — untested.** If the control pairs against
+a Thermo pattern that is systematically better sampled than the real partner's,
+it is smoother and wins for that reason alone. The page records the real pairing's
+spectrum counts but not which ion each control used, so this cannot be checked
+from the published data. It is the remaining candidate and the one to check in
+`pax8_analysis.py`.
+
+### The page now says so
+
+Version 7. The finding is **limit**, not `fail`, and the section's caveat is
+retitled "Not a negative result — an invalid one", carrying the numbers above,
+the two refuted explanations, and the untested one.
+
+That is the **second** verdict on this page to change for the same reason, in
+opposite directions: a `pass` on a check that could not fail, and a `fail` read
+off a control that could not lose. Both were badges asserting a conclusion the
+comparison could not support.
+
+**This does not touch MARCH's `pattern` slide**, which is HeLa data from a
+different study and reports 0.61 for real against 0.51 for mismatched — the real
+pairing ahead, as it should be. The defect is in this PAX8 comparison, not in the
+measure itself.
