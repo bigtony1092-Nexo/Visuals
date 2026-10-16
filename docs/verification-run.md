@@ -98,9 +98,16 @@ page.
 `tools/probe_consensus.py` runs the test where the uncorrected value survives:
 
 ```
-python3 tools/probe_consensus.py --db /path/to/ARiA_Consensus.db --schema-only
+python3 tools/probe_consensus.py --find --schema-only
 python3 tools/probe_consensus.py --db /path/to/ARiA_Consensus.db --load-map loads.json
 ```
+
+`--find` searches the usual places rather than being told the path: a `.db`,
+`.sqlite` or `.sqlite3` file whose name contains `consensus` or `aria`, under the
+home directory and a handful of data roots, skipping `Library`, `node_modules`,
+caches and dotted directories. It opens nothing but the 16-byte SQLite header,
+lists every candidate so a wrong pick is visible, and uses the largest. A
+database named something else needs `--db`.
 
 Column names are discovered rather than assumed, and `--schema-only` prints what each
 table offered so a wrong guess is visible. Three tests, each skipped with a stated reason

@@ -100,9 +100,12 @@ def plant(path, calib_ppm=CALIB_PPM):
     con.close()
 
 
-def run(*args):
+def run(*args, **kw):
+    env = dict(os.environ)
+    if "home" in kw:
+        env["HOME"] = str(kw["home"])
     proc = subprocess.run([sys.executable, str(PROBE)] + list(args),
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, env=env)
     return proc.returncode, proc.stdout + proc.stderr
 
 
@@ -255,6 +258,68 @@ def load_test_skips_without_a_map(db, tmp):
     return bad
 
 
+def find_locates_the_database(db, tmp):
+    """--find must pick the real one and ignore the places it should not look."""
+    home = tmp / "fakehome"
+    for sub in ("Documents/proteomics", "data", "Library/Caches/junk", "node_modules/pkg"):
+        (home / sub).mkdir(parents=True, exist_ok=True)
+    real = home / "Documents" / "proteomics" / "ARiA_Consensus.db"
+    real.write_bytes(Path(db).read_bytes())
+    # A real SQLite file, but tiny: must be listed and must not win.
+    small = sqlite3.connect(home / "data" / "aria_old.sqlite")
+    small.execute("CREATE TABLE t (a INT)")
+    small.commit()
+    small.close()
+    # Must be ignored: wrong header, and two skipped directories.
+    (home / "data" / "aria_notes.db").write_text("not a database")
+    (home / "Library" / "Caches" / "junk" / "ARiA_Consensus.db").write_bytes(
+        Path(db).read_bytes())
+    (home / "node_modules" / "pkg" / "aria_consensus.db").write_bytes(
+        Path(db).read_bytes())
+
+    rc, out = run("--find", "--schema-only", home=home)
+    bad = []
+    if rc != 0:
+        bad.append("exit %d, expected 0" % rc)
+    if "<- using this" not in out:
+        bad.append("did not say which database it chose")
+    chosen = [l for l in out.splitlines() if "<- using this" in l]
+    if chosen and str(real) not in chosen[0]:
+        bad.append("chose %r, expected the one under Documents" % chosen[0].strip())
+    if "aria_notes.db" in out:
+        bad.append("offered a file that is not a SQLite database")
+    if "Library" in out:
+        bad.append("walked into Library, which is on the skip list")
+    if "node_modules" in out:
+        bad.append("walked into node_modules, which is on the skip list")
+    if "aria_old.sqlite" not in out:
+        bad.append("did not list the smaller candidate, so a wrong pick would be invisible")
+    return bad
+
+
+def find_says_so_when_nothing_matches(db, tmp):
+    empty = tmp / "emptyhome"
+    empty.mkdir(exist_ok=True)
+    rc, out = run("--find", home=empty)
+    bad = []
+    if rc != 1:
+        bad.append("exit %d, expected 1" % rc)
+    if "found none" not in out:
+        bad.append("did not say it found nothing: %r" % out.strip()[:80])
+    if "--db" not in out:
+        bad.append("did not point at --db as the way out")
+    return bad
+
+
+def neither_db_nor_find_is_an_error(db, tmp):
+    rc, out = run("--schema-only")
+    if rc == 0:
+        return ["ran with no database at all"]
+    if "--find" not in out:
+        return ["the error did not mention --find: %r" % out.strip()[:80]]
+    return []
+
+
 def schema_only_names_every_table(db, tmp):
     rc, out = run("--db", str(db), "--schema-only")
     bad = []
@@ -271,7 +336,9 @@ NEEDS_RUN = (classifier_boundaries, deamidation_is_not_an_isotope,
              calibration_resolves_the_boundary, recovers_planted_load_slopes,
              picks_the_richer_table)
 STANDALONE = (refuses_a_published_shaped_table, refuses_a_file_that_is_not_a_database,
-              load_test_skips_without_a_map, schema_only_names_every_table)
+              load_test_skips_without_a_map, schema_only_names_every_table,
+              find_locates_the_database, find_says_so_when_nothing_matches,
+              neither_db_nor_find_is_an_error)
 
 
 def main(argv=None):

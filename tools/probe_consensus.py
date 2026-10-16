@@ -6,9 +6,13 @@ pipeline ever names an isotope peak instead of the monoisotopic one needs the
 precursor m/z *as the instrument reported it*, before correction, and that
 survives only in the consensus database.
 
+    python3 tools/probe_consensus.py --find --schema-only
     python3 tools/probe_consensus.py --db /path/to/ARiA_Consensus.db
-    python3 tools/probe_consensus.py --db ... --schema-only
     python3 tools/probe_consensus.py --db ... --load-map loads.json
+
+--find searches the usual places rather than being told the path. It opens
+nothing but the 16-byte SQLite header, reports every candidate it saw, and uses
+the largest.
 
 Column names are discovered, not assumed: any table holding a peptide sequence,
 a charge, a reported m/z and a calculated m/z or mass is a candidate, and the
@@ -39,6 +43,7 @@ a column, 2 if the database could not be opened.
 import argparse
 import json
 import math
+import os
 import re
 import sqlite3
 import statistics
@@ -99,6 +104,65 @@ HINTS = {
     "intensity": ("precursorintensity", "matchedintensity", "apexintensity",
                   "integratedarea", "intensity", "area", "sumintensity"),
 }
+
+
+# Where a consensus database plausibly sits, and what it is plausibly called.
+# --find walks these so the person running the probe does not have to know the
+# path. Directories that are large and never hold one are skipped outright.
+FIND_ROOTS = ("~", "~/Documents", "~/Desktop", "~/Downloads", "~/data", "~/ARiA",
+              "/data", "/opt", "/srv", "/mnt", "/media", "/Volumes")
+FIND_NAMES = ("consensus", "aria")
+FIND_SKIP = {".git", "node_modules", "__pycache__", "Library", "AppData",
+             ".cache", ".Trash", "venv", ".venv", "site-packages"}
+FIND_MAX_DEPTH = 5
+
+
+def looks_like_sqlite(path):
+    """Cheap check: SQLite files start with a fixed 16-byte header."""
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(16) == b"SQLite format 3\x00"
+    except OSError:
+        return False
+
+
+def find_databases():
+    """Candidate consensus databases, largest first.
+
+    Matching is on the filename, so a database named something else entirely is
+    missed; that is what --db is for. Nothing is opened except to read the
+    16-byte header, and nothing outside the listed roots is touched.
+    """
+    found, seen_dirs = {}, set()
+    for root in FIND_ROOTS:
+        base = os.path.expanduser(root)
+        if not os.path.isdir(base):
+            continue
+        base_depth = base.rstrip(os.sep).count(os.sep)
+        for dirpath, dirnames, filenames in os.walk(base, followlinks=False):
+            real = os.path.realpath(dirpath)
+            if real in seen_dirs:
+                dirnames[:] = []
+                continue
+            seen_dirs.add(real)
+            if dirpath.count(os.sep) - base_depth >= FIND_MAX_DEPTH:
+                dirnames[:] = []
+            dirnames[:] = [d for d in dirnames if d not in FIND_SKIP
+                           and not d.startswith(".")]
+            for name in filenames:
+                low = name.lower()
+                if not low.endswith((".db", ".sqlite", ".sqlite3")):
+                    continue
+                if not any(h in low for h in FIND_NAMES):
+                    continue
+                full = os.path.join(dirpath, name)
+                if full in found or not looks_like_sqlite(full):
+                    continue
+                try:
+                    found[full] = os.path.getsize(full)
+                except OSError:
+                    pass
+    return sorted(found.items(), key=lambda kv: kv[1], reverse=True)
 
 
 def norm(name):
@@ -425,7 +489,10 @@ def test_load(con, cfg, load_map, limit, out):
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--db", required=True, help="path to ARiA_Consensus.db")
+    p.add_argument("--db", help="path to ARiA_Consensus.db")
+    p.add_argument("--find", action="store_true",
+                   help="search the usual places for a consensus database instead of"
+                        " being told the path; the largest match wins")
     p.add_argument("--schema-only", action="store_true",
                    help="print every table, its row count and which role each column filled")
     p.add_argument("--table", help="override the table the tests read")
@@ -439,6 +506,25 @@ def main(argv=None):
     p.add_argument("--load-map", help="JSON file mapping run name or substring to ng loaded")
     p.add_argument("--limit", type=int, default=0, help="read at most N rows per test")
     args = p.parse_args(argv)
+
+    if not args.db:
+        if not args.find:
+            p.error("pass --db PATH, or --find to search for it")
+        hits = find_databases()
+        if not hits:
+            print("Searched for a consensus database and found none.")
+            print("Looked under: %s" % ", ".join(FIND_ROOTS))
+            print("for a .db, .sqlite or .sqlite3 file whose name contains"
+                  " 'consensus' or 'aria'.")
+            print("If it is somewhere else, or called something else, pass --db PATH.")
+            return 1
+        args.db = hits[0][0]
+        print("Found %d candidate database%s; using the largest:" % (
+            len(hits), "" if len(hits) == 1 else "s"))
+        for path, size in hits[:5]:
+            print("  %6.1f MB  %s%s" % (size / 1e6, path,
+                                        "   <- using this" if path == args.db else ""))
+        print()
 
     try:
         con = sqlite3.connect("file:%s?mode=ro" % args.db, uri=True)
