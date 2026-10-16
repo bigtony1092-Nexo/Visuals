@@ -337,6 +337,50 @@ spectra, where the reported precursor exists before any sequence has been
 proposed. Everything between those two ends has already folded the answer into
 the question.
 
+### The quarantine may hold both the control and the answer
+
+Each vendor store (`C:\VendorDBs\{Bruker,Thermo,Waters}_consensus.db`) has two
+tables beside `observations`: **`ingest_rejected`** (file-level quarantine) and
+**`ingest_row_rejects`** (rows kept out of an otherwise-accepted file by
+`ingest_contract`, by reason, including the 10 ppm precursor check).
+
+A row rejected at 10 ppm with a pick-sized error is exactly the positive control
+this document asked for. And it is more than a control: **if the gate removed
+pick-sized rows, the picks are in the reject pile.** That would be where to
+count them from, not the accepted rows.
+
+It turns on one thing nobody has looked at yet — whether those tables keep the
+**rejected row** (its reported and calculated m/z, sequence, charge) or only
+**tallies by reason**. A count records that something was dropped, not what it
+was. It cannot be classified, so it cannot show that a pick-sized error would
+have been caught, and it must not be read as a negative.
+
+`tools/probe_consensus.py` Test 5 handles either shape. It finds tables whose
+name suggests rejected or quarantined rows, runs the same classifier over them,
+and reports:
+
+- **picks among the rejected rows** → the positive control, and the place to
+  count from. It says plainly that a zero in Test 1 then measures the gate
+  rather than the pipeline.
+- **rejected rows, none of them picks** → a real negative for that source,
+  unlike Test 1's zero, because errors of a pick's magnitude were neither stored
+  nor rejected. With a caution to confirm the gate actually ran on those files.
+- **tallies only** → reported as unusable, naming what the table would have to
+  keep instead.
+- **no such table** → says so, and that it leaves no positive control.
+
+Four tests cover those four shapes. Writing them also caught a defect in the
+test harness itself: slicing a report on `TEST 4` ran past the end of that
+section into `TEST 5`, so an ar1 case failed on the word `SKIPPED` belonging to
+a different test. Sections are now bounded.
+
+**Which sources could even produce such a row:** not Thermo. For 905 of 993
+Thermo samples the reported m/z equals the calculated one, so those files cannot
+generate a mass rejection at all. Only **Waters** (measured MGF `PEPMASS`) and
+**Bruker** (where DIA-NN supplies an MS1 apex delta) can.
+
+Reading those tables needs approval and has not been done.
+
 ### The thing to check upstream before anything else
 
 Worth stating plainly, because it would make every mass test above vacuous no

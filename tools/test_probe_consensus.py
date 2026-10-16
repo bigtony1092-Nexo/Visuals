@@ -110,6 +110,16 @@ def run(*args, **kw):
     return proc.returncode, proc.stdout + proc.stderr
 
 
+def section(out, name):
+    """Just one TEST block. Splitting on the header alone runs past it into the
+    next test, which made an ar1 case fail on the word SKIPPED from TEST 5."""
+    if name not in out:
+        return ""
+    rest = out.split(name, 1)[1]
+    nxt = re.search(r"\nTEST \d", rest)
+    return rest[:nxt.start()] if nxt else rest
+
+
 def bucket(out, label):
     """(rows, ions) from the probe's offset table, or None if absent."""
     for line in out.splitlines():
@@ -252,7 +262,7 @@ def load_test_skips_without_a_map(db, tmp):
     bad = []
     if "TEST 3" not in out:
         bad.append("test 3 vanished instead of reporting a skip")
-    elif "SKIPPED" not in out.split("TEST 3")[1]:
+    elif "SKIPPED" not in section(out, "TEST 3"):
         bad.append("test 3 ran without a load map")
     if rc != 0:
         bad.append("exit %d, expected 0 when no load map was asked for" % rc)
@@ -590,7 +600,7 @@ def ar1_is_computed_from_absolute_intensities(db, tmp):
     bad = []
     if "TEST 4" not in out:
         return ["test 4 did not appear"]
-    t4 = out.split("TEST 4")[1]
+    t4 = section(out, "TEST 4")
     if "SKIPPED" in t4:
         bad.append("skipped with both intensity columns present: %r" % t4.strip()[:90])
     if "NORMALIZED" in t4:
@@ -618,7 +628,7 @@ def ar1_refuses_normalized_fragments(db, tmp):
     _ar1_db(ndb, normalized=True)
     rc, out = run("--db", str(ndb))
     bad = []
-    t4 = out.split("TEST 4")[1] if "TEST 4" in out else ""
+    t4 = section(out, "TEST 4")
     if "THE PRODUCT INTENSITIES ARE NORMALIZED" not in t4:
         bad.append("computed ar1 from fragments that sum to 1 per spectrum")
     if "100%" not in t4:
@@ -631,12 +641,111 @@ def ar1_refuses_normalized_fragments(db, tmp):
 def ar1_skips_without_a_product_column(db, tmp):
     """The planted database has a precursor intensity only; say so, do not guess."""
     rc, out = run("--db", str(db))
-    t4 = out.split("TEST 4")[1] if "TEST 4" in out else ""
+    t4 = section(out, "TEST 4")
     bad = []
     if "SKIPPED" not in t4:
         bad.append("ran ar1 with no product intensity column")
     if "product intensity" not in t4:
         bad.append("did not name the missing column")
+    return bad
+
+
+def _rejects_db(path, per_row, with_picks=True):
+    """A store with a quarantine table, holding either rejected rows or tallies."""
+    rng = random.Random(77)
+    con = sqlite3.connect(path)
+    con.execute("""CREATE TABLE observations (
+        id INTEGER PRIMARY KEY, peptide_sequence TEXT, charge_state INTEGER,
+        sample_name TEXT, precursor_mz REAL, calc_mz REAL)""")
+    if per_row:
+        con.execute("""CREATE TABLE ingest_row_rejects (
+            id INTEGER PRIMARY KEY, peptide_sequence TEXT, charge_state INTEGER,
+            sample_name TEXT, precursor_mz REAL, calc_mz REAL, reason TEXT)""")
+    else:
+        con.execute("""CREATE TABLE ingest_row_rejects (
+            sample_name TEXT, reason TEXT, n_rows INTEGER)""")
+        con.execute("INSERT INTO ingest_row_rejects VALUES ('run_A','precursor_ppm',412)")
+        con.execute("INSERT INTO ingest_row_rejects VALUES ('run_A','product_ppm',98)")
+
+    rid = 0
+    for i in range(200):
+        seq = "".join(rng.choice("GASPVTLINDQEMHFYW") for _ in range(12)) + "K"
+        z = 2
+        calc_mz = (WATER + sum(RESIDUE[c] for c in seq)) / z + pc.PROTON
+        rid += 1
+        # Accepted rows: inside a 10 ppm gate, so test 1 can find nothing.
+        con.execute("INSERT INTO observations VALUES (?,?,?,?,?,?)",
+                    (rid, seq, z, "run_A", calc_mz * (1 + rng.gauss(0, 3) / 1e6), calc_mz))
+        if per_row:
+            # Rejected rows: half of them picks, the rest ordinary large errors.
+            shift = pc.C13 if (with_picks and i % 2 == 0) else 0.0
+            ppm = 0.0 if shift else rng.uniform(40, 300) * rng.choice([1, -1])
+            con.execute("INSERT INTO ingest_row_rejects VALUES (?,?,?,?,?,?,?)",
+                        (rid, seq, z, "run_A",
+                         (calc_mz + shift / z) * (1 + ppm / 1e6), calc_mz, "precursor_ppm"))
+    con.commit()
+    con.close()
+
+
+def rejected_picks_are_the_positive_control(db, tmp):
+    """Picks in the quarantine prove the gate is what removed them."""
+    rdb = tmp / "rejects.db"
+    _rejects_db(rdb, per_row=True)
+    rc, out = run("--db", str(rdb))
+    bad = []
+    if "TEST 5" not in out:
+        return ["test 5 did not appear"]
+    t5 = section(out, "TEST 5")
+    if "ingest_row_rejects" not in t5:
+        bad.append("did not find the quarantine table")
+    if "ARE ISOTOPE PICKS" not in t5:
+        bad.append("did not report picks among the rejected rows")
+    if "positive control" not in t5:
+        bad.append("did not say what the rejected picks establish")
+    if "measures the gate and not the pipeline" not in t5:
+        bad.append("did not connect the rejects back to test 1's zero")
+    return bad
+
+
+def a_tally_only_quarantine_is_not_a_control(db, tmp):
+    """Counts by reason record that rows were dropped, not what they were."""
+    tdb = tmp / "tally.db"
+    _rejects_db(tdb, per_row=False)
+    rc, out = run("--db", str(tdb))
+    t5 = section(out, "TEST 5")
+    bad = []
+    if "TALLIES ONLY" not in t5:
+        bad.append("treated a counts-by-reason table as classifiable")
+    if "ARE ISOTOPE PICKS" in t5:
+        bad.append("claimed picks from a table holding no rows")
+    if "keep the rejected row" not in t5:
+        bad.append("did not say what the table would need to hold")
+    return bad
+
+
+def an_empty_quarantine_is_a_real_negative(db, tmp):
+    """Rows rejected but none of them picks: that IS informative, unlike test 1's zero."""
+    edb = tmp / "nopicks.db"
+    _rejects_db(edb, per_row=True, with_picks=False)
+    rc, out = run("--db", str(edb))
+    t5 = section(out, "TEST 5")
+    bad = []
+    if "ARE ISOTOPE PICKS" in t5:
+        bad.append("found picks where none were planted")
+    if "real negative" not in t5:
+        bad.append("did not credit a negative drawn from classifiable rejected rows")
+    return bad
+
+
+def no_quarantine_means_no_control(db, tmp):
+    """The planted database has no rejects table; say the control is missing."""
+    rc, out = run("--db", str(db))
+    t5 = section(out, "TEST 5")
+    bad = []
+    if "SKIPPED" not in t5:
+        bad.append("claimed to read a quarantine that does not exist")
+    if "no positive control" not in t5:
+        bad.append("did not say that leaves no positive control")
     return bad
 
 
@@ -683,7 +792,11 @@ STANDALONE = (refuses_a_published_shaped_table, refuses_a_file_that_is_not_a_dat
               a_small_clean_sample_is_not_called_cut,
               ar1_is_computed_from_absolute_intensities,
               ar1_refuses_normalized_fragments,
-              ar1_skips_without_a_product_column)
+              ar1_skips_without_a_product_column,
+              rejected_picks_are_the_positive_control,
+              a_tally_only_quarantine_is_not_a_control,
+              an_empty_quarantine_is_a_real_negative,
+              no_quarantine_means_no_control)
 
 
 def main(argv=None):

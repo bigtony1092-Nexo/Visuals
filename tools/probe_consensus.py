@@ -41,6 +41,11 @@ columns it needs are absent:
   4. AR1            product intensity over precursor intensity, on the same row.
      Refuses first if the fragments were normalized within their own spectrum,
      which destroys the scale ar1 depends on.
+  5. REJECTS        the same classifier run over whatever the ingest gate threw
+     away. This is the positive control the other tests cannot supply: rejected
+     rows at +1.003/z Da show that picks occur and the gate removes them. A
+     rejects table holding only tallies by reason is reported as unusable, not
+     read as a negative.
 
 Exit status is 0 if every requested test ran, 1 if any was skipped for want of
 a column, 2 if the database could not be opened.
@@ -124,6 +129,9 @@ PPM_BINS = 4000        # up to 400 ppm, then an overflow bin
 
 # Candidate column names, normalized (lowercased, non-alphanumerics dropped) and
 # in priority order: the first one present wins.
+REJECT_NAME = re.compile(r"reject|quarantin|discard|excluded|failed", re.I)
+REJECT_COUNT_HINTS = ("count", "n", "nrows", "rows", "num", "total", "reason", "rule")
+
 HINTS = {
     "product_intensity": ("intensity", "productintensity", "fragmentintensity",
                           "prodintensity", "fragintensity"),
@@ -694,6 +702,92 @@ def test_ar1(con, cfg, limit, out):
     return True
 
 
+def test_rejects(con, entries, limit, out):
+    """Test 5: what the ingest gate threw away.
+
+    This is the positive control the other tests cannot supply. Test 1 reports
+    zero isotope picks from tables where a pick could not have been stored, and
+    no tail shape distinguishes "none occurred" from "none could get in". The
+    quarantine does: if rows rejected on mass carry their reported and calculated
+    m/z, the same classifier can be run over them, and a cluster at +1.003/z Da
+    is both the control AND, plausibly, where the picks went.
+
+    A rejects table that stores only tallies by reason cannot serve. It records
+    that something was dropped, not what it was, so it is reported as unusable
+    rather than treated as a negative.
+    """
+    out.append("")
+    out.append("TEST 5 - WHAT THE GATE REJECTED")
+    found = [e for e in entries if REJECT_NAME.search(e["table"])]
+    if not found:
+        out.append("  SKIPPED: no table whose name suggests rejected or quarantined rows.")
+        out.append("  Without one there is no positive control: nothing in this database")
+        out.append("  shows that a pick-sized error would have been visible had it occurred.")
+        return False
+
+    usable = False
+    for e in found:
+        r = e["roles"]
+        have = all(r.get(k) for k in ("seq", "charge", "raw_mz")) and (
+            r.get("calc_mz") or r.get("calc_mass"))
+        out.append("")
+        out.append("  %s (%d rows)" % (e["table"], e["rows"]))
+        if not have:
+            counts = [c for c in e["columns"]
+                      if norm(c) in REJECT_COUNT_HINTS or "count" in norm(c)]
+            out.append("    columns: %s" % ", ".join(e["columns"]))
+            if counts:
+                out.append("    TALLIES ONLY. This records that rows were dropped and why, not")
+                out.append("    what they were. A count cannot be classified, so it cannot show")
+                out.append("    that a pick-sized error would have been caught. To serve as a")
+                out.append("    control it would have to keep the rejected row's reported and")
+                out.append("    calculated m/z, sequence and charge.")
+            else:
+                out.append("    No reported and calculated m/z together, so the rejected rows")
+                out.append("    cannot be classified. Not usable as a control.")
+            continue
+
+        usable = True
+        cfg = {"table": e["table"], "roles": r}
+        buckets = Counter()
+        picks = 0
+        total = 0
+        widest = 0.0
+        example = None
+        for seq, z, raw, calc_mz, _rest in fetch(con, cfg, limit, "spread"):
+            total += 1
+            delta = (raw - calc_mz) * z
+            label, _k = classify(delta)
+            buckets[label] += 1
+            widest = max(widest, abs(raw - calc_mz) / calc_mz * 1e6)
+            if label.startswith("A"):
+                picks += 1
+                if example is None:
+                    example = (seq, z, raw, calc_mz, delta)
+        if not total:
+            out.append("    No row carried both a reported and a calculated m/z.")
+            continue
+        out.append("    %d rejected rows classified; widest error %.0f ppm." % (total, widest))
+        for label, n in buckets.most_common(8):
+            out.append("      %-24s %8d" % (label, n))
+        out.append("")
+        if picks:
+            seq, z, raw, calc_mz, delta = example
+            out.append("    %d REJECTED ROWS ARE ISOTOPE PICKS. This is the positive control:"
+                       % picks)
+            out.append("    the pipeline does produce them, and the gate is what removes them,")
+            out.append("    so a zero in test 1 measures the gate and not the pipeline.")
+            out.append("    These rows are also the place to count picks from.")
+            out.append("    e.g. %s %d+ %.4f vs %.4f (%+.4f)"
+                       % (seq[:30], z, raw, calc_mz, delta))
+        else:
+            out.append("    No rejected row is a pick either. Combined with test 1 that is a")
+            out.append("    real negative for this source — errors of a pick's magnitude were")
+            out.append("    neither stored nor rejected, so none arrived. Check the gate")
+            out.append("    actually ran on these files before leaning on it.")
+    return usable
+
+
 def test_load(con, cfg, load_map, limit, out):
     """Test 3: does precursor intensity track how much was loaded?"""
     out.append("")
@@ -905,6 +999,7 @@ def main(argv=None):
             load_map = json.load(fh)
     ran_load = test_load(con, cfg, load_map, args.limit, out)
     test_ar1(con, cfg, args.limit, out)
+    test_rejects(con, entries, args.limit, out)
 
     print("\n".join(out))
     return 0 if (ran_load or not args.load_map) else 1
