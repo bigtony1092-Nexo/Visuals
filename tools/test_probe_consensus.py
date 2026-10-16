@@ -376,6 +376,44 @@ def an_unfiltered_zero_carries_weight(db, tmp):
     return bad
 
 
+def a_computed_precursor_is_not_a_measurement(db, tmp):
+    """prec_mz == calc_mz means the column was computed, so no mass test applies.
+
+    Reported from the real vendor stores: 905 of 993 Thermo samples carry a
+    computed precursor m/z via the MSFragger route. A probe that read those as
+    "all monoisotopic, no picks" would be reporting the arithmetic back to itself.
+    """
+    computed = tmp / "computed.db"
+    con = sqlite3.connect(computed)
+    con.execute("""CREATE TABLE observations (
+        id INTEGER PRIMARY KEY, PeptideSequence TEXT, Charge INTEGER,
+        RunName TEXT, PrecMz REAL, CalcMz REAL)""")
+    rng = random.Random(11)
+    for i in range(300):
+        seq = "".join(rng.choice("GASPVTLINDQEMHFYW") for _ in range(12)) + "R"
+        z = rng.choice([2, 3])
+        calc_mz = (WATER + sum(RESIDUE[c] for c in seq)) / z + pc.PROTON
+        con.execute("INSERT INTO observations VALUES (?,?,?,?,?,?)",
+                    (i + 1, seq, z, "run_A", calc_mz, calc_mz))   # identical, by construction
+    con.commit()
+    con.close()
+    rc, out = run("--db", str(computed))
+    bad = []
+    if "THE REPORTED m/z IS NOT MEASURED" not in out:
+        bad.append("read a computed precursor column as if it were measured")
+    if "100%" not in out:
+        bad.append("did not state what share of rows were computed")
+    return bad
+
+
+def a_measured_precursor_is_not_called_computed(db, tmp):
+    """The planted database has real scatter; the computed warning must stay quiet."""
+    rc, out = run("--db", str(db))
+    if "THE REPORTED m/z IS NOT MEASURED" in out:
+        return ["called a measured column computed"]
+    return []
+
+
 def limit_reads_a_spread_not_the_oldest(db, tmp):
     """--limit must not silently mean 'the oldest rows'."""
     rc, out = run("--db", str(db), "--limit", "200")
@@ -409,7 +447,9 @@ STANDALONE = (refuses_a_published_shaped_table, refuses_a_file_that_is_not_a_dat
               load_test_skips_without_a_map, schema_only_names_every_table,
               find_locates_the_database, find_says_so_when_nothing_matches,
               neither_db_nor_find_is_an_error, a_mass_gated_table_is_not_evidence,
-              an_unfiltered_zero_carries_weight, limit_reads_a_spread_not_the_oldest)
+              an_unfiltered_zero_carries_weight, limit_reads_a_spread_not_the_oldest,
+              a_computed_precursor_is_not_a_measurement,
+              a_measured_precursor_is_not_called_computed)
 
 
 def main(argv=None):

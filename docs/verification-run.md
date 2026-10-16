@@ -181,13 +181,24 @@ Column discovery worked with no flags: `observations`, 122,031,794 rows, with
 | near the deamidation/A1 boundary | none |
 | unexplained | 73,034 rows, all ±0.01 to 0.05 Da |
 
-**That zero is not a result.** Every row reached this table through an ingest
-check that rejects a precursor more than 10 ppm from its calculated m/z. An
-isotope pick sits 1.003/z Da away, which is **358 to 1003 ppm** across the
-charge and m/z range of real tryptic peptides. So an isotope pick cannot be
-stored in this table, and the probe searching for one here was a test that could
-not fail — the same defect as a control required to be reported rather than to
-fail, caught earlier in `validate_export.py`.
+**That zero is not a result.** An isotope pick sits 1.003/z Da from the
+calculated m/z, which is **358 to 1003 ppm** across the charge and m/z range of
+real tryptic peptides. Nothing in the sample was even 50 ppm out. So a pick
+could not have been found here, and the probe searching for one was a test that
+could not fail — the same defect as a control required to be reported rather
+than to fail, caught earlier in `validate_export.py`.
+
+I first attributed that to the ingest contract, and **that attribution was
+wrong.** `ingest_contract.py` sets `PRECURSOR_PPM = 10.0` and is called by
+`vendor_consensus_builder` for the vendor stores under `C:\VendorDBs`.
+`ARiA_Consensus.db`'s `observations` is the older consensus lineage, cleaned
+2026-09-26, and largely predates the contract — **it was never gated at 10 ppm**,
+which is also why its 4–50 ppm rows are no contradiction. The conclusion holds
+and the reason does not: something upstream, most likely a search engine that
+only emits matches within tolerance, kept the errors narrow. The probe's own
+guard never depended on knowing which, because it is keyed on the observed error
+width rather than on a named filter. Do not cite the ingest gate as a guarantee
+for this table; it does not apply to it.
 
 This is worth being precise about, because reporting "we checked and found none"
 would have been a false negative dressed as a confirmation. The published PAX8
@@ -195,11 +206,22 @@ figure of 33 picks cannot have come from this table. It must have come from
 upstream of the gate: the search output (DIA-NN report parquet, FragPipe
 `psm.tsv`, the Waters spectrum files) or whatever the gate quarantined.
 
-### One number in that report does not fit
+### Where the gate does apply, it still cannot fail
+
+For the vendor stores, **905 of 993 Thermo samples carry a computed precursor
+m/z** — `prec_mz` equals `calc_mz` exactly, via the MSFragger route. A row whose
+reported m/z *is* the calculation cannot show a mass error of any size. So on
+that source a mass test is not lenient, it is absent. The probe now detects this
+directly: when a tenth or more of the rows have a reported m/z identical to the
+calculated one, it prints `THE REPORTED m/z IS NOT MEASURED`, gives the share,
+and says to find a column holding what the instrument reported. Two tests pin it
+— a fully computed table must trip the warning, and the planted table with real
+scatter must not.
+
+### The ppm arithmetic, for reference
 
 The 73,034 unexplained rows at ±0.01 to 0.05 Da work out, for ordinary tryptic
-precursors, to roughly **4 to 50 ppm** — and the upper half of that range is
-outside a 10 ppm gate:
+precursors, to roughly **4 to 50 ppm**:
 
 | m/z | z | 0.01 Da | 0.05 Da |
 |---|---|---|---|
@@ -208,11 +230,8 @@ outside a 10 ppm gate:
 | 600 | 3 | 5.6 ppm | 27.8 ppm |
 | 900 | 3 | 3.7 ppm | 18.5 ppm |
 
-So either the gate is not 10 ppm, or it is not applied to every source, or those
-rows predate it. It does not change the conclusion — 50 ppm is still an order of
-magnitude short of the 358 ppm an isotope pick needs — but it means the gate is
-not as airtight as described, and that is worth knowing before anyone leans on
-it as a guarantee.
+Those rows predate the contract, so they are consistent. Either way 50 ppm is
+still an order of magnitude short of the 358 ppm an isotope pick needs.
 
 ### What the probe now does about it
 
@@ -237,9 +256,67 @@ Both are covered by tests: a gated table must be refused as evidence, an
 unfiltered zero must be credited, and a limited read must say which rows it
 covered. 17 of 17 cases pass.
 
-### The load test is unblocked
+### The PAX8 runs are not in the database at all
 
-For the Colorado PAX8 runs the amount loaded is in the run name
-(`PAX8_JP210_100ng_...`, `_500ng_...`), and `precursor_intensity` sits in the
-same table as `sample_name`. Test 3 can run as soon as the run names are
-confirmed; the `--load-map` substring matching is built for exactly that shape.
+Checked read-only across every store: `observations` holds 863 distinct sample
+names and **none** match CH215, JP21x or PAX8; the vendor stores match none
+either. The Colorado PAX8 runs — 24 of them, Waters HDMSE — exist only upstream,
+in the ApexRT/iDTs outputs and the FragPipe PSMs. **They were never ingested.**
+So the premise that the raw reported precursor for PAX8 is in the consensus
+database is false: the columns are there, those samples are not.
+
+## Test 3 resolved: the load series was never a load series
+
+The published analysis labelled its conditions `PAX8 JP210 100ng 120 min 1uL`
+and so on, and the earlier run regressed intensity against the ng in that label.
+The ng does not encode what went on column. Total PAX8 ion current per run, 60-
+minute runs only, against both readings of the label:
+
+| reading of "500ng" | Spearman vs run total current |
+|---|---|
+| total amount on column | **+0.000** |
+| per µL, so on column = ng × µL | **−0.598** |
+
+Neither works, and the second is *negative* — more nominal material, less signal.
+The decisive pair: two runs on the same gradient, both labelled 100ng.
+
+| run | volume | total PAX8 current |
+|---|---|---|
+| `PAX8_JP210_100ng_60_1uL` | 1.0 µL | 5.808 × 10⁷ |
+| `PAX8_JP213_100ng_60_0-5uL` | 0.5 µL | 5.797 × 10⁸ |
+
+**Exactly 10× more signal on half the volume at the same nominal amount.** JP210
+through JP215 are different samples, not dilutions of one, and JP213 appears at
+both 100ng/0.5µL and 500ng/2µL. There is no titration series in this data.
+
+### The one clean comparison says the response is proportional
+
+Hold the sample, the gradient and the injection volume fixed and only the
+nominal amount changes: JP210, 60 minutes, 1 µL, 100ng against 500ng — a 5-fold
+step. Per ion, best intensity in each condition, 27 ions in both:
+
+| | |
+|---|---|
+| median ratio | **5.89×** against a nominal 5.0× |
+| quartiles | 4.79× to 8.61× |
+| implied log-log slope | **+1.102** (1.0 is proportional) |
+| ions that went up | **27 of 27** |
+| ions above 5× | 17 of 27 |
+
+So **there is no detector compression**, and the earlier `+0.239` was an artifact
+of regressing against a label that does not track load. Of the three readings
+left open above, reading 2 — the condition labels do not reflect on-column
+amount — is the one the data supports. Reading 1, severe compression, has no
+support: with a real 5-fold step the response is proportional. Reading 3 is also
+out: `inten` is a raw per-PSM precursor intensity, not something normalized.
+
+**This unblocks the ar1 work.** The control that was failing was not the
+detector; it was the load axis. Within a matched series intensity tracks amount,
+so ar1's loading-invariance can be tested — and the dynamic-range ceiling this
+document warned about does not exist at these loads.
+
+One caveat kept in view: 27 ions from one 100ng run against three 500ng runs,
+one sample, one instrument, one day. The quartile spread (4.79× to 8.61×) is
+wide, and two ions move 49× and 65×, which is more than a 5-fold step can
+explain and worth looking at on its own. This is a clean negative for
+compression, not a calibration of the response.

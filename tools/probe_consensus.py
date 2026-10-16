@@ -28,6 +28,9 @@ columns it needs are absent:
      keys yielded 1 such pick; the study reported 33. Run second, on deltas
      corrected by test 2, because an uncorrected offset drags deamidation
      (+0.9840) up toward A1 (+1.0034) and the two are 0.0193 Da apart.
+     It also refuses two vacuous cases: a reported m/z identical to the
+     calculated one (computed, not measured), and a sample whose widest error
+     is far short of what a pick would be (filtered before storage).
   2. CALIBRATION    the ppm offset of the monoisotopic cluster, per run. This
      is the correction applied before publication, measured rather than
      assumed. Reported first because test 1 depends on it.
@@ -94,6 +97,14 @@ BOUNDARY_MARGIN = 0.004
 # on mass before they were stored. GATE_PPM is the width below which the probe
 # refuses to read its own zero as a result.
 GATE_PPM = 50.0
+
+# Some pipelines write a COMPUTED precursor m/z into the reported column — the
+# MSFragger route does this for most Thermo samples in the vendor stores, where
+# prec_mz equals calc_mz exactly. Such a row cannot show any mass error, so a
+# mass test over them is not a lenient test, it is no test. Real measured values
+# essentially never land exactly on the calculated one.
+IDENTICAL_TOL = 1e-9
+IDENTICAL_SHARE = 0.10
 
 # Candidate column names, normalized (lowercased, non-alphanumerics dropped) and
 # in priority order: the first one present wins.
@@ -355,6 +366,7 @@ def test_isotope(records, cfg, offsets, out):
     ambiguous = 0
     widest_ppm = 0.0
     beyond_gate = 0
+    identical = 0
 
     for seq, z, raw, calc_mz, rest in records:
         total += 1
@@ -365,6 +377,8 @@ def test_isotope(records, cfg, offsets, out):
         # How far from its calculated m/z this row sits, in ppm. An isotope pick
         # is hundreds of ppm out, so the widest value seen bounds what this table
         # is capable of showing.
+        if abs(raw - calc_mz) < IDENTICAL_TOL:
+            identical += 1
         err_ppm = abs(corrected - calc_mz) / calc_mz * 1e6
         widest_ppm = max(widest_ppm, err_ppm)
         if err_ppm > GATE_PPM:
@@ -419,6 +433,15 @@ def test_isotope(records, cfg, offsets, out):
     out.append("  Any isotope:   %d rows, %d ions." % (any_rows, any_ions))
     out.append("  The study's 33 is one of these two; which depends on whether it counted")
     out.append("  A1 alone. Compare ions, not rows: one ion appears once per run.")
+    if total and identical / total >= IDENTICAL_SHARE:
+        out.append("")
+        out.append("  THE REPORTED m/z IS NOT MEASURED. %d of %d rows (%.0f%%) carry a"
+                   % (identical, total, 100.0 * identical / total))
+        out.append("  reported m/z identical to the calculated one. A measured value does")
+        out.append("  not land exactly on the calculation; those rows were computed from")
+        out.append("  the sequence, so they cannot show a mass error of any size and no")
+        out.append("  mass test over them means anything. Exclude that source, or find a")
+        out.append("  column holding what the instrument actually reported.")
     out.append("")
     out.append("  Widest error from a calculated m/z in this sample: %.1f ppm."
                % widest_ppm)
