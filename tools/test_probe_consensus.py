@@ -320,6 +320,76 @@ def neither_db_nor_find_is_an_error(db, tmp):
     return []
 
 
+def _mini_db(path, shift_da, rng_seed=7, calib_ppm=2.0):
+    """A small observations table where every row carries the same mass shift."""
+    rng = random.Random(rng_seed)
+    con = sqlite3.connect(path)
+    con.execute("""CREATE TABLE observations (
+        id INTEGER PRIMARY KEY, PeptideSequence TEXT, Charge INTEGER,
+        RunName TEXT, PrecMz REAL, CalcMz REAL)""")
+    for i in range(400):
+        seq = "".join(rng.choice("GASPVTLINDQEMHFYW") for _ in range(12)) + "K"
+        z = rng.choice([2, 3])
+        calc_mz = (WATER + sum(RESIDUE[c] for c in seq)) / z + pc.PROTON
+        reported = (calc_mz + shift_da / z) * (1 + (calib_ppm + rng.gauss(0, 0.3)) / 1e6)
+        con.execute("INSERT INTO observations VALUES (?,?,?,?,?,?)",
+                    (i + 1, seq, z, "run_A", reported, calc_mz))
+    con.commit()
+    con.close()
+
+
+def a_mass_gated_table_is_not_evidence(db, tmp):
+    """Zero picks from a table that cannot hold one must be refused as a result.
+
+    This is the finding that came back from the real database: every row had
+    passed an ingest tolerance, so an isotope pick could never have been stored,
+    and the probe's zero measured the gate rather than the pipeline.
+    """
+    gated = tmp / "gated.db"
+    _mini_db(gated, shift_da=0.0)
+    rc, out = run("--db", str(gated))
+    bad = []
+    if rc != 0:
+        bad.append("exit %d, expected 0" % rc)
+    if "Any isotope:   0 rows" not in out:
+        bad.append("expected zero isotope picks in a table with none")
+    if "THIS RESULT IS NOT EVIDENCE" not in out:
+        bad.append("read its own zero as a finding on a table that cannot hold a pick")
+    for want in ("upstream", "quarantined"):
+        if want not in out:
+            bad.append("did not say where to ask instead (%r missing)" % want)
+    return bad
+
+
+def an_unfiltered_zero_carries_weight(db, tmp):
+    """Zero picks where large errors DO occur is a real negative, not a vacuous one."""
+    wide = tmp / "wide.db"
+    _mini_db(wide, shift_da=15.994915)   # oxidation: hundreds of ppm out, not an isotope
+    rc, out = run("--db", str(wide))
+    bad = []
+    if "THIS RESULT IS NOT EVIDENCE" in out:
+        bad.append("dismissed a zero that was not excluded by construction")
+    if "carries weight" not in out:
+        bad.append("did not credit a zero measured on a table that allows large errors")
+    if "Rows beyond" not in out:
+        bad.append("did not report how many rows sit beyond the gate width")
+    return bad
+
+
+def limit_reads_a_spread_not_the_oldest(db, tmp):
+    """--limit must not silently mean 'the oldest rows'."""
+    rc, out = run("--db", str(db), "--limit", "200")
+    bad = []
+    if rc != 0:
+        bad.append("exit %d, expected 0" % rc)
+    if "spread evenly across the table" not in out:
+        bad.append("did not say which rows a limited read covered")
+    rc2, out2 = run("--db", str(db), "--limit", "200", "--order", "oldest")
+    if "oldest" not in out2:
+        bad.append("--order oldest did not say so")
+    return bad
+
+
 def schema_only_names_every_table(db, tmp):
     rc, out = run("--db", str(db), "--schema-only")
     bad = []
@@ -338,7 +408,8 @@ NEEDS_RUN = (classifier_boundaries, deamidation_is_not_an_isotope,
 STANDALONE = (refuses_a_published_shaped_table, refuses_a_file_that_is_not_a_database,
               load_test_skips_without_a_map, schema_only_names_every_table,
               find_locates_the_database, find_says_so_when_nothing_matches,
-              neither_db_nor_find_is_an_error)
+              neither_db_nor_find_is_an_error, a_mass_gated_table_is_not_evidence,
+              an_unfiltered_zero_carries_weight, limit_reads_a_spread_not_the_oldest)
 
 
 def main(argv=None):

@@ -163,3 +163,83 @@ Test 3 is the one with consequences past this document. If a raw precursor inten
 the consensus database reproduces the **+0.239** slope, the compression is real and the
 dynamic-range ceiling belongs in the export contract. If it lands near 1.0, then `inten`
 in the published JSON was never a raw precursor intensity, and reading 3 above was right.
+
+## The probe ran on the real database, and the answer was zero — which means nothing
+
+A session on Scott-PC ran `probe_consensus.py` (pinned at `04288c3`) against the
+production database, `D:\ProcessPipelines_Latest\ARiA_Consensus.db`, about 53 GB.
+Column discovery worked with no flags: `observations`, 122,031,794 rows, with
+`precursor_mz`, `calc_mz`, `peptide_sequence`, `charge_state`, `sample_name` and
+`precursor_intensity`. On a 2,000,000-row read:
+
+| | result |
+|---|---|
+| calibration | pooled median **0.00 ppm**, per-run −2.5 to +4.4 ppm |
+| monoisotopic | 1,926,966 rows / 119,837 ions |
+| A1 | **0** |
+| any isotope | **0** |
+| near the deamidation/A1 boundary | none |
+| unexplained | 73,034 rows, all ±0.01 to 0.05 Da |
+
+**That zero is not a result.** Every row reached this table through an ingest
+check that rejects a precursor more than 10 ppm from its calculated m/z. An
+isotope pick sits 1.003/z Da away, which is **358 to 1003 ppm** across the
+charge and m/z range of real tryptic peptides. So an isotope pick cannot be
+stored in this table, and the probe searching for one here was a test that could
+not fail — the same defect as a control required to be reported rather than to
+fail, caught earlier in `validate_export.py`.
+
+This is worth being precise about, because reporting "we checked and found none"
+would have been a false negative dressed as a confirmation. The published PAX8
+figure of 33 picks cannot have come from this table. It must have come from
+upstream of the gate: the search output (DIA-NN report parquet, FragPipe
+`psm.tsv`, the Waters spectrum files) or whatever the gate quarantined.
+
+### One number in that report does not fit
+
+The 73,034 unexplained rows at ±0.01 to 0.05 Da work out, for ordinary tryptic
+precursors, to roughly **4 to 50 ppm** — and the upper half of that range is
+outside a 10 ppm gate:
+
+| m/z | z | 0.01 Da | 0.05 Da |
+|---|---|---|---|
+| 500 | 2 | 10.0 ppm | 50.0 ppm |
+| 750 | 2 | 6.7 ppm | 33.3 ppm |
+| 600 | 3 | 5.6 ppm | 27.8 ppm |
+| 900 | 3 | 3.7 ppm | 18.5 ppm |
+
+So either the gate is not 10 ppm, or it is not applied to every source, or those
+rows predate it. It does not change the conclusion — 50 ppm is still an order of
+magnitude short of the 358 ppm an isotope pick needs — but it means the gate is
+not as airtight as described, and that is worth knowing before anyone leans on
+it as a guarantee.
+
+### What the probe now does about it
+
+Two changes, both prompted by that run.
+
+**It refuses to read its own zero.** Test 1 tracks the widest error from a
+calculated m/z in the sample. If no isotope was found *and* no row sits beyond
+`GATE_PPM` (50 ppm), the probe prints `THIS RESULT IS NOT EVIDENCE`, explains
+that a pick could not have been stored, and names where to ask instead. Where
+large errors do occur and the count is still zero, it says the zero carries
+weight. A probe that reports a number without saying whether the number could
+have come out differently is worse than no probe.
+
+**`--limit` no longer means "the oldest rows".** A bare `LIMIT` returns the rows
+SQLite reaches first, which on an append-only table of 122M rows is the earliest
+ingests — so a 2M-row read sampled the oldest 1.6% of history. `--order` now
+defaults to `spread`, reading equal slices from 64 points across the rowid range,
+with `oldest` and `newest` available explicitly. The sample line in the output
+states which was used.
+
+Both are covered by tests: a gated table must be refused as evidence, an
+unfiltered zero must be credited, and a limited read must say which rows it
+covered. 17 of 17 cases pass.
+
+### The load test is unblocked
+
+For the Colorado PAX8 runs the amount loaded is in the run name
+(`PAX8_JP210_100ng_...`, `_500ng_...`), and `precursor_intensity` sits in the
+same table as `sample_name`. Test 3 can run as soon as the run names are
+confirmed; the `--load-map` substring matching is built for exactly that shape.

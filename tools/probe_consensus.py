@@ -87,6 +87,14 @@ DEAMIDATION = 0.984016
 BOUNDARY = (DEAMIDATION + C13) / 2
 BOUNDARY_MARGIN = 0.004
 
+# An isotope pick is off by 1.003/z Da, which is hundreds of ppm: 1000 ppm at
+# m/z 500 and z=2, 250 ppm at m/z 1000 and z=4. So a table whose widest observed
+# error is a few tens of ppm cannot contain one, and reporting zero picks from
+# such a table says nothing about the pipeline. It says the rows were filtered
+# on mass before they were stored. GATE_PPM is the width below which the probe
+# refuses to read its own zero as a result.
+GATE_PPM = 50.0
+
 # Candidate column names, normalized (lowercased, non-alphanumerics dropped) and
 # in priority order: the first one present wins.
 HINTS = {
@@ -241,7 +249,18 @@ def classify(delta_neutral):
     return "unexplained", None
 
 
-def fetch(con, cfg, limit):
+def rowid_span(con, table):
+    """(min, max) rowid, or None for a WITHOUT ROWID table."""
+    try:
+        lo, hi = con.execute('SELECT MIN(rowid), MAX(rowid) FROM "%s"' % table).fetchone()
+    except sqlite3.Error:
+        return None
+    if lo is None or hi is None or hi <= lo:
+        return None
+    return lo, hi
+
+
+def fetch(con, cfg, limit, order="oldest", blocks=64):
     r = cfg["roles"]
     want = [r["seq"], r["charge"], r["raw_mz"]]
     truth = r["calc_mz"] or r["calc_mass"]
@@ -249,23 +268,42 @@ def fetch(con, cfg, limit):
     want.append(truth)
     extra = [c for c in (r["run"], r["intensity"]) if c]
     cols = ", ".join('"%s"' % c for c in want + extra)
-    sql = 'SELECT %s FROM "%s" WHERE "%s" IS NOT NULL AND "%s" IS NOT NULL' % (
-        cols, cfg["table"], r["raw_mz"], truth)
-    if limit:
-        sql += " LIMIT %d" % limit
-    for row in con.execute(sql):
-        seq, z, raw, calc = row[0], row[1], row[2], row[3]
-        rest = dict(zip(extra, row[4:]))
-        try:
-            z = int(z)
-            raw = float(raw)
-            calc = float(calc)
-        except (TypeError, ValueError):
-            continue
-        if z < 1 or raw <= 0 or calc <= 0:
-            continue
-        calc_mz = calc / z + PROTON if truth_is_mass else calc
-        yield seq, z, raw, calc_mz, rest
+    where = 'WHERE "%s" IS NOT NULL AND "%s" IS NOT NULL' % (r["raw_mz"], truth)
+    base = 'SELECT %s FROM "%s" ' % (cols, cfg["table"])
+
+    queries = []
+    span = rowid_span(con, cfg["table"]) if (limit and order == "spread") else None
+    if span and limit >= blocks:
+        # Read equal slices from evenly spaced points across the rowid range, so a
+        # limited read is not a read of the oldest rows only.
+        lo, hi = span
+        per = max(1, limit // blocks)
+        step = (hi - lo) / blocks
+        for b in range(blocks):
+            start = int(lo + b * step)
+            queries.append((base + where + ' AND rowid >= %d LIMIT %d' % (start, per), ()))
+    else:
+        sql = base + where
+        if limit:
+            if order == "newest":
+                sql += " ORDER BY rowid DESC"
+            sql += " LIMIT %d" % limit
+        queries.append((sql, ()))
+
+    for sql, params in queries:
+        for row in con.execute(sql, params):
+            seq, z, raw, calc = row[0], row[1], row[2], row[3]
+            rest = dict(zip(extra, row[4:]))
+            try:
+                z = int(z)
+                raw = float(raw)
+                calc = float(calc)
+            except (TypeError, ValueError):
+                continue
+            if z < 1 or raw <= 0 or calc <= 0:
+                continue
+            calc_mz = calc / z + PROTON if truth_is_mass else calc
+            yield seq, z, raw, calc_mz, rest
 
 
 def measure_calibration(records, cfg, out):
@@ -315,6 +353,8 @@ def test_isotope(records, cfg, offsets, out):
     run_col = cfg["roles"]["run"]
     total = 0
     ambiguous = 0
+    widest_ppm = 0.0
+    beyond_gate = 0
 
     for seq, z, raw, calc_mz, rest in records:
         total += 1
@@ -322,6 +362,13 @@ def test_isotope(records, cfg, offsets, out):
         ppm = offsets.get(run, 0.0)
         corrected = raw / (1 + ppm / 1e6)
         delta = (corrected - calc_mz) * z
+        # How far from its calculated m/z this row sits, in ppm. An isotope pick
+        # is hundreds of ppm out, so the widest value seen bounds what this table
+        # is capable of showing.
+        err_ppm = abs(corrected - calc_mz) / calc_mz * 1e6
+        widest_ppm = max(widest_ppm, err_ppm)
+        if err_ppm > GATE_PPM:
+            beyond_gate += 1
         label, k = classify(delta)
         buckets[label] += 1
         if label in ("A1", "deamidation") and abs(delta - BOUNDARY) <= BOUNDARY_MARGIN:
@@ -372,6 +419,27 @@ def test_isotope(records, cfg, offsets, out):
     out.append("  Any isotope:   %d rows, %d ions." % (any_rows, any_ions))
     out.append("  The study's 33 is one of these two; which depends on whether it counted")
     out.append("  A1 alone. Compare ions, not rows: one ion appears once per run.")
+    out.append("")
+    out.append("  Widest error from a calculated m/z in this sample: %.1f ppm."
+               % widest_ppm)
+    out.append("  Rows beyond %.0f ppm: %d of %d." % (GATE_PPM, beyond_gate, total))
+    if any_ions == 0 and beyond_gate == 0:
+        out.append("")
+        out.append("  THIS RESULT IS NOT EVIDENCE. An isotope pick is 1.003/z Da from the")
+        out.append("  calculated m/z, which is hundreds of ppm: about 1000 ppm at m/z 500")
+        out.append("  and z=2. No row in this sample is even %.0f ppm out, so a pick could" % GATE_PPM)
+        out.append("  not have been stored here and could not have been found. Zero is a")
+        out.append("  property of this table, not a measurement of the pipeline.")
+        out.append("")
+        out.append("  Something filtered these rows on mass before they were written — an")
+        out.append("  ingest tolerance, or a search engine that only emits matches. Ask")
+        out.append("  upstream of it instead: the search output (DIA-NN report, FragPipe")
+        out.append("  psm.tsv, vendor spectrum files) or whatever the filter quarantined.")
+    elif any_ions == 0:
+        out.append("")
+        out.append("  Zero picks, and %d rows do sit beyond %.0f ppm, so a pick was not"
+                   % (beyond_gate, GATE_PPM))
+        out.append("  excluded by construction. This zero carries weight.")
     if ambiguous:
         out.append("")
         out.append("  CAUTION: %d rows fell within %.3f Da of %.4f, the midpoint between"
@@ -505,6 +573,9 @@ def main(argv=None):
     p.add_argument("--intensity", help="precursor intensity column")
     p.add_argument("--load-map", help="JSON file mapping run name or substring to ng loaded")
     p.add_argument("--limit", type=int, default=0, help="read at most N rows per test")
+    p.add_argument("--order", choices=("spread", "oldest", "newest"), default="spread",
+                   help="which rows a --limit reads: spread evenly across the table"
+                        " (default), the first rows SQLite reaches, or the last")
     args = p.parse_args(argv)
 
     if not args.db:
@@ -594,8 +665,15 @@ def main(argv=None):
         out.append("  (two truth columns present; using %s)" % roles["calc_mz"])
     out.append("")
 
-    offsets = measure_calibration(fetch(con, cfg, args.limit), cfg, out)
-    test_isotope(fetch(con, cfg, args.limit), cfg, offsets, out)
+    if args.limit:
+        out.append("  sample   %d rows, %s" % (args.limit, {
+            "spread": "spread evenly across the table",
+            "oldest": "the first rows reached, which on an append-only table are the oldest",
+            "newest": "the last rows by rowid",
+        }[args.order]))
+        out.append("")
+    offsets = measure_calibration(fetch(con, cfg, args.limit, args.order), cfg, out)
+    test_isotope(fetch(con, cfg, args.limit, args.order), cfg, offsets, out)
 
     load_map = None
     if args.load_map:
