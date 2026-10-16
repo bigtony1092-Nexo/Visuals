@@ -520,6 +520,31 @@ def a_tapered_distribution_is_not_called_cut(db, tmp):
     return bad
 
 
+def a_taper_does_not_rescue_a_zero(db, tmp):
+    """The two diagnostics must not read as contradicting each other.
+
+    The real run came back tapered — 0.02% of rows in the top 5% of the range —
+    which rules out a cutoff at 28 ppm. It does not establish that a row 358 ppm
+    out would have been stored, because nothing in the sample goes near that. The
+    zero stays uninformative, and what is missing is a positive control.
+    """
+    taper = tmp / "taper2.db"
+    _ppm_db(taper, sigma=3.0, hard_cut=None, n=4000, seed=31)
+    rc, out = run("--db", str(taper))
+    bad = []
+    if "was CUT at about" in out:
+        bad.append("called ordinary scatter a cutoff")
+    if "it looks like it ended rather than being cut" not in out:
+        bad.append("did not report the taper")
+    if "rules out a cutoff AT" not in out:
+        bad.append("let the taper be read as covering cutoffs higher up")
+    if "THIS RESULT IS NOT EVIDENCE" not in out:
+        bad.append("credited a zero on a sample holding no error near a pick's size")
+    if "positive control" not in out:
+        bad.append("did not name the control that would make the zero mean something")
+    return bad
+
+
 def a_small_clean_sample_is_not_called_cut(db, tmp):
     """The defect in a max/p99 ratio: it flags small clean samples. This must not."""
     small = tmp / "small.db"
@@ -569,6 +594,7 @@ STANDALONE = (refuses_a_published_shaped_table, refuses_a_file_that_is_not_a_dat
               a_measured_subset_survives_a_mostly_computed_table,
               a_cut_distribution_is_called_cut,
               a_tapered_distribution_is_not_called_cut,
+              a_taper_does_not_rescue_a_zero,
               a_small_clean_sample_is_not_called_cut)
 
 

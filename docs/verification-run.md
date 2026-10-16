@@ -281,6 +281,62 @@ observed range, and which of the two it looks like. Three tests: gaussian error
 rejected past 10 ppm must be called cut, unfiltered scatter must not, and a
 300-row clean sample must not — the case the ratio heuristic got wrong.
 
+### The edge test corrected the claim it was built to check
+
+Run on the same 48-sample scratch database, all 340,934 measured rows:
+
+| |ppm| | |
+|---|---|
+| median | 1.7 |
+| p95 | 14.5 |
+| p99 | 21.2 |
+| max | 28.1 |
+| beyond 50 ppm | 0 |
+| in the last 5% of the range (26.7–28.1) | **59 rows, 0.02%** |
+
+0.02% is not density at an edge. The verdict printed was *"it looks like it
+ended rather than being cut"*, which **contradicts the earlier reading that a
+tolerance had been applied at about 28 ppm**. No tolerance was applied there.
+That correction is the whole point of having built the test: the previous
+sentence was a guess, and the data disagreed with it.
+
+### But a taper does not rescue the zero
+
+Those two findings then sat in tension — the distribution "ended rather than
+being cut", yet the probe still refused the result. The refusal is right and the
+wording was what needed fixing. A smooth taper to 28 ppm rules out a cutoff **at
+28 ppm**. It says nothing about a cutoff at 100 or 200, because no row in the
+sample goes anywhere near one. The absence of a cliff where the data stops is not
+evidence that data would have been kept far beyond it.
+
+So the probe now states the taper narrowly, and names what is actually missing:
+
+> **a positive control.** One row, anywhere in this source, carrying a mass error
+> of a pick's magnitude — a few hundred ppm — that the pipeline nevertheless
+> stored. An entrapment sequence, a deliberate misassignment, a quarantine
+> record. Without one, "no picks" and "picks cannot get in" produce identical
+> output, and a smooth tail at 28 ppm does not separate them.
+
+That is the same shape of requirement as everywhere else in this repository: a
+control that is reported but cannot fail is not a control. A test for something
+absent needs a demonstration that the something would have been visible had it
+been there.
+
+### The circularity is confirmed, and it reaches the search outputs too
+
+`calc_mz` in the vendor stores is built from the sequence **plus the
+modifications the search engine assigned** — that is, after the search chose its
+explanation of the observed mass. The MSFragger route then writes the same
+computed value into both columns. So the search outputs carry the same defect as
+the consensus tables, and moving upstream by one step does not escape it.
+
+An isotope pick is a *decision* this pipeline records in an assignment, not a
+residual it leaves lying in a mass column. Recovering the 33 requires either the
+assignment itself — whatever field or log says "A1 was chosen here" — or the raw
+spectra, where the reported precursor exists before any sequence has been
+proposed. Everything between those two ends has already folded the answer into
+the question.
+
 ### The thing to check upstream before anything else
 
 Worth stating plainly, because it would make every mass test above vacuous no

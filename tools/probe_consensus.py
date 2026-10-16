@@ -508,6 +508,9 @@ def test_isotope(records, cfg, offsets, out):
     elif measured:
         out.append("  The distribution has thinned to almost nothing by its own maximum, so")
         out.append("  it looks like it ended rather than being cut.")
+        out.append("  Read that narrowly: it rules out a cutoff AT %.0f ppm. It says nothing"
+                   % widest_ppm)
+        out.append("  about a cutoff higher up, because no row in this sample goes near one.")
     if any_ions == 0 and beyond_gate == 0:
         out.append("")
         out.append("  THIS RESULT IS NOT EVIDENCE. An isotope pick is 1.003/z Da from the")
@@ -520,6 +523,15 @@ def test_isotope(records, cfg, offsets, out):
         out.append("  tolerance, or a search engine that only emits matches inside its own")
         out.append("  tolerance. Ask upstream of it: the search output (DIA-NN report,")
         out.append("  FragPipe psm.tsv, vendor spectrum files) or whatever it discarded.")
+        out.append("")
+        out.append("")
+        out.append("  WHAT WOULD MAKE A ZERO HERE MEAN SOMETHING: a positive control. One row,")
+        out.append("  anywhere in this source, carrying a mass error of a pick's magnitude —")
+        out.append("  a few hundred ppm — that the pipeline nevertheless stored. An")
+        out.append("  entrapment sequence, a deliberate misassignment, a quarantine record.")
+        out.append("  Without one, 'no picks' and 'picks cannot get in' produce identical")
+        out.append("  output, and a smooth tail at %.0f ppm does not separate them."
+                   % widest_ppm)
         out.append("")
         out.append("  AND CHECK ONE THING THERE FIRST. This test assumes the calculated m/z")
         out.append("  was derived from the sequence alone. If it was instead chosen to")
