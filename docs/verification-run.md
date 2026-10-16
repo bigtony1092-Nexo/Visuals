@@ -678,3 +678,42 @@ peak-read fragments. After that, MSFragger isotope-error PSMs will be rejected a
 10 ppm — **and the store will still only count them** unless
 `ingest_row_rejects` is extended to keep rows. Extending it is the one change
 that would make the quarantine answer this class of question in future.
+
+## The published page, corrected
+
+PAX8 Across Platforms is at version 6. Three changes, and the one that matters
+is not the A1/A2 wording.
+
+**1. A `pass` that could not fail.** The page's first finding read:
+
+> **pass** · Mass: every Colorado PSM is explained by mass within 10 ppm
+> (median −1.5 ppm), once fixed carbamidomethyl and oxidation are restored.
+
+Every PSM was forced into an explanation — `explained_by_mass` is 1262 of 1262
+— so "explained" had no other possible outcome, and the −1.5 ppm is the residual
+left *after* choosing carbamidomethyl, oxidation, deamidation or an A1 isotope.
+It was presented as a result the method passed. It is now tagged **limit** and
+says so: not an independent mass error, and not a test the method passed.
+
+This is the same defect this repository has now caught four times in four places
+— a validator requiring controls to be reported rather than to fail, a zero
+isotope-pick count from a table that could not hold one, a calibration fitted to
+rows whose reported m/z *was* the calculation, and now a published `pass` badge
+on a tautology. Worth naming as a pattern rather than three coincidences.
+
+**2. The A1/A2 category.** The method note said "an isotope pick (A1/A2 chosen
+instead of the monoisotope)". All 33 are A1; no A2 occurred. The note now reads
+A1, and adds where the picks come from: FragPipe PSMs sitting +1.00335/z above
+the monoisotope under MSFragger's isotope-error allowance, recorded per PSM by
+the analysis script rather than inferred from anything measured on the page.
+
+**3. The pick count now carries its shape.** The mass note added: all 33 are A1,
+on 7 ions across 22 runs, with 17 of them on `LSIDSQSSSSGPR` 2+ alone — 35% of
+that ion's own PSMs. A reader seeing "33 isotope picks" would otherwise take it
+for a rate across the protein. It is one ion and six stragglers.
+
+Not changed, and worth a look by someone who can render it: the page states
+"the archive stores no precursor m/z". For most archive samples that holds —
+780 of 863 have no row carrying both a reported and a calculated m/z — but 48
+samples are measured throughout, so the claim is too broad as written. Whether
+any of those 48 carry PAX8 has not been checked.
