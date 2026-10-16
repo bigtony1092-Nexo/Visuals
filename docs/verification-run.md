@@ -875,3 +875,91 @@ searched with MSFragger, so section 3 can be redone against their own
 `psm.tsv` MS2 spectra instead of the Thermo archive. Same file, same instrument,
 same day — and a reference that will pass the chemistry check, since
 `pax8_analysis.py` already found the 33 isotope picks in that search output.
+
+### Correction: the "Colorado" side was never a MARCH extraction
+
+I told the owner that the extraction was producing physically sensible spectra
+and that the failure lay on the reference side. The second half holds. **The
+first half attributed the chemistry to the wrong thing.**
+
+The page's own method line says it: *"Ladder ions matched to each ion's own
+charge-aware b/y ladder at 20 ppm (**Colorado, searched MGF spectra**) or 15 ppm
+(Thermo store, each fragment re-labelled from its m/z)."* The Colorado column is
+the **FragPipe search output**, not a targeted extraction. So the 3.0× proline
+enrichment is FragPipe's MS/MS chemistry, and "it's odd that you don't match
+what's targeted" does not apply to this panel — nothing targeted is in it.
+
+Confirmed independently: **MARCH has no PAX8 patterns at all.** Its annotated
+lists for the PAX8 runs contain zero PAX8 UIDs, checked by sequence rather than
+by ion label. No vendor in the Atlas carries PAX8, and a dedicated MARCH run on
+those files declined — single protein, too few beacons. There was never a MARCH
+side to compare.
+
+A cross-check supports the reattribution. FragPipe proline enrichment, measured
+in two sessions from different data:
+
+| source | enrichment |
+|---|---|
+| HeLa_120 #1 FragPipe | 3.30× |
+| PAX8 `60_2` FragPipe | 3.73× |
+| PAX8 `120_1` FragPipe | 3.52× |
+| PAX8 `120_2` FragPipe | 3.12× |
+| **the page's "Colorado" side** | **3.04×** |
+
+It sits in the FragPipe family, which is what it should do if it *is* FragPipe.
+
+### The label hypothesis is refuted
+
+The owner's suggestion was that the flat Thermo reference might be a
+label-parsing artifact — `y(5)` versus `y5`, or neutral losses and charge
+suffixes folded onto the wrong bond. Either would push y-share toward 0.5 and
+proline toward 1.0, exactly the observed signature. It was the right thing to
+suspect.
+
+It is not what happened. Every label on both sides of the page's data is
+`<b|y><n>-<z>`:
+
+| side | distinct labels | shapes | unparseable | dropped |
+|---|---|---|---|---|
+| Colorado | 76 | `yN-N`, `bN-N` | none | 0 |
+| Thermo | 66 | `yN-N`, `bN-N` | none | 0 |
+
+No water or ammonia losses, no alternative formats, nothing excluded. And an
+independent recomputation with `tools/fragment_chemistry.py`, which has its own
+parser and its own baseline, reproduces the same split: **Colorado 2.04×, Thermo
+1.01×**. (The absolute numbers differ from the page's 3.04× and 1.08× because the
+baseline differs — mine is the expectation over each side's own observed
+fragments, the page's a fixed uniform share — but the ratio between sides is the
+same finding.) A Thermo side at 1.01× against its own opportunity is as flat as
+it is possible to be.
+
+### MARCH's extraction, checked for the first time
+
+On Colorado HeLa_120 #1, 228 precursors, both sides pass the 1.25× gate:
+
+| | y-share | proline | aspartate |
+|---|---|---|---|
+| FragPipe, same raw MS/MS | 0.766 | **3.30×** | 0.82× |
+| **MARCH, raw products for the same UID** | 0.656 | **2.09×** | 0.91× |
+
+**MARCH's targeted extraction carries real fragmentation chemistry.** This is the
+first time that has been measured rather than assumed. And it is weaker than a
+search of the same file: taking the excess over uniform as the signal, 1.09
+against 2.30, MARCH retains about **47%** of it.
+
+That puts a number on something MARCH already admitted in prose — *"still picks
+up a few background ions per peptide"*. Roughly half the chemical signal is
+diluted away at this bar. It is a quantity to drive down, and now a measurable one.
+
+The pattern comparison on that same file: cosine 0.618 for the correct pairing
+against 0.501 for a mismatched UID of the same charge and similar length, with
+the correct pairing winning **80 of 117 (68%)**. Modest separation, but in the
+right direction and against a reference that passes the gate — unlike the PAX8
+panel, where it ran backwards against one that does not.
+
+### Page at version 9
+
+The finding and the section caveat now say that neither side is a MARCH
+extraction, that MARCH has no PAX8 patterns to compare, and that the label
+explanation was tested and failed. The HeLa_120 result is cited as the place
+MARCH's own extraction *has* been checked.
