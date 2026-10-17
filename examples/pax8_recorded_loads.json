@@ -1,0 +1,253 @@
+{
+  "_about": [
+    "Recorded load for the 24 Colorado PAX8 runs, from the instrument record:",
+    "_INLET.INF 'Injection Volume (ul)' and the _HEADER.TXT sample description",
+    "concentration. load_ng = recorded_uL x conc_ug_per_uL x 1000.",
+    "",
+    "NEITHER FACTOR WAS MEASURED. The volume is the programmed value and the",
+    "concentration is a typed description. The trap uses partial-loop injection.",
+    "So this is the INTENDED load, not an observed one.",
+    "",
+    "These runs are NOT in ARiA_Consensus.db -- checked against all 863 distinct",
+    "observations.sample_name values and the 69-row sample_registry: zero PAX8 or",
+    "JP21x names, zero Colorado acquisition dates. So this file is not input to",
+    "tools/probe_consensus.py. It is input to tools/pax8_load_response.py, which",
+    "reads the Colorado outputs on Scott-PC.",
+    "",
+    "CONSTANT-LOAD DESIGN: 1.0 uL x 0.5, 2.0 x 0.25 and 5.0 x 0.10 are all 500 ng.",
+    "The 1:2:5 volumes do not span load. Reading them as a load ladder invents",
+    "0.699 log10 units of load where the real span is 0.000.",
+    "",
+    "60 min and 120 min are different LC methods and must never be pooled. Each",
+    "holds exactly ONE 100 ng run, so a load slope per method rests on one",
+    "unreplicated low point."
+  ],
+  "_disputed": {
+    "PAX8_JP213_100ng_60_0-5uL_20260924_4": {
+      "recorded": 500.0,
+      "alternative": 125.0,
+      "why": "2.0 uL in the record against 0.5 uL in the name; 100 ng is wrong on both readings"
+    }
+  },
+  "runs": [
+    {
+      "run": "PAX8_JP210_500ng_60_1uL_20260924_1",
+      "gradient": 60,
+      "recorded_uL": 1.0,
+      "conc_ug_per_uL": 0.5,
+      "load_ng": 500.0,
+      "vial": "JP210",
+      "name_disagrees": false
+    },
+    {
+      "run": "PAX8_JP210_500ng_60_1uL_20260924_2",
+      "gradient": 60,
+      "recorded_uL": 1.0,
+      "conc_ug_per_uL": 0.5,
+      "load_ng": 500.0,
+      "vial": "JP210",
+      "name_disagrees": false
+    },
+    {
+      "run": "PAX8_JP210_500ng_60_1uL_20260924_3",
+      "gradient": 60,
+      "recorded_uL": 1.0,
+      "conc_ug_per_uL": 0.5,
+      "load_ng": 500.0,
+      "vial": "JP210",
+      "name_disagrees": false
+    },
+    {
+      "run": "PAX8_JP211_500ng_60_1uL_20260924_1",
+      "gradient": 60,
+      "recorded_uL": 1.0,
+      "conc_ug_per_uL": 0.5,
+      "load_ng": 500.0,
+      "vial": "JP211",
+      "name_disagrees": false
+    },
+    {
+      "run": "PAX8_JP211_500ng_60_1uL_20260924_2",
+      "gradient": 60,
+      "recorded_uL": 1.0,
+      "conc_ug_per_uL": 0.5,
+      "load_ng": 500.0,
+      "vial": "JP211",
+      "name_disagrees": false
+    },
+    {
+      "run": "PAX8_JP211_500ng_60_1uL_20260924_3",
+      "gradient": 60,
+      "recorded_uL": 1.0,
+      "conc_ug_per_uL": 0.5,
+      "load_ng": 500.0,
+      "vial": "JP211",
+      "name_disagrees": false
+    },
+    {
+      "run": "PAX8_JP212_500ng_60_2uL_20260924_1",
+      "gradient": 60,
+      "recorded_uL": 2.0,
+      "conc_ug_per_uL": 0.25,
+      "load_ng": 500.0,
+      "vial": "JP212",
+      "name_disagrees": false
+    },
+    {
+      "run": "PAX8_JP212_500ng_60_2uL_20260924_2",
+      "gradient": 60,
+      "recorded_uL": 2.0,
+      "conc_ug_per_uL": 0.25,
+      "load_ng": 500.0,
+      "vial": "JP212",
+      "name_disagrees": false
+    },
+    {
+      "run": "PAX8_JP212_500ng_60_2uL_20260924_3",
+      "gradient": 60,
+      "recorded_uL": 2.0,
+      "conc_ug_per_uL": 0.25,
+      "load_ng": 500.0,
+      "vial": "JP212",
+      "name_disagrees": false
+    },
+    {
+      "run": "PAX8_JP213_500ng_60_2uL_20260924_1",
+      "gradient": 60,
+      "recorded_uL": 2.0,
+      "conc_ug_per_uL": 0.25,
+      "load_ng": 500.0,
+      "vial": "JP213",
+      "name_disagrees": false
+    },
+    {
+      "run": "PAX8_JP213_500ng_60_2uL_20260924_2",
+      "gradient": 60,
+      "recorded_uL": 2.0,
+      "conc_ug_per_uL": 0.25,
+      "load_ng": 500.0,
+      "vial": "JP213",
+      "name_disagrees": false
+    },
+    {
+      "run": "PAX8_JP213_500ng_60_2uL_20260924_3",
+      "gradient": 60,
+      "recorded_uL": 2.0,
+      "conc_ug_per_uL": 0.25,
+      "load_ng": 500.0,
+      "vial": "JP213",
+      "name_disagrees": false
+    },
+    {
+      "run": "PAX8_JP214_500ng_60_5uL_20260924_1",
+      "gradient": 60,
+      "recorded_uL": 5.0,
+      "conc_ug_per_uL": 0.1,
+      "load_ng": 500.0,
+      "vial": "JP214",
+      "name_disagrees": false
+    },
+    {
+      "run": "PAX8_JP214_500ng_60_5uL_20260924_2",
+      "gradient": 60,
+      "recorded_uL": 5.0,
+      "conc_ug_per_uL": 0.1,
+      "load_ng": 500.0,
+      "vial": "JP214",
+      "name_disagrees": false
+    },
+    {
+      "run": "PAX8_JP214_500ng_60_5uL_20260924_3",
+      "gradient": 60,
+      "recorded_uL": 5.0,
+      "conc_ug_per_uL": 0.1,
+      "load_ng": 500.0,
+      "vial": "JP214",
+      "name_disagrees": false
+    },
+    {
+      "run": "PAX8_JP215_500ng_60_5uL_20260924_1",
+      "gradient": 60,
+      "recorded_uL": 5.0,
+      "conc_ug_per_uL": 0.1,
+      "load_ng": 500.0,
+      "vial": "JP215",
+      "name_disagrees": false
+    },
+    {
+      "run": "PAX8_JP215_500ng_60_5uL_20260924_2",
+      "gradient": 60,
+      "recorded_uL": 5.0,
+      "conc_ug_per_uL": 0.1,
+      "load_ng": 500.0,
+      "vial": "JP215",
+      "name_disagrees": false
+    },
+    {
+      "run": "PAX8_JP215_500ng_60_5uL_20260924_3",
+      "gradient": 60,
+      "recorded_uL": 5.0,
+      "conc_ug_per_uL": 0.1,
+      "load_ng": 500.0,
+      "vial": "JP215",
+      "name_disagrees": false
+    },
+    {
+      "run": "PAX8_JP210_500ng_120_1uL_20260924_1",
+      "gradient": 120,
+      "recorded_uL": 1.0,
+      "conc_ug_per_uL": 0.5,
+      "load_ng": 500.0,
+      "vial": "JP210",
+      "name_disagrees": false
+    },
+    {
+      "run": "PAX8_JP210_500ng_120_1uL_20260924_2",
+      "gradient": 120,
+      "recorded_uL": 1.0,
+      "conc_ug_per_uL": 0.5,
+      "load_ng": 500.0,
+      "vial": "JP210",
+      "name_disagrees": false
+    },
+    {
+      "run": "PAX8_JP210_500ng_120_1uL_20260924_3",
+      "gradient": 120,
+      "recorded_uL": 1.0,
+      "conc_ug_per_uL": 0.5,
+      "load_ng": 500.0,
+      "vial": "JP210",
+      "name_disagrees": false
+    },
+    {
+      "run": "PAX8_JP210_100ng_60_1uL_20260924_4",
+      "gradient": 60,
+      "recorded_uL": 0.2,
+      "conc_ug_per_uL": 0.5,
+      "load_ng": 100.0,
+      "vial": "JP210",
+      "name_disagrees": true,
+      "note": "recorded 0.2 uL; the name says 1 uL"
+    },
+    {
+      "run": "PAX8_JP210_100ng_120_1uL_20260924_4",
+      "gradient": 120,
+      "recorded_uL": 0.2,
+      "conc_ug_per_uL": 0.5,
+      "load_ng": 100.0,
+      "vial": "JP210",
+      "name_disagrees": true,
+      "note": "recorded 0.2 uL; the name says 1 uL"
+    },
+    {
+      "run": "PAX8_JP213_100ng_60_0-5uL_20260924_4",
+      "gradient": 60,
+      "recorded_uL": 2.0,
+      "conc_ug_per_uL": 0.25,
+      "load_ng": 500.0,
+      "vial": "JP213",
+      "name_disagrees": true,
+      "note": "recorded 2.0 uL from the 0.25 ug/uL vial, so 500 ng; the name says 100 ng at 0.5 uL. DISPUTED: if the method was left at 2.0 uL after a real 0.5 uL injection the true load is 125 ng. It is not 100 ng on either reading."
+    }
+  ]
+}
