@@ -213,11 +213,208 @@ def recovers_planted_load_slopes(_db, out):
     if "quartiles" not in out:
         return ["no slope quartiles line"]
     line = [l for l in out.splitlines() if "quartiles" in l][0]
-    lo, hi = (float(t) for t in line.split("quartiles")[1].split("to"))
+    # the line now carries an IQR after the quartiles, so take the two numbers
+    # that belong to the quartile pair rather than splitting the whole tail
+    nums = re.findall(r"[-+]\d+\.\d+", line.split("quartiles")[1])
+    if len(nums) < 2:
+        return ["could not read the quartile pair from %r" % line.strip()]
+    lo, hi = float(nums[0]), float(nums[1])
     if abs(lo - SLOW) > 0.05:
         bad.append("lower quartile %+.3f, planted %.2f" % (lo, SLOW))
     if abs(hi - FAST) > 0.05:
         bad.append("upper quartile %+.3f, planted %.2f" % (hi, FAST))
+    return bad
+
+
+
+
+def plant_volumes(path, volumes=(1.0, 2.0, 5.0), beta=1.0, break_last=None):
+    """Same vial at several injection volumes, with a known response."""
+    rng = random.Random(7)
+    con = sqlite3.connect(path)
+    con.execute("""CREATE TABLE observations (
+        id INTEGER PRIMARY KEY, PeptideSequence TEXT, Charge INTEGER,
+        RunName TEXT, PrecMz REAL, CalcMz REAL, CalcMass REAL,
+        PrecursorIntensity REAL)""")
+    rid, seen = 0, set()
+    for _ in range(120):
+        while True:
+            seq = "".join(rng.choice("GASPVTLINDQEMHFYW")
+                          for _ in range(rng.randint(7, 15))) + "K"
+            z = rng.choice([2, 3])
+            if (seq, z) not in seen:
+                seen.add((seq, z))
+                break
+        mass = WATER + sum(RESIDUE[c] for c in seq)
+        calc = mass / z + pc.PROTON
+        amp = 10 ** rng.uniform(3.5, 6.0)
+        for v in volumes:
+            rid += 1
+            inten = amp * (v ** beta) * math.exp(rng.gauss(0, 0.04))
+            if break_last and v == volumes[-1]:
+                inten /= break_last
+            con.execute("INSERT INTO observations VALUES (?,?,?,?,?,?,?,?)",
+                        (rid, seq, z, "HeLa_120ng_%guL_r1" % v, calc, calc, mass, inten))
+    con.commit()
+    con.close()
+
+
+def an_estimated_axis_has_no_absolute_scale(db, tmp):
+    """The load factor is built from the same ratios, so the unit is arbitrary.
+
+    The planted betas are 0.25 and 1.00. On an estimated axis both come out
+    multiplied by one unknown constant, so their RATIO is recoverable and neither
+    value is. Reading 1.0 as "linear" here is the error the text must prevent.
+    """
+    rc, out = run("--db", str(db))
+    sec = section(out, "TEST 3")
+    bad = []
+    if "ESTIMATED from the ions" not in sec:
+        bad.append("did not say the axis was estimated rather than declared")
+    if "NO ABSOLUTE SCALE" not in sec:
+        bad.append("did not warn that the slopes have no absolute scale")
+    if "NOT `linear`" not in sec:
+        bad.append("did not rule out reading a slope of 1.0 as linearity")
+    if "absorbed by the axis" not in sec:
+        bad.append("did not say a compression shared by every ion is invisible")
+    line = [l for l in sec.splitlines() if "quartiles" in l]
+    if not line:
+        return bad + ["no quartile line"]
+    nums = re.findall(r"[-+]\d+\.\d+", line[0].split("quartiles")[1])
+    lo, hi = float(nums[0]), float(nums[1])
+    # the ratio survives the missing scale; the absolute values do not
+    if abs(hi / lo - FAST / SLOW) > 0.4:
+        bad.append("quartile ratio %.2f, planted %.2f -- the one thing an estimated"
+                   " axis preserves is not preserved" % (hi / lo, FAST / SLOW))
+    if abs(lo - SLOW) < 0.05 and abs(hi - FAST) < 0.05:
+        bad.append("the estimated axis returned the true betas, which it cannot do"
+                   " -- the fixture or the estimator is not what it claims")
+    return bad
+
+
+def the_normalization_cut_is_relative_not_absolute(db, tmp):
+    """An absolute cut on an axis with no unit lands in an arbitrary place."""
+    rc, out = run("--db", str(db))
+    sec = section(out, "TEST 3")
+    bad = []
+    if "% of the median slope" not in sec:
+        bad.append("the unfit cut is not expressed against the median slope")
+    if "relative on purpose" not in sec:
+        bad.append("did not say why the cut is relative")
+    line = [l for l in sec.splitlines() if "must stay OUT" in l or "respond below" in l]
+    if not line:
+        return bad + ["no normalization-set line"]
+    m = re.search(r"\(([-+]\d+\.\d+)\)", line[0])
+    if not m:
+        bad.append("the cut's own value is not printed: %r" % line[0].strip())
+    elif abs(float(m.group(1)) - 0.85) < 0.01:
+        bad.append("the cut landed at 0.85, the absolute value, not a share of the"
+                   " median")
+    return bad
+
+
+def the_brightest_responding_more_is_not_called_agreement(db, tmp):
+    """A large gap the other way is a detection floor, not a pass."""
+    rc, out = run("--db", str(db))
+    sec = section(out, "TEST 3")
+    bad = []
+    if "OPPOSITE of saturation" not in sec:
+        bad.append("the brightest quartile responds more steeply and this was not"
+                   " named as the opposite of saturation")
+    if "no intensity-dependent compression shows" in sec:
+        bad.append("printed the all-clear over a large gap pointing the other way")
+    if "floor" not in sec:
+        bad.append("did not offer the detection-floor reading")
+    return bad
+
+
+def the_volume_check_anchors_the_axis(db, tmp):
+    """1, 2 and 5 uL from one vial should come out in those proportions."""
+    good = tmp / "vol_true.db"
+    plant_volumes(str(good))
+    rc, out = run("--db", str(good))
+    sec = section(out, "TEST 3")
+    bad = []
+    if "volume check" not in sec:
+        return ["no volume check on runs whose names carry microlitres"]
+    if "agrees to" not in sec:
+        bad.append("a true 1:2:5 was not reported as agreeing: %r"
+                   % [l for l in sec.splitlines() if "uL" in l])
+    if "NOT confirmed" not in sec:
+        bad.append("did not state that same-vial is unconfirmed")
+    if "check, not an assumption" not in sec:
+        bad.append("presented the check as an assumption")
+    for want in ("+0.301", "+0.699"):
+        if want not in sec:
+            bad.append("expected log10 ratio %s missing from the check" % want)
+    return bad
+
+
+def the_volume_check_catches_a_wrong_label(db, tmp):
+    """Halve the 5 uL signal: the check must refuse, and name both readings."""
+    bad_db = tmp / "vol_false.db"
+    plant_volumes(str(bad_db), break_last=2.0)
+    rc, out = run("--db", str(bad_db))
+    sec = section(out, "TEST 3")
+    bad = []
+    if "agrees to" in sec:
+        bad.append("a 5 uL injection carrying 2.5x the signal was called agreement")
+    if "off by up to" not in sec:
+        bad.append("did not report the disagreement")
+    if "not the same vial" not in sec:
+        bad.append("did not offer the wrong-vial reading")
+    if "does not establish which" not in sec:
+        bad.append("picked between the two readings instead of leaving it open")
+    m = re.search(r"off by up to (\d+\.\d+) log10", sec)
+    if m and abs(float(m.group(1)) - 0.301) > 0.02:
+        bad.append("reported a %s log10 gap; halving 5 uL is 0.301" % m.group(1))
+    return bad
+
+
+def a_run_with_no_volume_label_says_the_axis_is_unanchored(db, tmp):
+    rc, out = run("--db", str(db))
+    sec = section(out, "TEST 3")
+    bad = []
+    if "no run name carries an injection volume" not in sec:
+        bad.append("ran a volume check on run names that carry no volume")
+    if "anchored outside the intensities" not in sec:
+        bad.append("did not say the axis is left unanchored without it")
+    return bad
+
+
+def a_declared_load_map_is_still_not_circular(db, tmp):
+    """Real ng values must keep working, and must say they are not circular."""
+    import json as _json
+    lm = tmp / "loads.json"
+    lm.write_text(_json.dumps({"HeLa_%dng" % int(n): n for n in LOADS}))
+    rc, out = run("--db", str(db), "--load-map", str(lm))
+    sec = section(out, "TEST 3")
+    bad = []
+    if "DECLARED ng" not in sec:
+        bad.append("did not say the axis came from the load map")
+    if "not circular" not in sec:
+        bad.append("did not distinguish a declared axis from an estimated one")
+    if "NO ABSOLUTE SCALE" in sec:
+        bad.append("warned about an arbitrary scale on a declared ng axis")
+    line = [l for l in sec.splitlines() if "quartiles" in l]
+    if line:
+        nums = re.findall(r"[-+]\d+\.\d+", line[0].split("quartiles")[1])
+        lo, hi = float(nums[0]), float(nums[1])
+        if abs(lo - SLOW) > 0.05 or abs(hi - FAST) > 0.05:
+            bad.append("declared axis gave %.3f/%.3f, planted %.2f/%.2f"
+                       % (lo, hi, SLOW, FAST))
+    return bad
+
+
+def the_median_per_ion_run_is_used_not_the_max(db, tmp):
+    """Max-of-replicates inflated the published load ratio to 5.89x from 5.37x."""
+    import inspect
+    src = inspect.getsource(pc.test_load)
+    bad = []
+    if "statistics.median" not in src:
+        bad.append("test_load does not take a median per ion and run")
+    if re.search(r"best\[key\]\.get\(.*\) < inten", src):
+        bad.append("still keeping the brightest replicate per load")
     return bad
 
 
@@ -256,19 +453,6 @@ def refuses_a_file_that_is_not_a_database(db, tmp):
     return []
 
 
-def load_test_skips_without_a_map(db, tmp):
-    """Test 3 must say why it did not run, not quietly omit itself."""
-    rc, out = run("--db", str(db))
-    bad = []
-    if "TEST 3" not in out:
-        bad.append("test 3 vanished instead of reporting a skip")
-    elif "SKIPPED" not in section(out, "TEST 3"):
-        bad.append("test 3 ran without a load map")
-    # Exit status aggregates every test now, and ar1/rejects skip on this table,
-    # so check the load section itself rather than the global code.
-    if rc not in (0, 1):
-        bad.append("exit %d, expected 0 or 1" % rc)
-    return bad
 
 
 def find_locates_the_database(db, tmp):
@@ -891,7 +1075,15 @@ NEEDS_RUN = (classifier_boundaries, deamidation_is_not_an_isotope,
              calibration_resolves_the_boundary, recovers_planted_load_slopes,
              picks_the_richer_table)
 STANDALONE = (refuses_a_published_shaped_table, refuses_a_file_that_is_not_a_database,
-              load_test_skips_without_a_map, schema_only_names_every_table,
+              an_estimated_axis_has_no_absolute_scale,
+              the_normalization_cut_is_relative_not_absolute,
+              the_brightest_responding_more_is_not_called_agreement,
+              the_volume_check_anchors_the_axis,
+              the_volume_check_catches_a_wrong_label,
+              a_run_with_no_volume_label_says_the_axis_is_unanchored,
+              a_declared_load_map_is_still_not_circular,
+              the_median_per_ion_run_is_used_not_the_max,
+              schema_only_names_every_table,
               find_locates_the_database, find_says_so_when_nothing_matches,
               neither_db_nor_find_is_an_error, a_mass_gated_table_is_not_evidence,
               an_unfiltered_zero_carries_weight, limit_reads_a_spread_not_the_oldest,

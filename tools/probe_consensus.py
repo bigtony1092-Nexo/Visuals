@@ -34,7 +34,7 @@ columns it needs are absent:
   2. CALIBRATION    the ppm offset of the monoisotopic cluster, per run. This
      is the correction applied before publication, measured rather than
      assumed. Reported first because test 1 depends on it.
-  3. LOAD RESPONSE  log-log slope of precursor intensity against ng loaded, per
+  3. LOAD RESPONSE  log-log slope of precursor intensity against the run's load, per
      ion. Should sit near 1. Recomputed from the published data it came out at
      +0.239, which turned out to be the load axis rather than the detector.
      Needs --load-map.
@@ -825,6 +825,110 @@ def test_rejects(con, entries, limit, out):
     return usable
 
 
+# Test 3's load axis, when no ng values exist. A run's load is estimated from the
+# ions themselves: per run, the median over ions of log10(this run's intensity /
+# that ion's reference intensity), where the reference is the ion's median across
+# the runs it appears in.
+#
+# The axis so built has NO ABSOLUTE SCALE, and that is the single most important
+# thing about the result. The factor is the median of the very ratios the slopes
+# are computed from, so every slope comes out divided by the cohort's typical
+# response. On this file's own planted data -- half the ions at a true 0.25, half
+# at a true 1.00 -- the estimated axis reports 0.51 and 2.06. Both are wrong by
+# the same ~2.06x, and their ratio, 4.04 against a true 4.00, is right.
+#
+# So on an estimated axis:
+#   - a slope of 1.0 does NOT mean a linear response. It means this ion responds
+#     like the typical ion in the cohort, whatever that response is.
+#   - RATIOS between ions are preserved, so ions can be ranked and compared, and
+#     a set that tracks load can be told from one that does not.
+#   - any compression shared by every ion is invisible. The factor absorbs it
+#     exactly, and no amount of data here will show it.
+#   - only the injection-volume check can put a scale back on the axis, because
+#     it is the one input that does not come from the intensities.
+#
+# Every threshold below is therefore stated RELATIVE to the cohort's median
+# slope, never as an absolute number: an absolute cut on an arbitrary scale is a
+# cut at an arbitrary place.
+MIN_RUNS_FOR_REFERENCE = 3     # an ion needs this many runs to anchor a reference
+MIN_RUN_SHARE = 0.6            # and must appear in this share of runs to vote on a load
+# A quartile gap is read as a fraction of the cohort's median slope, because the
+# estimated axis fixes no unit for an absolute gap to be measured in.
+SATURATION_FRACTION = 0.15     # brightest quartile this far below the rest, as a share
+NORMALIZATION_FRACTION = 0.85  # an ion must reach this share of the median to normalize with
+UL = re.compile(r"(\d+(?:\.\d+)?)\s*(?:u|\u00b5)l", re.I)
+
+
+def estimate_load_factors(per_ion_run, out):
+    """Each run's load in log10 units, estimated from the ions it shares.
+
+    Returns (factors, anchors) where factors maps run -> log10 load relative to
+    the cohort, and anchors is the number of ions that voted.
+    """
+    runs = sorted({run for per_run in per_ion_run.values() for run in per_run})
+    need = max(MIN_RUNS_FOR_REFERENCE, int(math.ceil(MIN_RUN_SHARE * len(runs))))
+    anchors = {key: per_run for key, per_run in per_ion_run.items()
+               if len(per_run) >= need}
+    if not anchors:
+        out.append("  no ion appears in %d of the %d runs, so no run's load can be"
+                   " estimated from shared ions." % (need, len(runs)))
+        return None, 0
+    ref = {key: statistics.median(per_run.values()) for key, per_run in anchors.items()}
+    factors = {}
+    for run in runs:
+        ratios = [math.log10(per_run[run] / ref[key])
+                  for key, per_run in anchors.items()
+                  if run in per_run and ref[key] > 0]
+        if len(ratios) >= MIN_RUNS_FOR_REFERENCE:
+            factors[run] = statistics.median(ratios)
+    out.append("  load estimated from %d ion(s) present in >=%d of %d runs."
+               % (len(anchors), need, len(runs)))
+    if len(factors) < len(runs):
+        out.append("  %d run(s) had too few shared ions to place on the load axis."
+                   % (len(runs) - len(factors)))
+    return factors, len(anchors)
+
+
+def volume_check(factors, out):
+    """Do runs whose names carry injection volumes come out in those proportions?
+
+    This is the one part of Test 3 that uses information from outside the
+    intensities, so it is the only part the circularity cannot reach. Reported as
+    a check: runs sharing a label are not confirmed to be the same vial.
+    """
+    groups = defaultdict(list)
+    for run, f in factors.items():
+        m = UL.search(str(run))
+        if m:
+            label = UL.sub("", str(run)).strip("_- .")
+            groups[label].append((float(m.group(1)), run, f))
+    usable = {k: sorted(v) for k, v in groups.items() if len(v) >= 2}
+    if not usable:
+        out.append("  no run name carries an injection volume, so the"
+                   " proportionality check could not be run. Without it nothing"
+                   " here is anchored outside the intensities.")
+        return
+    for label, members in sorted(usable.items()):
+        base_v, base_run, base_f = members[0]
+        out.append("  volume check on %s:" % (label or "(unlabelled)"))
+        worst = 0.0
+        for v, run, f in members:
+            want = math.log10(v / base_v)
+            got = f - base_f
+            worst = max(worst, abs(got - want))
+            out.append("    %-28s %4g uL  expected %+.3f  estimated %+.3f  (%+.3f)"
+                       % (str(run)[:28], v, want, got, got - want))
+        if worst <= 0.05:
+            out.append("    agrees to %.3f log10 units. If these are the same vial, the"
+                       " load axis is reading real injection amount." % worst)
+        else:
+            out.append("    off by up to %.3f log10 units (%.2fx). Either the estimated"
+                       % (worst, 10 ** worst))
+            out.append("    axis is wrong, or these are not the same vial at the stated")
+            out.append("    volumes. The label does not establish which.")
+        out.append("    Same-vial is NOT confirmed; this is a check, not an assumption.")
+
+
 def test_load(con, cfg, load_map, limit, out):
     """Test 3: does precursor intensity track how much was loaded?"""
     out.append("")
@@ -836,10 +940,6 @@ def test_load(con, cfg, load_map, limit, out):
         return False
     if not r["run"]:
         out.append("  SKIPPED: no run column, so intensities cannot be tied to a load.")
-        return False
-    if not load_map:
-        out.append("  SKIPPED: needs --load-map, a JSON object mapping run name (or any")
-        out.append("  substring of it) to nanograms loaded, e.g. {\"HeLa_120\": 120}.")
         return False
 
     def ng_for(run):
@@ -855,52 +955,142 @@ def test_load(con, cfg, load_map, limit, out):
         r["seq"], r["charge"], r["run"], r["intensity"], cfg["table"], r["intensity"])
     if limit:
         sql += " LIMIT %d" % limit
-    best = defaultdict(dict)   # (seq, z) -> ng -> max intensity
-    unmatched = Counter()
+    # Median per (ion, run), not max: taking the brightest replicate inflated the
+    # published load ratio to 5.89x where the median gives 5.37x (top3-estimator.md).
+    rows = defaultdict(lambda: defaultdict(list))
     for seq, z, run, inten in con.execute(sql):
-        ng = ng_for(run)
-        if ng is None:
-            unmatched[str(run)] += 1
-            continue
         try:
-            z, inten, ng = int(z), float(inten), float(ng)
+            z, inten = int(z), float(inten)
         except (TypeError, ValueError):
             continue
-        if inten <= 0 or ng <= 0:
+        if inten <= 0:
             continue
-        key = (seq, z)
-        if best[key].get(ng, 0) < inten:
-            best[key][ng] = inten
+        rows[(seq, z)][str(run)].append(inten)
+    per_ion_run = {key: {run: statistics.median(v) for run, v in per_run.items()}
+                   for key, per_run in rows.items()}
+    if not per_ion_run:
+        out.append("  SKIPPED: no usable intensity rows.")
+        return False
+
+    declared = bool(load_map)
+    if declared:
+        factors, unmatched = {}, Counter()
+        for run in {run for per_run in per_ion_run.values() for run in per_run}:
+            ng = ng_for(run)
+            if ng is None:
+                unmatched[run] += 1
+            else:
+                try:
+                    if float(ng) > 0:
+                        factors[run] = math.log10(float(ng))
+                except (TypeError, ValueError):
+                    unmatched[run] += 1
+        if unmatched:
+            out.append("  %d run(s) matched no load-map entry and are excluded: %s"
+                       % (len(unmatched), ", ".join(list(unmatched)[:4])))
+        out.append("  load axis is DECLARED ng from --load-map, so the regression below"
+                   " is not circular.")
+        anchors = None
+    else:
+        out.append("  no --load-map given, so the load axis is ESTIMATED from the ions.")
+        factors, anchors = estimate_load_factors(per_ion_run, out)
+        if not factors:
+            out.append("  SKIPPED: no load axis could be built.")
+            return False
 
     slopes = []
-    for key, per_load in best.items():
-        if len(per_load) < 3:
+    for key, per_run in per_ion_run.items():
+        pts = [(factors[run], per_run[run]) for run in per_run if run in factors]
+        if len({f for f, _ in pts}) < 3:
             continue
-        loads = sorted(per_load)
-        s = slope([math.log10(l) for l in loads],
-                  [math.log10(per_load[l]) for l in loads])
+        s = slope([f for f, _ in pts], [math.log10(i) for _, i in pts])
         if s is not None:
-            slopes.append(s)
-
-    if unmatched:
-        out.append("  %d runs matched no load-map entry (%d rows dropped): %s" % (
-            len(unmatched), sum(unmatched.values()),
-            ", ".join(list(unmatched)[:4])))
+            slopes.append((s, statistics.median(per_run.values()), key))
     if len(slopes) < 5:
-        out.append("  SKIPPED: only %d ions appear at 3 or more distinct loads. A slope needs"
-                   " at least three points." % len(slopes))
+        out.append("  SKIPPED: only %d ion(s) appear at 3 or more distinct loads. A slope"
+                   " needs at least three points." % len(slopes))
         return False
-    slopes.sort()
-    q = statistics.quantiles(slopes, n=4) if len(slopes) >= 4 else [None] * 3
-    out.append("  %d ions seen at 3+ loads." % len(slopes))
-    out.append("  median slope %+.3f   quartiles %+.3f to %+.3f" % (
-        statistics.median(slopes), q[0], q[2]))
-    out.append("  %d of %d above 0.5 (%.0f%%)" % (
-        sum(1 for s in slopes if s > 0.5), len(slopes),
-        100.0 * sum(1 for s in slopes if s > 0.5) / len(slopes)))
-    out.append("  Proportional response is 1.0. The published data gave +0.239; if this")
-    out.append("  column reproduces that, the compression is real and belongs in the")
-    out.append("  contract. If it lands near 1.0, the published intensity was the problem.")
+
+    vals = sorted(s for s, _, _ in slopes)
+    q = statistics.quantiles(vals, n=4) if len(vals) >= 4 else [None] * 3
+    out.append("  %d ions seen at 3+ loads." % len(vals))
+    out.append("  median slope %+.3f   quartiles %+.3f to %+.3f   IQR %.3f" % (
+        statistics.median(vals), q[0], q[2], q[2] - q[0]))
+
+    med = statistics.median(vals)
+    if declared:
+        out.append("  Proportional response is 1.0. The published data gave +0.239; if this")
+        out.append("  column reproduces that, the compression is real and belongs in the")
+        out.append("  contract. If it lands near 1.0, the published intensity was the problem.")
+    else:
+        out.append("  THE NUMBERS ABOVE HAVE NO ABSOLUTE SCALE. The axis is built from the")
+        out.append("  same ratios, so every slope is divided by the cohort's typical")
+        out.append("  response: 1.0 means `responds like the typical ion`, NOT `linear`.")
+        out.append("  On this tool's planted data a true 0.25 and a true 1.00 come out as")
+        out.append("  0.51 and 2.06 -- both wrong by one factor, their 4.0x ratio intact.")
+        out.append("  So: ions can be ranked against each other, and a set that tracks load")
+        out.append("  can be told from one that does not. Linearity cannot be read at all,")
+        out.append("  and a compression shared by every ion is absorbed by the axis and")
+        out.append("  invisible. Only the volume check below can put a scale back on this.")
+
+    # Saturation: does slope depend on the ion's own intensity? The construction
+    # cannot pin this, because it fixes one centre for all ions at once.
+    by_inten = sorted(slopes, key=lambda t: t[1])
+    n = len(by_inten)
+    quartiles = [by_inten[i * n // 4:(i + 1) * n // 4] for i in range(4)]
+    out.append("  slope by the ion's own intensity quartile:")
+    meds = []
+    for i, group in enumerate(quartiles):
+        if not group:
+            meds.append(None)
+            continue
+        med = statistics.median([s for s, _, _ in group])
+        meds.append(med)
+        out.append("    Q%d %s  n=%-5d median slope %+.3f" % (
+            i + 1, ("dimmest" if i == 0 else "brightest" if i == 3 else "       "),
+            len(group), med))
+    if meds[3] is not None and all(m is not None for m in meds[:3]) and med:
+        rest = statistics.median(meds[:3])
+        gap = (rest - meds[3]) / abs(med)      # as a share of the median slope
+        tol = SATURATION_FRACTION
+        if gap >= tol:
+            out.append("  The brightest quartile sits %.0f%% of the median slope BELOW the"
+                       % (100 * gap))
+            out.append("  rest. That is saturation: the ions with most signal stop")
+            out.append("  responding first, which is what a detector or an ion path running")
+            out.append("  out of headroom does.")
+        elif gap <= -tol:
+            # Not saturation, and not agreement either. Printing this as "within
+            # tolerance" would hide a large effect pointing the other way.
+            out.append("  The brightest quartile sits %.0f%% of the median slope ABOVE the"
+                       % (100 * -gap))
+            out.append("  rest, which is the OPPOSITE of saturation. Brighter ions"
+                       " responding")
+            out.append("  MORE steeply than dim ones is what a detection floor looks like:")
+            out.append("  the dim ions are partly lost at low load, so they appear to gain")
+            out.append("  less when load rises. Read it as a floor, not as headroom.")
+        else:
+            out.append("  The brightest quartile is within %.0f%% of the median slope of the"
+                       % (100 * tol))
+            out.append("  rest (%+.0f%%), so no intensity-dependent compression shows at this"
+                       % (100 * gap))
+            out.append("  cohort size. A compression shared by every ion would still be")
+            out.append("  invisible.")
+
+    # Which ions are unfit for a normalization set. The cut is a share of the
+    # cohort median, not an absolute slope: on an estimated axis the unit is
+    # arbitrary, so an absolute cut lands in an arbitrary place.
+    cut = NORMALIZATION_FRACTION * med
+    unfit = [key for s, _, key in slopes if s < cut]
+    out.append("  %d of %d ion(s) respond below %.0f%% of the median slope (%+.3f) and"
+               % (len(unfit), len(vals), 100 * NORMALIZATION_FRACTION, cut))
+    out.append("  must stay OUT of any within-run normalization set: an ion that does not")
+    out.append("  track load cannot be used to cancel it. See docs/top3-estimator.md.")
+    if not declared:
+        out.append("  That cut is relative on purpose. An absolute one (`slope below 0.85`)")
+        out.append("  would be a cut at an arbitrary point on an axis with no unit.")
+
+    volume_check(factors, out)
     return True
 
 
