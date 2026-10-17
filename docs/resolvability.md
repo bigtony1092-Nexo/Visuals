@@ -105,3 +105,62 @@ run's own ions lands at 1.69% median error while the previous day's calibration
 lands at 7.41%, with all 618 errors negative. That offset inflates the cross-run
 σ_drift here, which is part of why 0.87–1.02 bins is an upper bound rather than
 the instrument's real resolving power.
+
+## Meaning what? Sharing a cell is a candidate list, not an error
+
+56.9% sharing an (rt, drift) cell sounds alarming and mostly is not, because a
+fragment's **own m/z** must match a b/y ion of whichever parent produced it, and
+two different sequences mostly have different ladder masses. Over the 29
+co-resident PAX8 precursors, b and y at 1+ and 2+, 20 ppm:
+
+| | |
+|---|---|
+| ladder ions examined | 4,708 |
+| ions whose m/z also matches a co-resident's ladder | **909 — 19.3%** |
+| per-precursor ambiguous share | median **3.8%**, p90 100%, max 100% |
+
+So of the 56.9% sharing a cell, only about a fifth of their fragments are
+genuinely ambiguous. For a typical co-resident precursor, **96% of its fragments
+are assigned by their own mass** regardless of what else is in the cell.
+
+### And the remainder splits perfectly in two
+
+The median-3.8%-but-p90-100% shape is not noise, it is two populations. Of 36
+co-resident pairs:
+
+| pair type | n | median ladder clash |
+|---|---|---|
+| **nested** — one sequence contains the other | 10 | **50%** |
+| unrelated sequences | 26 | **2%** |
+
+Two unrelated peptides sharing a cell share 2% of their fragments. Essentially
+solved. Two *nested* peptides share **half**:
+
+```
+MDDSDQDSCRLSIDSQSSSSGPR   vs   KMDDSDQDSCRLSIDSQSSSSGPR    52%
+MDDSDQDSCRLSIDSQSSSSGPR   vs   MDDSDQDSCRLSIDSQSSSSGPRK    52%
+SLSPGHTLIPSSAVTPPESPQSDSLGSTYSINGLLGIAQPGSDK  vs  …GSDKRK  100%
+```
+
+**No amount of resolution fixes that**, because they are not two things that
+happen to overlap — they are the same sequence plus a residue, so they genuinely
+produce the same fragments. A y-ladder from the C-terminus is *identical* between
+a peptide and its N-terminally extended missed-cleavage form.
+
+### So the lever is not where crowding suggests
+
+**Crowding is not the enemy. Nesting is.** Narrower quadrupole windows, longer
+gradients and better drift resolution all act on the 2% case, which was already
+fine. They do nothing for the 50% case.
+
+The 50% case needs a different handle: **assign on the fragments the family does
+not share.** For a nested pair that means the b ions spanning the differing
+terminus, and the precursor mass itself. The shared fragments are unassignable
+intensity, and should be treated as such rather than counted as evidence for
+either member.
+
+This bears directly on the reversed-ladder trim in `replication-fdr.md`. Removing
+reversed b(L−1) and exact coincidences strips ions near a terminus — which is
+precisely where a nested family's *distinguishing* information lives. Trimming
+one side there is worse than a uniform handicap: it removes the ions that do the
+discriminating work.
