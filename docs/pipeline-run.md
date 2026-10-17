@@ -199,6 +199,43 @@ Decimation, export warnings and the drift situation go in a banner above the
 charts, because by the time a reader is looking at a chart they are not going to
 re-read the manifest.
 
+### What each panel reports about itself
+
+- **MS/MS mirror** — the load-bearing panel. Experimental up, Atlas library
+  down, b blue, y red, unassigned grey, shared m/z axis. Beside it: the dot
+  product *and its basis* (one not on sqrt intensities is flagged, because it is
+  then dominated by the base peak and is not the number the convention means),
+  the matched-peak ppm range, the share of experimental intensity that matches no
+  ladder ion, and the library ions absent from the experimental spectrum.
+- **Isotope envelope** — observed against expected, with the spacing the charge
+  state requires (1.00335/z) printed next to the spacing actually observed. A gap
+  more than 0.01 Th off says the envelope is not one species, and the panel says
+  so. A modelled (averagine) isotope is marked, counted, and never read as
+  observation. A ratio that drifts across the elution peak means something enters
+  or leaves during it.
+- **XIC** — the extraction window in ppm, because a wider window admits more
+  interference and is therefore part of the peak's shape. Repeats of one
+  extraction are named as repeats, not as a comparison across samples. A trace
+  with one point is not drawn: a peak needs two consecutive scans.
+- **Top3avg percentile and flux** — these check *their own table's* coverage, not
+  the manifest's sample list. The manifest says what the export describes; the
+  table says what it holds, and a cross-sample figure drawn from one sample is
+  false however many samples are declared. Flux additionally needs a
+  normalization that the manifest declares *and* the rows actually carry.
+- **Stoichiometry** — ratios within one run only, with the peptide count behind
+  the weaker side as the x axis: a 1-peptide against a 3-peptide ratio is not the
+  same measurement, so the count rides with the number instead of sitting in a
+  footnote.
+- **Fragment hits** — k-of-n beside its controls. An uncontrolled k-of-n is a
+  count, not a false-discovery rate. A drift offset applied to the coelution test
+  is disclosed: the fragments were moved to meet the precursor, so part of the
+  agreement is constructed.
+
+A declared table the directory does not hold, and a declared spectrum kind no row
+carries, both land in the banner. `validate_export` fails on the first of those;
+the page says it too, because a reader looking at charts is not going to re-run
+the validator.
+
 ## Stage 6: the chain, fed from what the run just wrote
 
 `aria_check.py` re-reads the export from disk and runs the contract validator,
@@ -224,10 +261,10 @@ stage reported findings. 2 when a stage could not be run at all.
 
 ## What is still outside the spine
 
-- **Spectra, traces and fragment hits.** The MS/MS mirror, the isotope envelope
-  and the XIC panels need them and currently blank. The MS/MS mirror is the
-  load-bearing panel; until spectra are emitted, nothing on the page checks a
-  geometry-based identification in the frame practitioners already read.
+- **Spectra, traces, proteins and fragment hits.** The renderer draws all of
+  them; `aria_run` does not yet emit them, so a run through the spine blanks
+  those panels. Given an export that has them — `examples/` does — ten panels
+  draw, the MS/MS mirror among them.
 - **The cross-sample merge** that `atlas_consensus` requires.
 - **`one_over_k0`.** On a mobility run with no 1/K0 in the peak list, every
   mobility panel plots an empty axis. The extractor has the number; it is not

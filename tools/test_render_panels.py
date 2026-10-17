@@ -87,11 +87,13 @@ def export(tmp, name, ions, kind="ion_mobility", method_name="HDMSE",
 def render(d, *extra):
     p = subprocess.run([sys.executable, str(TOOL), str(d)] + [str(e) for e in extra],
                        capture_output=True, text=True)
-    html = ""
+    page = ""
     out = d if Path(d).is_dir() else Path(d).parent
     if (out / "panels.html").exists():
-        html = (out / "panels.html").read_text()
-    return p.returncode, p.stdout + p.stderr, html
+        # Entities are how the page stores text; a test that matches on prose
+        # should read the prose, not the encoding.
+        page = __import__("html").unescape((out / "panels.html").read_text())
+    return p.returncode, p.stdout + p.stderr, page
 
 
 def case_sonar_drift_is_never_labelled_mobility(tmp):
@@ -298,18 +300,27 @@ def case_the_page_needs_no_network(tmp):
 
 
 def case_untrusted_text_is_escaped(tmp):
-    """Peptide names and warnings come from data. Data is not markup."""
+    """Peptide names and warnings come from data. Data is not markup.
+
+    This one reads the file as written, not unescaped: render() unescapes so the
+    other cases can match on prose, and a test for escaping that reads the
+    unescaped page is a test that cannot pass.
+    """
     evil = '<script>alert(1)</script>'
     d = export(tmp, "escape", [ion("t" * 16)], warnings=[evil])
     man = json.loads((d / "manifest.json").read_text())
     man["samples"][0]["sample_id"] = evil
     (d / "manifest.json").write_text(json.dumps(man))
-    rc, out, html = render(d)
+    render(d)
+    raw = (d / "panels.html").read_text()
     bad = []
-    if "<script>alert" in html:
+    if "<script>alert" in raw:
         bad.append("a warning rendered as live markup")
-    if "&lt;script&gt;" not in html:
+    if "&lt;script&gt;" not in raw:
         bad.append("the text was dropped instead of escaped")
+    # and the only <script in the file should be the escaped one
+    if raw.count("<script") != 0:
+        bad.append("%d live script tag(s) in the page" % raw.count("<script"))
     return bad
 
 
@@ -379,6 +390,329 @@ def case_no_method_offers_every_drawable_panel(tmp):
     return bad
 
 
+
+
+# ---------------------------------------------------------------- new panels
+
+def spec(uid, kind, peaks, match=None, charge=2):
+    r = {"ion_uid": uid, "sample_id": "CH215", "kind": kind,
+         "precursor_mz": 745.8821, "charge": charge,
+         "scan_id": "CH215:%s:1" % kind, "peaks": peaks}
+    if match:
+        r["match"] = match
+    return r
+
+
+def pk(mz, inten, ion=None, ppm=None, idx=None):
+    return {"mz": mz, "intensity": inten, "ion": ion, "idx": idx,
+            "charge": 1, "ppm_error": ppm, "ar1": None}
+
+
+def write(d, name, rows):
+    (Path(d) / name).write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+
+def declare(d, **flags):
+    man = json.loads((Path(d) / "manifest.json").read_text())
+    man["tables"].update(flags)
+    (Path(d) / "manifest.json").write_text(json.dumps(man))
+
+
+def case_a_one_sided_mirror_is_not_a_comparison(tmp):
+    """Drawing experimental alone against nothing is not a head-to-tail plot."""
+    d = export(tmp, "mirror1", [ion("a1" + "0" * 14)])
+    write(d, "spectra.jsonl", [spec("a1" + "0" * 14, "ms2_experimental",
+                                    [pk(262.1, 18.4, "b2"), pk(449.2, 100.0, "y4")])])
+    # The manifest claims both kinds. Only one is in the file -- the lie the plan
+    # cannot catch, because the plan reads the manifest.
+    declare(d, spectra=True, spectrum_kinds=["ms2_experimental", "ms2_library"])
+    rc, out, html = render(d, "--method", ROOT / "examples" / "method.example.json")
+    bad = []
+    chunk = html.split("MS/MS head-to-tail")[1].split("</div>")[0] \
+        if "MS/MS head-to-tail" in html else ""
+    if "<svg" in chunk:
+        bad.append("drew a mirror with no library side")
+    if "no row in spectra.jsonl carries them" not in html:
+        bad.append("a declared spectrum kind with no rows was not reported")
+    if "ms2_library" not in html:
+        bad.append("did not name the missing kind")
+    # and the renderer's own reason, for an export that declares honestly
+    declare(d, spectra=True, spectrum_kinds=["ms2_experimental"])
+    rc2, out2, html2 = render(d, "--method", ROOT / "examples" / "method.example.json")
+    if "missing kind(s): ms2_library" not in html2:
+        bad.append("an honest manifest missing the library kind was not blanked"
+                   " with that reason")
+    return bad
+
+
+def case_the_mirror_reports_what_it_did_not_explain(tmp):
+    uid = "b1" + "0" * 14
+    d = export(tmp, "mirror2", [ion(uid)])
+    exp = [pk(262.1292, 18.4, "b2", 1.9, 2), pk(449.2245, 100.0, "y4", 0.8, 4),
+           pk(512.2399, 60.0, None, None, None)]
+    lib = [pk(262.1287, 22.0, "b2", None, 2), pk(449.2241, 100.0, "y4", None, 4),
+           pk(846.4705, 12.3, "y7", None, 7)]
+    write(d, "spectra.jsonl", [
+        spec(uid, "ms2_experimental", exp,
+             {"dot_product": 0.914, "basis": "raw_intensity", "n_matched": 2,
+              "n_library": 3, "library_source": "atlas-2026-10-09"}),
+        spec(uid, "ms2_library", lib)])
+    declare(d, spectra=True, spectrum_kinds=["ms2_experimental", "ms2_library"])
+    rc, out, html = render(d, "--method", ROOT / "examples" / "method.example.json")
+    bad = []
+    if "<svg" not in html.split("MS/MS head-to-tail")[1][:600]:
+        return ["the mirror did not draw with both sides present"]
+    if "34% of the intensity" not in html and "33% of the intensity" not in html:
+        bad.append("the unexplained intensity share is wrong or missing: %r"
+                   % re.findall(r"\d+% of the intensity", html))
+    if "y7" not in html:
+        bad.append("a library ion absent from the experimental spectrum is not named")
+    if "dominated by the base peak" not in html:
+        bad.append("a dot product NOT on sqrt intensities was not flagged, so a"
+                   " number computed on a different basis reads as the panel's own")
+    if "-2.2" in html:
+        bad.append("reported a ppm range from peaks that are not in this spectrum")
+    if "+0.8 to +1.9 ppm" not in html:
+        bad.append("the matched-peak ppm range is missing or wrong: %r"
+                   % re.findall(r"[-+][\d.]+ to [-+][\d.]+ ppm", html))
+    # the colour convention practitioners read
+    if '#1b6ca8' not in html or '#b3312c' not in html or '#9a9a92' not in html:
+        bad.append("b / y / unassigned are not drawn in the conventional colours")
+    return bad
+
+
+def case_an_envelope_with_wrong_spacing_is_not_one_species(tmp):
+    uid = "c1" + "0" * 14
+    i = ion(uid)
+    # 1.00335/2 = 0.5017 apart is one species at 2+. These are 1.0 apart.
+    i["isotopes"] = [{"k": 0, "mz": 745.8821, "rel": 100.0, "observed": True},
+                     {"k": 1, "mz": 746.8821, "rel": 79.6, "observed": True}]
+    i["isotope_fit"] = {"expected_basis": "composition",
+                        "residual": [{"k": 0, "delta": 0.0}, {"k": 1, "delta": -0.8}],
+                        "rms": 0.79, "ratio_cv": [{"k": 1, "cv": 0.40}], "n_scans": 7}
+    d = export(tmp, "iso1", [i])
+    rc, out, html = render(d, "--method", ROOT / "examples" / "method.example.json")
+    bad = []
+    if "0.5017" not in html:
+        bad.append("did not state the spacing a 2+ envelope should have")
+    if "not one species" not in html:
+        bad.append("a 1.0 Th gap at charge 2 was not flagged: the envelope spans"
+                   " two species and the panel called it one")
+    if "varies 40%" not in html:
+        bad.append("an isotope ratio drifting 40% across the peak was not flagged")
+    return bad
+
+
+def case_a_modelled_envelope_is_never_drawn_as_observed(tmp):
+    uid = "d1" + "0" * 14
+    i = ion(uid)
+    i["isotopes"] = [{"k": 0, "mz": 745.8821, "rel": 100.0, "observed": True},
+                     {"k": 1, "mz": 746.3838, "rel": 79.6, "observed": False}]
+    d = export(tmp, "iso2", [i])
+    rc, out, html = render(d, "--method", ROOT / "examples" / "method.example.json")
+    bad = []
+    if "MODELLED" not in html:
+        bad.append("a modelled (averagine) isotope is not marked as such")
+    if "1 of 2 isotope(s) are MODELLED" not in html:
+        bad.append("the modelled isotopes are not counted: %r"
+                   % re.findall(r"\d+ of \d+ isotope\(s\) are MODELLED", html))
+    if "must not be read as observation" not in html:
+        bad.append("does not say a modelled envelope is not an observation")
+    return bad
+
+
+def case_a_single_point_is_not_a_peak(tmp):
+    uid = "e1" + "0" * 14
+    d = export(tmp, "xic1", [ion(uid)])
+    write(d, "traces.jsonl", [{"ion_uid": uid, "sample_id": "CH215", "kind": "xic",
+                               "extraction_window_ppm": 7.1,
+                               "points": [[24.1, 19.5]], "apex_rt_min": 24.1,
+                               "fwhm_min": None}])
+    declare(d, traces=True)
+    rc, out, html = render(d, "--method", ROOT / "examples" / "method.example.json")
+    bad = []
+    chunk = html.split("Extracted ion chromatogram")[1].split("</div>")[0]
+    if "<svg" in chunk:
+        bad.append("drew an XIC from a single point")
+    if "at least two consecutive scans" not in html:
+        bad.append("did not say why one point is not a peak")
+    return bad
+
+
+def case_the_xic_states_its_extraction_window(tmp):
+    uid = "f1" + "0" * 14
+    d = export(tmp, "xic2", [ion(uid)])
+    pts = [[23.9, 3.2], [24.0, 11.7], [24.1, 19.5], [24.2, 8.0]]
+    write(d, "traces.jsonl", [
+        {"ion_uid": uid, "sample_id": "CH215", "kind": "xic",
+         "extraction_window_ppm": 7.1, "points": pts, "apex_rt_min": 24.1,
+         "fwhm_min": 0.21},
+        {"ion_uid": uid, "sample_id": "CH215", "kind": "xic",
+         "extraction_window_ppm": 7.1, "points": pts, "apex_rt_min": 24.1,
+         "fwhm_min": 0.21}])
+    declare(d, traces=True)
+    rc, out, html = render(d, "--method", ROOT / "examples" / "method.example.json")
+    bad = []
+    if "7.1 ppm" not in html:
+        bad.append("the extraction window is not on the panel")
+    if "part of the peak's shape" not in html:
+        bad.append("does not say the window shapes the peak")
+    if html.count("FWHM 0.210 min") != 1:
+        bad.append("repeated the same FWHM note per identical trace (%d times)"
+                   % html.count("FWHM 0.210 min"))
+    if "2 traces identical" not in html:
+        bad.append("did not say the identical traces are repeats")
+    if "repeats of one extraction, not a comparison" not in html:
+        bad.append("does not say same-sample traces are not a cross-sample view")
+    return bad
+
+
+def case_a_cross_sample_panel_checks_its_own_table(tmp):
+    """The manifest's sample list is what the export DESCRIBES. The table is what
+    it HOLDS, and a cross-sample figure drawn from one sample is false."""
+    uid = "g1" + "0" * 14
+    d = export(tmp, "prot1", [ion(uid)], n_samples=5)
+    write(d, "proteins.jsonl", [
+        {"sample_id": "CH215", "prot_accession": "Q99836",
+         "protein_name": "MYD88_HUMAN", "top3avg": 7.209, "n_peptides_used": 3,
+         "n_peptides_matched": 6, "peptides_used": ["FITVCDYTNPCTK"], "rank": 214,
+         "percentile": 94.0, "normalized": {"median_scaled": 1.42},
+         "tier": "pass2_confirmed", "decoy_controlled": True}])
+    declare(d, proteins=True)
+    rc, out, html = render(d, "--method", ROOT / "examples" / "method.example.json")
+    bad = []
+    chunk = html.split("Top3avg percentile")[1].split("</div>")[0]
+    if "<svg" in chunk:
+        bad.append("drew a cross-sample panel from one sample's rows")
+    if "covers 1 sample(s)" not in html:
+        bad.append("did not say how many samples the table actually covers")
+    if "manifest declares 5 samples" not in html:
+        bad.append("did not contrast the table's coverage with the manifest's claim")
+    if "is false" not in html:
+        bad.append("did not say the figure would be false")
+    return bad
+
+
+def case_flux_needs_a_normalization_that_was_applied(tmp):
+    uid = "h1" + "0" * 14
+    rows = [{"sample_id": "CH%d" % (215 + n), "prot_accession": "Q99836",
+             "protein_name": "M", "top3avg": 7.2 + n, "n_peptides_used": 3,
+             "n_peptides_matched": 6, "peptides_used": ["X"], "rank": 2,
+             "percentile": 94.0, "normalized": {}, "tier": "pass2_confirmed",
+             "decoy_controlled": True} for n in range(2)]
+    d = export(tmp, "flux1", [ion(uid)], n_samples=2)
+    write(d, "proteins.jsonl", rows)
+    declare(d, proteins=True)
+    rc, out, html = render(d, "--method", ROOT / "examples" / "method.example.json")
+    bad = []
+    if "declares no normalization" not in html:
+        bad.append("drew or blanked flux without naming the missing normalization")
+    if "mixes biology with loading" not in html:
+        bad.append("did not say why raw Top3avg across runs will not do")
+    # now declare one that no row carries
+    man = json.loads((d / "manifest.json").read_text())
+    man["quant"] = {"metric": "top3avg", "absolute_standard_declared": False,
+                    "normalizations": ["median_scaled"]}
+    (d / "manifest.json").write_text(json.dumps(man))
+    rc2, out2, html2 = render(d, "--method", ROOT / "examples" / "method.example.json")
+    if "was not actually applied" not in html2:
+        bad.append("a declared normalization absent from every row was not caught")
+    # and now actually apply it
+    for n, r in enumerate(rows):
+        r["normalized"] = {"median_scaled": 1.0 + 0.4 * n}
+    write(d, "proteins.jsonl", rows)
+    rc3, out3, html3 = render(d, "--method", ROOT / "examples" / "method.example.json")
+    chunk = html3.split("Flux across runs")[1].split("</div>")[0]
+    if "<svg" not in chunk:
+        bad.append("did not draw flux once a declared normalization was present")
+    if "normalization median_scaled, as declared" not in html3:
+        bad.append("drew flux without naming the normalization it used")
+    return bad
+
+
+def case_stoichiometry_stays_inside_one_run(tmp):
+    uid = "i1" + "0" * 14
+    d = export(tmp, "stoich", [ion(uid)], n_samples=2)
+    rows = [{"sample_id": "CH215", "prot_accession": "Q99836", "protein_name": "A",
+             "top3avg": 8.0, "n_peptides_used": 3, "n_peptides_matched": 6,
+             "peptides_used": ["X"], "rank": 1, "percentile": 99.0,
+             "normalized": {}, "tier": "pass2_confirmed", "decoy_controlled": True},
+            {"sample_id": "CH215", "prot_accession": "P04406", "protein_name": "B",
+             "top3avg": 2.0, "n_peptides_used": 1, "n_peptides_matched": 1,
+             "peptides_used": ["Y"], "rank": 9, "percentile": 70.0,
+             "normalized": {}, "tier": "pass2_confirmed", "decoy_controlled": True},
+            {"sample_id": "CH216", "prot_accession": "Q99836", "protein_name": "A",
+             "top3avg": 9.0, "n_peptides_used": 3, "n_peptides_matched": 6,
+             "peptides_used": ["X"], "rank": 1, "percentile": 99.0,
+             "normalized": {}, "tier": "pass2_confirmed", "decoy_controlled": True}]
+    write(d, "proteins.jsonl", rows)
+    declare(d, proteins=True)
+    rc, out, html = render(d, "--method", ROOT / "examples" / "method.example.json")
+    bad = []
+    chunk = html.split("Protein stoichiometry")[1].split("</div>")[0]
+    if "<svg" not in chunk:
+        bad.append("did not draw a ratio from a run holding two proteins")
+    if "1 ratio(s) from 1 run(s)" not in html:
+        bad.append("ratio/run count wrong: CH216 holds one protein and must not"
+                   " pair across runs -- got %r"
+                   % re.findall(r"\d+ ratio\(s\) from \d+ run\(s\)", html))
+    if "rest on a single peptide" not in html:
+        bad.append("a ratio with one peptide on one side was not flagged")
+    if "not the same measurement" not in html:
+        bad.append("does not say a 1-peptide vs 3-peptide ratio differs in kind")
+    return bad
+
+
+def case_fragment_hits_show_their_controls(tmp):
+    uid = "j1" + "0" * 14
+    d = export(tmp, "frag", [ion(uid)])
+    write(d, "fragment_hits.jsonl", [
+        {"hit_id": "fh-1", "sample_id": "CH215",
+         "peptide": {"sequence": "FITVCDYTNPCTK", "prot_accession": "Q99836",
+                     "seq_start": 171, "boundary": "tryptic"},
+         "queried": {"n_fragments": 8, "fragment_labels": ["b3"], "charges": [1],
+                     "ppm_tolerance": 20, "selection": "both_termini"},
+         "matched": [], "missed": ["b7"],
+         "k_of_n": {"matched": 4, "queried": 8, "required": 3},
+         "coelution": {"rt_min": 24.1, "rt_span_min": 0.012,
+                       "consecutive_scans": 4, "drift": 0.941,
+                       "drift_offset_bins_applied": -3.25},
+         "precursor": {"found": True}, "evidence": "fragment_and_precursor",
+         "control": {"reversed_matched": None, "entrapment_matched": None}}])
+    declare(d, fragment_hits=True)
+    method = {"method_id": "m", "name": "frag", "version": "1.0.0",
+              "tier_policy": {}, "panels": [{"id": "fragment_hits"}]}
+    mp = Path(tmp) / "m_frag.json"
+    mp.write_text(json.dumps(method))
+    rc, out, html = render(d, "--method", mp)
+    bad = []
+    if "4/8 (need 3)" not in html:
+        bad.append("k-of-n is not shown as matched/queried with the requirement")
+    if "not a false-discovery rate" not in html:
+        bad.append("an uncontrolled k-of-n was not distinguished from an FDR")
+    if "-3.25" not in html or "partly constructed" not in html:
+        bad.append("a drift offset applied to the coelution test was not disclosed")
+    return bad
+
+
+def case_a_declared_table_that_is_missing_is_reported(tmp):
+    d = export(tmp, "liar", [ion("k1" + "0" * 14)])
+    declare(d, spectra=True, spectrum_kinds=["ms2_experimental", "ms2_library"],
+            traces=True, proteins=True)
+    rc, out, html = render(d, "--method", ROOT / "examples" / "method.example.json")
+    bad = []
+    if "does not describe itself" not in html:
+        bad.append("a manifest declaring tables the directory lacks was not called"
+                   " out on the page")
+    for name in ("spectra", "traces", "proteins"):
+        if "%s.jsonl" % name not in html:
+            bad.append("%s is declared and missing but not named" % name)
+    chunk = html.split("MS/MS head-to-tail")[1].split("</div>")[0]
+    if "<svg" in chunk:
+        bad.append("drew a panel from a table that is not there")
+    return bad
+
+
 CASES = [case_sonar_drift_is_never_labelled_mobility,
          case_mixed_drift_kinds_refuse_a_shared_axis,
          case_a_blank_panel_is_drawn_not_omitted,
@@ -391,7 +725,18 @@ CASES = [case_sonar_drift_is_never_labelled_mobility,
          case_an_empty_export_refuses_rather_than_drawing_a_blank_page,
          case_the_page_needs_no_network, case_untrusted_text_is_escaped,
          case_the_plan_is_the_single_source_of_truth,
-         case_ion_flight_needs_a_path, case_no_method_offers_every_drawable_panel]
+         case_ion_flight_needs_a_path, case_no_method_offers_every_drawable_panel,
+         case_a_one_sided_mirror_is_not_a_comparison,
+         case_the_mirror_reports_what_it_did_not_explain,
+         case_an_envelope_with_wrong_spacing_is_not_one_species,
+         case_a_modelled_envelope_is_never_drawn_as_observed,
+         case_a_single_point_is_not_a_peak,
+         case_the_xic_states_its_extraction_window,
+         case_a_cross_sample_panel_checks_its_own_table,
+         case_flux_needs_a_normalization_that_was_applied,
+         case_stoichiometry_stays_inside_one_run,
+         case_fragment_hits_show_their_controls,
+         case_a_declared_table_that_is_missing_is_reported]
 
 
 def main():

@@ -12,7 +12,16 @@
       "title": "MS/MS head-to-tail vs Atlas library",
       "familiarity": "conventional",
       "table": "spectra",
-      "requires": { "table": "spectra", "spectrum_kinds": ["ms2_experimental", "ms2_library"], "fields": ["annotation.peptide_sequence"] },
+      "requires": {
+        "table": "spectra",
+        "spectrum_kinds": [
+          "ms2_experimental",
+          "ms2_library"
+        ],
+        "fields": [
+          "annotation.peptide_sequence"
+        ]
+      },
       "notes": "The load-bearing panel. b ions blue, y ions red, unassigned grey, shared m/z axis, dot product on sqrt intensities, ppm per matched peak. If the geometry-selected identification is right, this is where it shows in a form nobody has to be taught."
     },
     {
@@ -20,33 +29,63 @@
       "title": "MS1 isotope envelope",
       "familiarity": "conventional",
       "table": "spectra",
-      "requires": { "table": "spectra", "spectrum_kinds": ["ms1_isotope"] },
-      "notes": "Observed envelope with the expected averagine pattern overlaid, spacing annotated as 1.00335/z. Charge state confirmation the way people already confirm it."
+      "requires": {
+        "fields": [
+          "isotopes"
+        ],
+        "optional_table": "spectra",
+        "optional_spectrum_kinds": [
+          "ms1_isotope"
+        ]
+      },
+      "notes": "Observed envelope with the expected pattern overlaid, spacing annotated as 1.00335/z. Charge state confirmation the way people already confirm it. The envelope itself is on the ion (`isotopes`), so this draws without a spectra table; the ms1_isotope spectrum is the raw scan it was read from, and is what shows a co-isolated interference that the resolved envelope has already removed."
     },
     {
       "id": "xic",
       "title": "Extracted ion chromatogram",
       "familiarity": "conventional",
       "table": "traces",
-      "requires": { "table": "traces", "fields": ["coord.rt_min"] },
+      "requires": {
+        "table": "traces",
+        "fields": [
+          "coord.rt_min"
+        ]
+      },
       "notes": "Peak shape at the ion's own m/z, extraction window stated. A real peak over >=2 consecutive scans is the thing the proximity tier claims; this shows whether it looks like one."
     },
     {
       "id": "intensity_vs_time",
       "title": "Intensity vs retention time",
       "familiarity": "conventional",
-      "axes": { "x": "coord.rt_min", "y": "intensity.matched_intensity" },
-      "default_scales": { "y": "log" },
-      "requires": { "fields": ["coord.rt_min", "intensity.matched_intensity"] },
+      "axes": {
+        "x": "coord.rt_min",
+        "y": "intensity.matched_intensity"
+      },
+      "default_scales": {
+        "y": "log"
+      },
+      "requires": {
+        "fields": [
+          "coord.rt_min",
+          "intensity.matched_intensity"
+        ]
+      },
       "notes": "Always valid. Log y: intensity spans five orders of magnitude in real cohorts."
     },
     {
       "id": "seqstart_vs_intensity",
       "title": "SeqStart vs intensity",
       "familiarity": "conventional",
-      "axes": { "x": "annotation.seq_start", "y": "intensity.summed_precursor_intensity" },
+      "axes": {
+        "x": "annotation.seq_start",
+        "y": "intensity.summed_precursor_intensity"
+      },
       "requires": {
-        "fields": ["annotation.seq_start", "annotation.peptide_sequence", "intensity.summed_precursor_intensity"],
+        "fields": [
+          "annotation.seq_start",
+          "annotation.peptide_sequence",
+          "intensity.summed_precursor_intensity"
+        ],
         "min_tier": "pass2_confirmed",
         "cluster_rank": 1
       },
@@ -57,24 +96,53 @@
       "title": "Top3avg percentile across samples",
       "familiarity": "conventional",
       "table": "proteins",
-      "requires": { "table": "proteins", "fields": ["top3avg", "percentile"], "min_samples": 2 },
+      "requires": {
+        "table": "proteins",
+        "fields": [
+          "top3avg",
+          "percentile"
+        ],
+        "min_samples": 2
+      },
       "notes": "Percentile, not rank. A densely packed distribution moves a protein several rank positions on measurement noise alone."
     },
     {
       "id": "drift_vs_time",
       "title": "Drift vs retention time",
       "familiarity": "bridge",
-      "axes": { "x": "coord.rt_min", "y": "coord.drift" },
-      "requires": { "fields": ["coord.rt_min", "coord.drift"], "drift_kind": ["ion_mobility"] },
+      "axes": {
+        "x": "coord.rt_min",
+        "y": "coord.drift"
+      },
+      "requires": {
+        "fields": [
+          "coord.rt_min",
+          "coord.drift"
+        ],
+        "drift_kind": [
+          "ion_mobility"
+        ]
+      },
       "notes": "Blank for DDA (drift null). EXCLUDED for SONAR: its drift column is a quadrupole window position, not a drift time."
     },
     {
       "id": "mz_vs_drift",
       "title": "m/z vs drift",
       "familiarity": "bridge",
-      "axes": { "x": "coord.drift", "y": "coord.mz" },
+      "axes": {
+        "x": "coord.drift",
+        "y": "coord.mz"
+      },
       "default_mark": "density",
-      "requires": { "fields": ["coord.mz", "coord.drift"], "drift_kind": ["ion_mobility"] },
+      "requires": {
+        "fields": [
+          "coord.mz",
+          "coord.drift"
+        ],
+        "drift_kind": [
+          "ion_mobility"
+        ]
+      },
       "notes": "Density/hexbin, not scatter: this is where ion count bites hardest. The trend line against m/z is the drift-offset regression, so this panel is also a calibration check."
     },
     {
@@ -82,7 +150,15 @@
       "title": "Protein stoichiometry ratios",
       "familiarity": "bridge",
       "table": "proteins",
-      "requires": { "table": "proteins", "fields": ["top3avg", "n_peptides_used"], "same_run": true, "pairs": true },
+      "requires": {
+        "table": "proteins",
+        "fields": [
+          "top3avg",
+          "n_peptides_used"
+        ],
+        "same_run": true,
+        "pairs": true
+      },
       "notes": "Ratios only within one run. Carries n_peptides_used on both sides: a 1-peptide vs 3-peptide ratio is not the same measurement."
     },
     {
@@ -90,16 +166,51 @@
       "title": "Flux across runs",
       "familiarity": "bridge",
       "table": "proteins",
-      "requires": { "table": "proteins", "fields": ["normalized"], "min_samples": 2 },
+      "requires": {
+        "table": "proteins",
+        "fields": [
+          "normalized"
+        ],
+        "min_samples": 2
+      },
       "notes": "Needs a stated normalization. Raw Top3avg across runs mixes biology with loading."
+    },
+    {
+      "id": "fragment_hits",
+      "title": "Fragment-first candidates",
+      "familiarity": "bridge",
+      "table": "fragment_hits",
+      "requires": {
+        "table": "fragment_hits",
+        "fields": [
+          "k_of_n",
+          "control"
+        ]
+      },
+      "notes": "What was queried, what matched, and what the controls caught. k-of-n without a reversed or entrapment count is a count, not a false-discovery rate, so the control columns ride beside it rather than in a footnote. A drift offset applied to the coelution test is shown: the fragments were moved to meet the precursor, so part of the agreement is constructed."
     },
     {
       "id": "ion_flight",
       "title": "Ion flight (animated 3-D)",
       "familiarity": "novel",
-      "axes": { "x": "coord.mz", "y": "coord.one_over_k0", "z": "coord.rt_min" },
-      "requires": { "fields": ["coord.mz", "coord.rt_min", "coord.charge"] },
-      "degrades_without": { "drift_kind": ["ion_mobility"], "to": "2-D: m/z against RT, mobility axis collapsed" },
+      "axes": {
+        "x": "coord.mz",
+        "y": "coord.one_over_k0",
+        "z": "coord.rt_min"
+      },
+      "requires": {
+        "fields": [
+          "coord.mz",
+          "coord.rt_min",
+          "coord.charge"
+        ]
+      },
+      "degrades_without": {
+        "drift_kind": [
+          "ion_mobility"
+        ],
+        "to": "2-D: m/z against RT, mobility axis collapsed"
+      },
       "notes": "Replay of the event track. Earns its place only after the conventional panels have agreed on the same ions."
     },
     {
@@ -107,7 +218,11 @@
       "title": "Ion map to sample class",
       "familiarity": "novel",
       "requires": {
-        "fields": ["coord.mz", "coord.rt_min", "intensity.matched_intensity"],
+        "fields": [
+          "coord.mz",
+          "coord.rt_min",
+          "intensity.matched_intensity"
+        ],
         "labels": "provenance.sample_class",
         "min_tier": "pass2_confirmed",
         "holdout": "batch",
@@ -120,7 +235,12 @@
       "id": "forensic_track",
       "title": "Forensic track of one ion",
       "familiarity": "novel",
-      "requires": { "fields": ["ion_uid", "events"] },
+      "requires": {
+        "fields": [
+          "ion_uid",
+          "events"
+        ]
+      },
       "notes": "The event ledger as a timeline, with coordinate at each hop. Same data the flight animation replays."
     }
   ]

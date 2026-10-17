@@ -354,12 +354,7 @@ def panel_ion_flight(ions, ctx):
     return svg, notes
 
 
-DRAW = {"intensity_vs_time": panel_intensity_vs_time,
-        "drift_vs_time": panel_drift_vs_time,
-        "mz_vs_drift": panel_mz_vs_drift,
-        "seqstart_vs_intensity": panel_seqstart_vs_intensity,
-        "forensic_track": panel_forensic_track,
-        "ion_flight": panel_ion_flight}
+C13_SPACING = 1.003355
 
 CSS = """
 :root{--fg:#1a1a18;--mut:#666;--line:#ddd;--card:#fff;--bg:#f4f3ef;
@@ -413,14 +408,590 @@ padding-top:12px}
 """
 
 
-def build(manifest, method, ions, catalog, selected):
+ION_COLOUR = {"b": "#1b6ca8", "y": "#b3312c", None: "#9a9a92"}
+
+
+def series_of(peak):
+    """b, y, or unassigned. The colour convention is the one practitioners read."""
+    ion = peak.get("ion")
+    if not ion:
+        return None
+    first = str(ion)[0].lower()
+    return first if first in ("b", "y") else None
+
+
+def bar_plot(series, xlab, ylab, mirrored=False, annotate=True):
+    """Bars on a shared m/z axis. mirrored draws series[1] downward.
+
+    series: [(name, [(mz, rel, label, colour_key, tip)], ...)]
+    """
+    allpts = [p for _, pts in series for p in pts]
+    if not allpts:
+        return None, ["no peaks to draw"]
+    xs = [p[0] for p in allpts]
+    hi = max(abs(p[1]) for p in allpts) or 1.0
+    xt, x0, x1 = nice_ticks(min(xs), max(xs))
+    span = (x1 - x0) or 1.0
+    x0 -= span * 0.04
+    x1 += span * 0.04
+    pw = W - PAD["l"] - PAD["r"]
+    ph = H - PAD["t"] - PAD["b"]
+    mid = PAD["t"] + (ph / 2 if mirrored else ph)
+
+    def sx(v):
+        return PAD["l"] + (v - x0) / (x1 - x0) * pw
+
+    def sy(rel, down=False):
+        reach = (ph / 2 if mirrored else ph) * 0.88
+        return mid + (reach * rel / hi if down else -reach * rel / hi)
+
+    out = ['<svg viewBox="0 0 %d %d" width="100%%" role="img">' % (W, H)]
+    out.append('<rect x="%d" y="%d" width="%.1f" height="%.1f" fill="#fcfcfa" '
+               'stroke="#d8d8d2"/>' % (PAD["l"], PAD["t"], pw, ph))
+    for frac in (0.25, 0.5, 0.75, 1.0):
+        for down in ((False, True) if mirrored else (False,)):
+            y = sy(hi * frac, down)
+            out.append('<line x1="%d" y1="%.1f" x2="%.1f" y2="%.1f" '
+                       'stroke="#ececE6"/>' % (PAD["l"], y, PAD["l"] + pw, y))
+            out.append('<text x="%d" y="%.1f" font-size="9" text-anchor="end" '
+                       'fill="#777">%d</text>'
+                       % (PAD["l"] - 5, y + 3, round(hi * frac)))
+    out.append('<line x1="%d" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#999"/>'
+               % (PAD["l"], mid, PAD["l"] + pw, mid))
+    for t in xt:
+        x = sx(t)
+        out.append('<text x="%.1f" y="%.1f" font-size="10" text-anchor="middle" '
+                   'fill="#555">%s</text>' % (x, PAD["t"] + ph + 15, fmt(t)))
+    for n, (name, pts) in enumerate(series):
+        down = mirrored and n > 0
+        for mz, rel, label, key, tip in pts:
+            x = sx(mz)
+            y = sy(rel, down)
+            colour = ION_COLOUR.get(key, "#9a9a92")
+            out.append('<g><title>%s</title><line x1="%.1f" y1="%.1f" x2="%.1f" '
+                       'y2="%.1f" stroke="%s" stroke-width="1.7"/></g>'
+                       % (esc(tip), x, mid, x, y, colour))
+            if annotate and label and abs(rel) >= hi * 0.18:
+                out.append('<text x="%.1f" y="%.1f" font-size="9" '
+                           'text-anchor="middle" fill="%s">%s</text>'
+                           % (x, y + (10 if down else -4), colour, esc(label)))
+        if mirrored:
+            out.append('<text x="%d" y="%.1f" font-size="10" fill="#666">%s</text>'
+                       % (PAD["l"] + 6, mid + (16 if down else -8), esc(name)))
+    out.append('<text x="%.1f" y="%d" font-size="11" text-anchor="middle" '
+               'fill="#222">%s</text>' % (PAD["l"] + pw / 2, H - 10, esc(xlab)))
+    out.append('<text x="14" y="%.1f" font-size="11" text-anchor="middle" '
+               'fill="#222" transform="rotate(-90 14 %.1f)">%s</text>'
+               % (PAD["t"] + ph / 2, PAD["t"] + ph / 2, esc(ylab)))
+    out.append('</svg>')
+    return "\n".join(out), []
+
+
+def line_plot(curves, xlab, ylab, marks=()):
+    """curves: [(name, [(x, y)], colour)]. marks: [(x, label)] vertical rules."""
+    allpts = [p for _, pts, _ in curves for p in pts]
+    if not allpts:
+        return None, ["no points to draw"]
+    xt, x0, x1 = nice_ticks(min(p[0] for p in allpts), max(p[0] for p in allpts))
+    yt, y0, y1 = nice_ticks(0.0, max(p[1] for p in allpts))
+    pw = W - PAD["l"] - PAD["r"]
+    ph = H - PAD["t"] - PAD["b"]
+    if x1 == x0:
+        x1 = x0 + 1
+    if y1 == y0:
+        y1 = y0 + 1
+
+    def sx(v):
+        return PAD["l"] + (v - x0) / (x1 - x0) * pw
+
+    def sy(v):
+        return PAD["t"] + ph - (v - y0) / (y1 - y0) * ph
+
+    out = ['<svg viewBox="0 0 %d %d" width="100%%" role="img">' % (W, H)]
+    out.append('<rect x="%d" y="%d" width="%.1f" height="%.1f" fill="#fcfcfa" '
+               'stroke="#d8d8d2"/>' % (PAD["l"], PAD["t"], pw, ph))
+    for t in yt:
+        y = sy(t)
+        out.append('<line x1="%d" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#ececE6"/>'
+                   % (PAD["l"], y, PAD["l"] + pw, y))
+        out.append('<text x="%d" y="%.1f" font-size="10" text-anchor="end" '
+                   'fill="#555">%s</text>' % (PAD["l"] - 6, y + 3, fmt(t)))
+    for t in xt:
+        x = sx(t)
+        out.append('<line x1="%.1f" y1="%d" x2="%.1f" y2="%.1f" stroke="#ececE6"/>'
+                   % (x, PAD["t"], x, PAD["t"] + ph))
+        out.append('<text x="%.1f" y="%.1f" font-size="10" text-anchor="middle" '
+                   'fill="#555">%s</text>' % (x, PAD["t"] + ph + 15, fmt(t)))
+    for x, label in marks:
+        px = sx(x)
+        out.append('<line x1="%.1f" y1="%d" x2="%.1f" y2="%.1f" stroke="#b3312c" '
+                   'stroke-dasharray="3 3"/>' % (px, PAD["t"], px, PAD["t"] + ph))
+        out.append('<text x="%.1f" y="%d" font-size="9" text-anchor="middle" '
+                   'fill="#b3312c">%s</text>' % (px, PAD["t"] - 4, esc(label)))
+    for name, pts, colour in curves:
+        d = " ".join("%s%.1f,%.1f" % ("M" if n == 0 else "L", sx(x), sy(y))
+                     for n, (x, y) in enumerate(sorted(pts)))
+        out.append('<g><title>%s</title><path d="%s" fill="none" stroke="%s" '
+                   'stroke-width="1.6"/></g>' % (esc(name), d, colour))
+        for x, y in sorted(pts):
+            out.append('<circle cx="%.1f" cy="%.1f" r="2" fill="%s"/>'
+                       % (sx(x), sy(y), colour))
+    out.append('<text x="%.1f" y="%d" font-size="11" text-anchor="middle" '
+               'fill="#222">%s</text>' % (PAD["l"] + pw / 2, H - 10, esc(xlab)))
+    out.append('<text x="14" y="%.1f" font-size="11" text-anchor="middle" '
+               'fill="#222" transform="rotate(-90 14 %.1f)">%s</text>'
+               % (PAD["t"] + ph / 2, PAD["t"] + ph / 2, esc(ylab)))
+    out.append('</svg>')
+    return "\n".join(out), []
+
+
+def by_uid(rows, kind=None):
+    out = {}
+    for r in rows:
+        if kind and r.get("kind") != kind:
+            continue
+        out.setdefault(r["ion_uid"], []).append(r)
+    return out
+
+
+def pick_ion(ions, ctx, need):
+    """Which ion to show on a single-ion panel, and why that one.
+
+    The most intense ion at the best tier WITH the required table, so the panel
+    is never blank because an arbitrary first row happened to lack a spectrum.
+    """
+    have = [i for i in ions if i["ion_uid"] in need]
+    if not have:
+        return None
+    have.sort(key=lambda i: (-TIER_ORDER[::-1].index(i["confidence"]["tier"]),
+                             -(dig(i, "intensity.matched_intensity") or 0)))
+    return have[0]
+
+
+def panel_msms_mirror(ions, ctx):
+    """The load-bearing panel: experimental against the Atlas library.
+
+    If a geometry-selected identification is right, this is where it shows in a
+    form nobody has to be taught. So it is also where a wrong one shows.
+    """
+    exp = by_uid(ctx["spectra"], "ms2_experimental")
+    lib = by_uid(ctx["spectra"], "ms2_library")
+    both = set(exp) & set(lib)
+    if not both:
+        why = []
+        if exp and not lib:
+            why.append("%d experimental spectrum(a) but no ms2_library: there is"
+                       " nothing to mirror against, and a one-sided plot is not a"
+                       " comparison" % len(exp))
+        elif lib and not exp:
+            why.append("library spectra only, no ms2_experimental")
+        else:
+            why.append("no ion carries both an experimental and a library spectrum")
+        return None, why
+    ion = pick_ion(ions, ctx, both)
+    if ion is None:
+        return None, ["spectra are present but none of their ion_uids appears in"
+                      " ions.jsonl, so no spectrum can be attributed to an ion"]
+    uid = ion["ion_uid"]
+    e, l = exp[uid][0], lib[uid][0]
+
+    def pts(spec, side):
+        out = []
+        for pk in spec["peaks"]:
+            key = series_of(pk)
+            ppm = pk.get("ppm_error")
+            tip = "%s %.4f  rel %.1f%s" % (pk.get("ion") or "unassigned", pk["mz"],
+                                           pk["intensity"],
+                                           "  %+.1f ppm" % ppm if ppm is not None else "")
+            out.append((pk["mz"], pk["intensity"], pk.get("ion"), key, side + ": " + tip))
+        return out
+
+    svg, _ = bar_plot([("experimental", pts(e, "experimental")),
+                       ("Atlas library", pts(l, "library"))],
+                      "m/z", "relative intensity (base peak = 100)", mirrored=True)
+    m = e.get("match") or {}
+    ann = ion["annotation"] or {}
+    notes = ["%s %d+  %s  %s" % (ann.get("peptide_sequence") or "unassigned",
+                                 ion["coord"]["charge"],
+                                 ann.get("prot_accession") or "",
+                                 ion["confidence"]["tier"])]
+    if m.get("dot_product") is not None:
+        notes.append("dot product %.3f on %s, %s of %s library peaks matched"
+                     % (m["dot_product"], m.get("basis") or "unstated basis",
+                        m.get("n_matched"), m.get("n_library")))
+        if m.get("basis") != "sqrt_intensity":
+            notes.append("the dot product is not on sqrt intensities, so it is"
+                          " dominated by the base peak and is not the number the"
+                          " panel's convention describes")
+    else:
+        notes.append("no dot product on this spectrum: the mirror is drawn but"
+                     " nothing scores the agreement")
+    ppms = [pk["ppm_error"] for pk in e["peaks"] if pk.get("ppm_error") is not None]
+    if ppms:
+        notes.append("matched-peak error %+.1f to %+.1f ppm" % (min(ppms), max(ppms)))
+    unassigned = [pk for pk in e["peaks"] if not pk.get("ion")]
+    if unassigned:
+        tot = sum(pk["intensity"] for pk in e["peaks"]) or 1.0
+        notes.append("%d experimental peak(s), %.0f%% of the intensity, match no"
+                     " ladder ion and are drawn grey"
+                     % (len(unassigned),
+                        100.0 * sum(pk["intensity"] for pk in unassigned) / tot))
+    missed = [pk.get("ion") for pk in l["peaks"]
+              if pk.get("ion") not in {p.get("ion") for p in e["peaks"]}]
+    if missed:
+        notes.append("library ion(s) absent from the experimental spectrum: %s"
+                     % ", ".join(str(x) for x in missed if x))
+    if m.get("library_source"):
+        notes.append("library: %s" % m["library_source"])
+    if len(both) > 1:
+        notes.append("%d ion(s) have both spectra; this is the most intense at the"
+                     " best tier" % len(both))
+    return svg, notes
+
+
+def panel_isotope_envelope(ions, ctx):
+    """Observed envelope with the expected pattern over it.
+
+    A modelled (averagine) envelope must never be drawn as if it were measured,
+    so a modelled peak is hatched and counted in the notes.
+    """
+    iso = by_uid(ctx["spectra"], "ms1_isotope")
+    with_env = {i["ion_uid"] for i in ions if i.get("isotopes")}
+    usable = set(iso) | with_env
+    if not usable:
+        return None, ["no ms1_isotope spectrum and no ion carries a resolved"
+                      " isotope envelope. A consumer would have to model one, and"
+                      " a modelled envelope is not evidence of a charge state."]
+    ion = pick_ion(ions, ctx, usable)
+    if ion is None:
+        return None, ["isotope data present but attributable to no ion in ions.jsonl"]
+    uid = ion["ion_uid"]
+    z = ion["coord"]["charge"]
+    env = ion.get("isotopes") or []
+    if not env and uid in iso:
+        env = [{"k": pk.get("idx", n), "mz": pk["mz"], "rel": pk["intensity"],
+                "observed": True} for n, pk in enumerate(iso[uid][0]["peaks"])]
+    modelled = [e for e in env if e.get("observed") is False]
+    obs = [(e["mz"], e["rel"], "k=%d" % e["k"], None,
+            "k=%d  %.4f  rel %.1f%s" % (e["k"], e["mz"], e["rel"],
+                                        "  MODELLED, not measured"
+                                        if e.get("observed") is False else ""))
+           for e in env]
+    series = [("observed", obs)]
+    fit = ion.get("isotope_fit") or {}
+    expected = []
+    for e in env:
+        delta = next((r["delta"] for r in (fit.get("residual") or [])
+                      if r["k"] == e["k"]), None)
+        if delta is not None:
+            expected.append((e["mz"], e["rel"] - delta, None, "y",
+                             "expected k=%d  rel %.1f" % (e["k"], e["rel"] - delta)))
+    if expected:
+        series.append(("expected (%s)" % fit.get("expected_basis", "?"), expected))
+    svg, _ = bar_plot(series, "m/z", "relative intensity (most intense = 100)",
+                      mirrored=bool(expected))
+    spacing = C13_SPACING / z
+    notes = ["charge %d+: isotope spacing should be 1.00335/%d = %.4f Th"
+             % (z, z, spacing)]
+    if len(env) >= 2:
+        gaps = [env[n + 1]["mz"] - env[n]["mz"] for n in range(len(env) - 1)]
+        notes.append("observed spacing %s Th"
+                     % ", ".join("%.4f" % g for g in gaps))
+        worst = max(abs(g - spacing) for g in gaps)
+        if worst > 0.01:
+            notes.append("the widest gap is %.4f Th off the expected spacing, which"
+                         " is more than a charge state apart at this m/z -- the"
+                         " envelope is not one species" % worst)
+    if fit.get("rms") is not None:
+        notes.append("residual RMS %.2f percentage points, basis %s"
+                     % (fit["rms"], fit.get("expected_basis")))
+    if not expected:
+        notes.append("no expected envelope on this ion, so the observed one is"
+                     " drawn alone and nothing here tests it")
+    for r in (fit.get("ratio_cv") or []):
+        if r["cv"] > 0.25:
+            notes.append("isotope ratio k=%d varies %.0f%% across the elution peak:"
+                         " something enters or leaves during it"
+                         % (r["k"], 100 * r["cv"]))
+    if modelled:
+        notes.append("%d of %d isotope(s) are MODELLED (averagine), not measured,"
+                     " and must not be read as observation" % (len(modelled), len(env)))
+    return svg, notes
+
+
+def panel_xic(ions, ctx):
+    traces = by_uid(ctx["traces"], "xic")
+    if not traces:
+        return None, ["no xic traces in the export"]
+    ion = pick_ion(ions, ctx, set(traces))
+    if ion is None:
+        return None, ["traces present but attributable to no ion in ions.jsonl"]
+    uid = ion["ion_uid"]
+    rows = traces[uid]
+    curves, marks, notes = [], [], []
+    palette = ["#1b6ca8", "#2f8f4e", "#b06000", "#8a3a8a"]
+    for n, t in enumerate(rows[:4]):
+        pts = [(p[0], p[1]) for p in t["points"] if len(p) >= 2]
+        if len(pts) < 2:
+            notes.append("a trace carries %d point(s): a peak needs at least two"
+                         " consecutive scans to be a peak" % len(pts))
+            continue
+        curves.append(("%s window %.1f ppm" % (t["sample_id"],
+                                               t.get("extraction_window_ppm") or 0),
+                       pts, palette[n % len(palette)]))
+        if t.get("apex_rt_min") is not None and n == 0:
+            marks.append((t["apex_rt_min"], "apex %.3f" % t["apex_rt_min"]))
+    if not curves:
+        return None, notes or ["no trace had enough points to draw"]
+    svg, _ = line_plot(curves, "retention time (min)",
+                       "intensity - %s" % ctx["quant_words"], marks)
+    ann = ion["annotation"] or {}
+    notes.insert(0, "%s %d+ at m/z %.4f, %s"
+                 % (ann.get("peptide_sequence") or "unassigned",
+                    ion["coord"]["charge"], ion["coord"]["mz"],
+                    ion["confidence"]["tier"]))
+    windows = {t.get("extraction_window_ppm") for t in rows[:4]}
+    notes.append("extraction window%s %s ppm -- a wider window admits more"
+                 " interference, so the window is part of the peak's shape"
+                 % ("s" if len(windows) > 1 else "",
+                    ", ".join(str(w) for w in sorted(w for w in windows if w))))
+    shapes = {}
+    for t in rows[:4]:
+        if t.get("fwhm_min") is not None:
+            key = (t["sample_id"], round(t["fwhm_min"], 4), len(t["points"]))
+            shapes[key] = shapes.get(key, 0) + 1
+    for (sid, fwhm, n), count in sorted(shapes.items()):
+        notes.append("%s FWHM %.3f min over %d point(s)%s"
+                     % (sid, fwhm, n,
+                        " (%d traces identical on these three)" % count
+                        if count > 1 else ""))
+    if len(set(t["sample_id"] for t in rows)) == 1 and len(rows) > 1:
+        notes.append("all %d trace(s) carry the same sample_id and ion_uid, so they"
+                     " are repeats of one extraction, not a comparison across"
+                     " samples" % len(rows))
+    scans = dig(ion, "intensity.n_consecutive_scans")
+    if scans is not None:
+        notes.append("the ion claims %d consecutive scans; this trace shows %d"
+                     " point(s)" % (scans, len(rows[0]["points"])))
+    if len(rows) > 4:
+        notes.append("%d traces on this ion, showing 4" % len(rows))
+    return svg, notes
+
+
+def cross_sample(rows, ctx, need, what):
+    """A cross-sample panel needs several samples IN ITS OWN TABLE.
+
+    plan_panels counts the manifest's sample list, which is what the export
+    describes. A table can still hold one sample's rows, and a cross-sample
+    figure drawn from one sample is false however many samples the manifest
+    declares.
+    """
+    seen = sorted({r["sample_id"] for r in rows})
+    if len(seen) < need:
+        return None, ["%s covers %d sample(s) (%s) but this panel compares across"
+                      " %d. The manifest declares %d samples; the table does not"
+                      " hold them, and a cross-sample figure drawn from %d is"
+                      " false." % (what, len(seen), ", ".join(seen) or "none",
+                                   need, len(ctx["samples"]), len(seen))]
+    return seen, []
+
+
+def panel_top3_percentile(ions, ctx):
+    rows = ctx["proteins"]
+    if not rows:
+        return None, ["no proteins.jsonl in the export"]
+    seen, why = cross_sample(rows, ctx, 2, "proteins.jsonl")
+    if seen is None:
+        return None, why
+    pts = [(r.get("top3avg"), r.get("percentile"), r.get("tier", "bare_proximity"),
+            "%s  %s  top3 %.3f  pct %.1f" % (r["sample_id"], r["prot_accession"],
+                                             r.get("top3avg") or 0,
+                                             r.get("percentile") or 0))
+           for r in rows]
+    svg, notes = scatter(pts, "Top3avg - %s" % ctx["quant_words"],
+                         "percentile within sample", xlog=True)
+    notes.append("%d sample(s): %s" % (len(seen), ", ".join(seen)))
+    uncontrolled = [r for r in rows if not r.get("decoy_controlled")]
+    if uncontrolled:
+        notes.append("%d of %d protein row(s) are not decoy controlled, so their"
+                     " rank and percentile are positions in a list that includes"
+                     " untested identifications" % (len(uncontrolled), len(rows)))
+    return svg, notes
+
+
+def panel_stoichiometry(ions, ctx):
+    """Ratios within ONE run only, carrying n_peptides_used on both sides.
+
+    The panel's own rule: a 1-peptide against a 3-peptide ratio is not the same
+    measurement, so the count rides with the number instead of being dropped.
+    """
+    rows = ctx["proteins"]
+    if not rows:
+        return None, ["no proteins.jsonl in the export"]
+    by_sample = {}
+    for r in rows:
+        by_sample.setdefault(r["sample_id"], []).append(r)
+    runs = [(sid, rs) for sid, rs in sorted(by_sample.items()) if len(rs) >= 2]
+    if not runs:
+        return None, ["no run holds two proteins, and a ratio needs two. Rows per"
+                      " run: %s. Ratios across runs are not drawn here: that mixes"
+                      " loading into the ratio."
+                      % ", ".join("%s=%d" % (s, len(r))
+                                  for s, r in sorted(by_sample.items()))]
+    pts, notes, thin = [], [], 0
+    for sid, rs in runs:
+        rs = sorted(rs, key=lambda r: -(r.get("top3avg") or 0))
+        base = rs[0]
+        for other in rs[1:]:
+            if not base.get("top3avg") or not other.get("top3avg"):
+                continue
+            ratio = other["top3avg"] / base["top3avg"]
+            n_lo = min(base.get("n_peptides_used") or 0,
+                       other.get("n_peptides_used") or 0)
+            if n_lo < 2:
+                thin += 1
+            pts.append((n_lo, ratio, other.get("tier", "bare_proximity"),
+                        "%s  %s / %s = %.3f  (n_peptides %s vs %s)"
+                        % (sid, other["prot_accession"], base["prot_accession"],
+                           ratio, other.get("n_peptides_used"),
+                           base.get("n_peptides_used"))))
+    svg, snotes = scatter(pts, "peptides behind the weaker side of the ratio",
+                          "ratio to the strongest protein in the run", ylog=True)
+    notes = snotes + ["%d ratio(s) from %d run(s): %s"
+                      % (len(pts), len(runs), ", ".join(s for s, _ in runs))]
+    if thin:
+        notes.append("%d ratio(s) rest on a single peptide on one side. A 1-peptide"
+                     " against a 3-peptide ratio is not the same measurement, which"
+                     " is why the count is the x axis rather than a footnote" % thin)
+    return svg, notes
+
+
+def panel_flux(ions, ctx):
+    """Change across runs, on a STATED normalization.
+
+    Raw Top3avg across runs mixes biology with how much was loaded, so a run
+    without a declared normalization is not drawn.
+    """
+    rows = ctx["proteins"]
+    if not rows:
+        return None, ["no proteins.jsonl in the export"]
+    norms = (ctx["manifest_quant"].get("normalizations") or [])
+    if not norms:
+        return None, ["the manifest declares no normalization. Raw Top3avg across"
+                      " runs mixes biology with loading, so there is no quantity"
+                      " here that a flux panel could honestly plot."]
+    field = next((n for n in norms
+                  if any((r.get("normalized") or {}).get(n) is not None
+                         for r in rows)), None)
+    if field is None:
+        return None, ["the manifest declares %s but no protein row carries any of"
+                      " them under `normalized`, so the stated normalization was"
+                      " not actually applied" % ", ".join(norms)]
+    seen, why = cross_sample(rows, ctx, 2, "proteins.jsonl")
+    if seen is None:
+        return None, why + ["normalization on offer: %s" % field]
+    order = {sid: n for n, sid in enumerate(seen)}
+    curves, palette = [], ["#1b6ca8", "#2f8f4e", "#b06000", "#8a3a8a"]
+    by_prot = {}
+    for r in rows:
+        v = (r.get("normalized") or {}).get(field)
+        if v is not None:
+            by_prot.setdefault(r["prot_accession"], []).append(
+                (order[r["sample_id"]], v))
+    for n, (prot, pts) in enumerate(sorted(by_prot.items())):
+        if len(pts) >= 2:
+            curves.append((prot, pts, palette[n % len(palette)]))
+    if not curves:
+        return None, ["no protein appears in two runs under %s, so nothing has a"
+                      " flux to draw" % field]
+    svg, notes = line_plot(curves, "run (%s)" % " - ".join(seen), field)
+    notes.append("normalization %s, as declared in the manifest" % field)
+    notes.append("%d protein(s) seen in 2+ runs of %d in the table"
+                 % (len(curves), len(by_prot)))
+    return svg, notes
+
+
+def panel_fragment_hits(ions, ctx):
+    """Fragment-first candidates: what was queried, matched, and controlled."""
+    rows = ctx["fragment_hits"]
+    if not rows:
+        return None, ["no fragment_hits.jsonl in the export"]
+    body = ["<table class=track><thead><tr><th>hit</th><th>peptide</th>"
+            "<th>k of n</th><th>coelution</th><th>delta mass</th>"
+            "<th>controls</th><th>evidence</th></tr></thead><tbody>"]
+    notes, uncontrolled = [], 0
+    for r in rows[:30]:
+        k = r.get("k_of_n") or {}
+        co = r.get("coelution") or {}
+        dm = r.get("delta_mass") or {}
+        ctl = r.get("control") or {}
+        if ctl.get("reversed_matched") is None and ctl.get("entrapment_matched") is None:
+            uncontrolled += 1
+        cand = ", ".join("%s %.4f" % (c.get("name"), c.get("monoisotopic") or 0)
+                         for c in (dm.get("candidates") or [])[:2])
+        body.append("<tr><td class=m>%s</td><td class=m>%s %s</td>"
+                    "<td>%s/%s (need %s)</td><td>%s</td><td>%s</td>"
+                    "<td>rev %s, entrap %s</td><td>%s</td></tr>"
+                    % (esc(r.get("hit_id")),
+                       esc((r.get("peptide") or {}).get("sequence")),
+                       esc((r.get("peptide") or {}).get("prot_accession") or ""),
+                       k.get("matched"), k.get("queried"), k.get("required"),
+                       ("%.3f min, %d scans" % (co.get("rt_span_min") or 0,
+                                                co.get("consecutive_scans") or 0)),
+                       ("%+.5f (%+.1f ppm)%s" % (dm.get("value") or 0,
+                                                 dm.get("ppm") or 0,
+                                                 "  " + cand if cand else "")
+                        if dm.get("value") is not None else ""),
+                       ctl.get("reversed_matched"), ctl.get("entrapment_matched"),
+                       esc(r.get("evidence") or "")))
+    body.append("</tbody></table>")
+    notes.append("%d hit(s)%s" % (len(rows),
+                                  ", showing 30" if len(rows) > 30 else ""))
+    if uncontrolled:
+        notes.append("%d hit(s) carry no reversed or entrapment count. k-of-n on an"
+                     " uncontrolled query is a count, not a false-discovery rate."
+                     % uncontrolled)
+    offsets = {(r.get("coelution") or {}).get("drift_offset_bins_applied")
+               for r in rows}
+    offsets = {o for o in offsets if o}
+    if offsets:
+        notes.append("a drift offset was applied to the coelution test (%s bins):"
+                     " the fragments were moved to meet the precursor, so the"
+                     " agreement is partly constructed"
+                     % ", ".join(str(o) for o in sorted(offsets)))
+    return "".join(body), notes
+
+
+DRAW = {"intensity_vs_time": panel_intensity_vs_time,
+        "msms_mirror": panel_msms_mirror,
+        "isotope_envelope": panel_isotope_envelope,
+        "xic": panel_xic,
+        "top3_percentile": panel_top3_percentile,
+        "fragment_hits": panel_fragment_hits,
+        "stoichiometry": panel_stoichiometry,
+        "flux": panel_flux,
+        "drift_vs_time": panel_drift_vs_time,
+        "mz_vs_drift": panel_mz_vs_drift,
+        "seqstart_vs_intensity": panel_seqstart_vs_intensity,
+        "forensic_track": panel_forensic_track,
+        "ion_flight": panel_ion_flight}
+
+
+def build(manifest, method, ions, catalog, selected, tables=None):
+    tables = tables or {}
     samples = manifest.get("samples", [])
     kinds = [s["drift_kind"] for s in samples]
     quant = manifest.get("quant") or {}
     absolute = quant.get("absolute_standard_declared") or \
         (method.get("quant", {}) or {}).get("absolute_standard")
     one_kind = axis_kind(kinds)
-    ctx = {"axis_kind": one_kind,
+    ctx = {"manifest_quant": quant,
+           "spectra": tables.get("spectra", []),
+           "traces": tables.get("traces", []),
+           "proteins": tables.get("proteins", []),
+           "fragment_hits": tables.get("fragment_hits", []),
+           "samples": samples,
+           "axis_kind": one_kind,
            "mixed_drift": len(set(kinds)) > 1,
            "drift_label": drift_label(one_kind, len(set(kinds)) > 1),
            "quant_words": "absolute (standard declared)" if absolute
@@ -569,6 +1140,34 @@ def main(argv=None):
               " would not say so" % export_dir, file=sys.stderr)
         return 2
 
+    declared = manifest.get("tables") or {}
+    tables, missing = {}, []
+    for name in ("spectra", "traces", "proteins", "fragment_hits"):
+        path = export_dir / ("%s.jsonl" % name)
+        rows = read_jsonl(path)
+        tables[name] = rows
+        if declared.get(name) and not rows:
+            missing.append(name)
+    want_kinds = set(declared.get("spectrum_kinds") or [])
+    have_kinds = {r.get("kind") for r in tables["spectra"]}
+    absent_kinds = sorted(want_kinds - have_kinds)
+    if absent_kinds and tables["spectra"]:
+        manifest.setdefault("warnings", []).append(
+            "the manifest declares spectrum kind(s) %s but no row in spectra.jsonl"
+            " carries them. The panels that need them are blank below."
+            % ", ".join(absent_kinds))
+        declared["spectrum_kinds"] = sorted(have_kinds & want_kinds)
+    if missing:
+        # validate_export is the tool that fails on this; the page says it too,
+        # because a reader looking at charts is not going to re-run the validator.
+        manifest.setdefault("warnings", []).append(
+            "the manifest declares %s but %s holds no such rows. The panels that"
+            " need them are blank below, and the export does not describe itself."
+            % (", ".join(missing),
+               ", ".join("%s.jsonl" % m for m in missing)))
+        for name in missing:
+            declared[name] = False
+
     catalog = {p["id"]: p for p in
                json.loads((ROOT / "schema" / "panels.json").read_text())["panels"]}
     if args.method:
@@ -583,7 +1182,7 @@ def main(argv=None):
               % len(selected))
 
     out = Path(args.out) if args.out else export_dir / "panels.html"
-    out.write_text(build(manifest, method, ions, catalog, selected))
+    out.write_text(build(manifest, method, ions, catalog, selected, tables))
     print("wrote %s" % out)
     return 0
 
