@@ -1192,3 +1192,77 @@ reading the store for a reference should require `pep_score ≥ 2` and say so.
 Export contract section 14 already requires the chemistry gate; a store that
 fails it behind no filter and passes behind one is exactly the case that rule
 exists for.
+
+### Section 1 like-for-like: outcome three, and it cannot be rescued
+
+The cut was run. Of the archive's **103** PAX8 ions (sequence/charge, all 292
+samples), **54** on Colorado's side and **30** shared, applying `pep_score ≥ 2`
+leaves **4 ions, 33 spectra in 19 samples** — and only **3 of the 30 shared** ions
+survive:
+
+| ion | spectra | samples | best expect |
+|---|---|---|---|
+| `KMDDSDQDSCR` 2+ | 26 | 12 | 8e-4 |
+| `MDDSDQDSCR` 2+ | 5 | 5 | |
+| `GEQGLYPLPLLNSTLDDGK` 3+ | 1 | | |
+| `KMDDSDQDSCRLSIDSQSSSSGPR` 5+ | 1 | | |
+
+A Spearman over 3 ions against a shuffled control has no power. The original
+0.529 against a shuffled 0.454 cannot be tested — only withdrawn. The page says
+so, with the reader-facing form: *only 4 PAX8 peptides, 3 of the shared ions,
+reach expect ≤ 0.01, so the comparison cannot be rescued, only retracted.*
+
+One honest nuance on the survivors: **expect is not an FDR.** If all 583 PAX8
+spectra were random, about 6 would still fall below expect 0.01 by chance. There
+are 33, and they concentrate on one N-terminal peptide across 12 samples, so some
+are probably real PAX8. But nothing in this store separates them from chance
+without a re-search carrying decoys. "Probably some real signal, unquantifiable
+from here" is the whole of what can be said.
+
+### Section 2: the cross-platform charge agreement is peptide length
+
+This one needs no FDR argument at all, and it is the fourth verdict on this page
+to flip.
+
+The finding read **pass**: *"Ionization agrees: mean charge per peptide correlates
+across platforms (Spearman 0.602, 19 peptides)."* Partialling out peptide length:
+
+| | Spearman |
+|---|---|
+| Atlas vs Colorado | **+0.602** |
+| Atlas vs peptide length | +0.848 |
+| Colorado vs peptide length | +0.749 |
+| **Atlas vs Colorado, length controlled** | **−0.096** |
+
+It collapses. Precursor mass constrains charge, so a longer peptide can only be
+matched at a higher charge on either instrument — real match or coincidental. Both
+platforms sorting peptides by length is not the two platforms agreeing about
+ionization. There is no cross-platform ionization signal in this data once the
+mechanical constraint is removed.
+
+The FDR problem compounds it rather than causing it: a score cut moves the store's
+mean charge per spectrum from **2.56 to 2.12**, with the charge mix going from
+62% / 25% / 8% / 4% / 1% at 2+ through 6+ to **94% at 2+**. The high-charge share
+sits almost entirely in the low-score matches — long missed-cleavage peptides at
+4+ to 6+ are exactly where chance matches land. At the per-ion level the page uses
+the shift is only 3.06 → 3.00, so the *reported* mean survives, but on 4 ions,
+which makes it unverifiable rather than verified.
+
+`Colorado runs +0.20 charges higher on average` stays as an observation — it is a
+mean difference, not a correlation — with the caveat that its Atlas side is
+unfiltered.
+
+### Four flipped badges, one failure mode
+
+| section | was | is | why |
+|---|---|---|---|
+| Mass identity | `pass` | `limit` | every PSM forced into an explanation; the check could not fail |
+| §3 Fragmentation | `fail` | `limit` | read off a control that could not lose |
+| §1 Like-for-like | `pass` | `limit` | inputs never FDR-filtered; cut leaves 3 shared ions |
+| §2 Ionization | `pass` | `fail` | the correlation is peptide length, −0.10 once controlled |
+
+Every one asserted more than its comparison could support, and three of the four
+were green. The common root is that each badge was computed from a number without
+anyone asking what else could have produced that number. `tools/fragment_chemistry.py`
+and export contract section 14 address one instance of that; the pattern is wider
+than the tool.
