@@ -313,19 +313,6 @@ def the_normalization_cut_is_relative_not_absolute(db, tmp):
     return bad
 
 
-def the_brightest_responding_more_is_not_called_agreement(db, tmp):
-    """A large gap the other way is a detection floor, not a pass."""
-    rc, out = run("--db", str(db))
-    sec = section(out, "TEST 3")
-    bad = []
-    if "OPPOSITE of saturation" not in sec:
-        bad.append("the brightest quartile responds more steeply and this was not"
-                   " named as the opposite of saturation")
-    if "no intensity-dependent compression shows" in sec:
-        bad.append("printed the all-clear over a large gap pointing the other way")
-    if "floor" not in sec:
-        bad.append("did not offer the detection-floor reading")
-    return bad
 
 
 def the_volume_check_anchors_the_axis(db, tmp):
@@ -415,6 +402,226 @@ def the_median_per_ion_run_is_used_not_the_max(db, tmp):
         bad.append("test_load does not take a median per ion and run")
     if re.search(r"best\[key\]\.get\(.*\) < inten", src):
         bad.append("still keeping the brightest replicate per load")
+    return bad
+
+
+
+
+def plant_shape(path, cap=None, clamp=None, subtract=None, beta=1.0,
+                loads=(25.0, 50.0, 120.0, 240.0), n=300):
+    """A pure power law, optionally bent by a ceiling, a noise floor or a baseline.
+
+    cap      soft ceiling: headroom runs out, the high end flattens
+    clamp    noise floor: below it the measured value sticks, the low end flattens
+    subtract a baseline removed from every intensity, which costs the low end more
+    """
+    rng = random.Random(11)
+    con = sqlite3.connect(path)
+    con.execute("""CREATE TABLE observations (
+        id INTEGER PRIMARY KEY, PeptideSequence TEXT, Charge INTEGER,
+        RunName TEXT, PrecMz REAL, CalcMz REAL, CalcMass REAL,
+        PrecursorIntensity REAL)""")
+    rid, seen = 0, set()
+    for _ in range(n):
+        while True:
+            seq = "".join(rng.choice("GASPVTLINDQEMHFYW")
+                          for _ in range(rng.randint(7, 15))) + "K"
+            z = rng.choice([2, 3])
+            if (seq, z) not in seen:
+                seen.add((seq, z))
+                break
+        mass = WATER + sum(RESIDUE[c] for c in seq)
+        calc = mass / z + pc.PROTON
+        amp = 10 ** rng.uniform(3.0, 6.0)
+        for ng in loads:
+            v = amp * (ng ** beta) * math.exp(rng.gauss(0, 0.05))
+            if cap:
+                v = v * cap / (cap + v) * 2
+            if clamp:
+                v = max(v, clamp)
+            if subtract:
+                v = max(v - subtract, subtract * 0.01)
+            rid += 1
+            con.execute("INSERT INTO observations VALUES (?,?,?,?,?,?,?,?)",
+                        (rid, seq, z, "HeLa_%dng" % int(ng), calc, calc, mass, v))
+    con.commit()
+    con.close()
+
+
+def _four_loads(tmp):
+    import json as _json
+    lm = tmp / "loads4.json"
+    lm.write_text(_json.dumps({"HeLa_%dng" % int(n): n for n in (25, 50, 120, 240)}))
+    return lm
+
+
+def the_printed_cut_is_the_printed_median(db, tmp):
+    """The shadowed-variable bug: the cut was 0.85 x the BRIGHTEST quartile.
+
+    On real data where bright ions saturate, Q4's median is low, so the cut
+    dropped and the very ions it exists to exclude got through.
+    """
+    rc, out = run("--db", str(db))
+    sec = section(out, "TEST 3")
+    bad = []
+    mline = [l for l in sec.splitlines() if "median slope" in l and "quartiles" in l]
+    cline = [l for l in sec.splitlines() if "respond below" in l]
+    if not mline or not cline:
+        return ["could not find the median and cut lines"]
+    med = float(re.search(r"median slope ([-+]\d+\.\d+)", mline[0]).group(1))
+    cut = float(re.search(r"\(([-+]\d+\.\d+)\)", cline[0]).group(1))
+    if abs(cut - 0.85 * med) > 0.002:
+        bad.append("cut %+.3f is not 0.85 x the printed median %+.3f (= %+.3f)"
+                   % (cut, med, 0.85 * med))
+    # the brightest quartile's median must NOT be what the cut was taken from
+    q4 = [l for l in sec.splitlines() if "Q4" in l and "median slope" in l]
+    if q4:
+        q4med = float(re.search(r"median slope ([-+]\d+\.\d+)", q4[0]).group(1))
+        if abs(cut - 0.85 * q4med) < 0.002 and abs(q4med - med) > 0.01:
+            bad.append("cut equals 0.85 x the Q4 median, so `med` is still shadowed")
+    return bad
+
+
+def the_intensity_quartiles_carry_no_verdict(db, tmp):
+    """Ranking ions by intensity ranks them partly by response."""
+    rc, out = run("--db", str(db))
+    sec = section(out, "TEST 3")
+    bad = []
+    if "DESCRIPTIVE ONLY" not in sec:
+        bad.append("the quartile table is not marked descriptive")
+    if "NO VERDICT IS READ FROM THAT TABLE" not in sec:
+        bad.append("no statement that the table carries no verdict")
+    if "122" not in sec or "104" not in sec:
+        bad.append("does not quote how badly the ranking is confounded")
+    for banned in ("That is saturation", "OPPOSITE of saturation",
+                   "read it as a floor"):
+        if banned in sec:
+            bad.append("a verdict is still drawn from the quartile table: %r" % banned)
+    return bad
+
+
+def curvature_needs_an_axis_with_a_known_shape(db, tmp):
+    """An estimated axis is warped, and the warp bends every ion the same way."""
+    rc, out = run("--db", str(db))
+    sec = section(out, "TEST 3")
+    bad = []
+    if "NOT ASSESSED" not in sec:
+        bad.append("ran a curvature test against an unanchored estimated axis")
+    if "unknown one" not in sec:
+        bad.append("did not say the estimated axis has an unknown shape")
+    if "0.000/0.162/0.301/0.489" not in sec:
+        bad.append("does not quote the measured warp")
+    for banned in ("A DOWNWARD BEND", "AN UPWARD BEND"):
+        if banned in sec:
+            bad.append("a curvature verdict was printed on an unanchored axis: %r"
+                       % banned)
+    return bad
+
+
+def a_planted_ceiling_reads_as_a_downward_bend(db, tmp):
+    p = tmp / "ceiling.db"
+    plant_shape(str(p), cap=5e6)
+    rc, out = run("--db", str(p), "--load-map", str(_four_loads(tmp)))
+    sec = section(out, "TEST 3")
+    bad = []
+    if "A DOWNWARD BEND" not in sec:
+        bad.append("a planted ceiling did not read as a downward bend")
+    if "AN UPWARD BEND" in sec:
+        bad.append("a planted ceiling also read as an upward bend")
+    if "baseline subtracted" not in sec:
+        bad.append("did not name the second cause of a downward bend")
+    if "before calling it saturation" not in sec:
+        bad.append("called it saturation without naming the ambiguity")
+    return bad
+
+
+def a_planted_noise_floor_reads_as_an_upward_bend(db, tmp):
+    p = tmp / "clamp.db"
+    plant_shape(str(p), clamp=3e6)
+    rc, out = run("--db", str(p), "--load-map", str(_four_loads(tmp)))
+    sec = section(out, "TEST 3")
+    bad = []
+    if "AN UPWARD BEND" not in sec:
+        bad.append("a planted noise floor did not read as an upward bend")
+    if "A DOWNWARD BEND" in sec:
+        bad.append("a planted noise floor also read as a downward bend")
+    if "opposite shape from saturation" not in sec:
+        bad.append("did not distinguish it from saturation")
+    return bad
+
+
+def a_plain_power_law_shows_no_curvature(db, tmp):
+    """The verdicts must fire only on their own fixture."""
+    p = tmp / "neither.db"
+    plant_shape(str(p))
+    rc, out = run("--db", str(p), "--load-map", str(_four_loads(tmp)))
+    sec = section(out, "TEST 3")
+    bad = []
+    for banned in ("A DOWNWARD BEND", "AN UPWARD BEND"):
+        if banned in sec:
+            bad.append("%r fired on a pure power law with nothing planted" % banned)
+    if "Neither direction dominates" not in sec:
+        bad.append("did not report the absence of curvature")
+    if "still invisible" not in sec:
+        bad.append("did not restate that a shared compression is invisible")
+    return bad
+
+
+def a_baseline_subtraction_is_not_called_saturation(db, tmp):
+    """It bends the same way as a ceiling, so the verdict must not name a cause."""
+    p = tmp / "subtract.db"
+    plant_shape(str(p), subtract=2e5)
+    rc, out = run("--db", str(p), "--load-map", str(_four_loads(tmp)))
+    sec = section(out, "TEST 3")
+    bad = []
+    if "SATURATION:" in sec:
+        bad.append("named saturation as the cause of a bend a baseline also makes")
+    return bad
+
+
+def curvature_needs_four_loads(db, tmp):
+    p = tmp / "three.db"
+    plant_shape(str(p), loads=(25.0, 50.0, 120.0))
+    import json as _json
+    lm = tmp / "loads3.json"
+    lm.write_text(_json.dumps({"HeLa_%dng" % int(n): n for n in (25, 50, 120)}))
+    rc, out = run("--db", str(p), "--load-map", str(lm))
+    sec = section(out, "TEST 3")
+    bad = []
+    if "needs 4 distinct loads" not in sec:
+        bad.append("did not say curvature needs four loads per ion")
+    if "Not assessed" not in sec:
+        bad.append("did not mark it unassessed")
+    for banned in ("A DOWNWARD BEND", "AN UPWARD BEND"):
+        if banned in sec:
+            bad.append("%r fired on three loads, which cannot be split in half"
+                       % banned)
+    return bad
+
+
+def a_half_microlitre_is_not_five(db, tmp):
+    """PAX8 writes 0.5 uL as `0-5uL`; matching only the decimal read it as 5."""
+    bad = []
+    for text, want_v, want_label in (
+            ("100ng_60_0-5uL", 0.5, "100ng_60"),
+            ("100ng_60_0.5uL", 0.5, "100ng_60"),
+            ("500ng_60_1uL", 1.0, "500ng_60"),
+            ("500ng_60_2uL", 2.0, "500ng_60"),
+            ("500ng_60_5uL", 5.0, "500ng_60"),
+            ("100ng_120_1uL", 1.0, "100ng_120"),
+            ("HeLa_60_2uL_20260923_1", 2.0, "HeLa_60_20260923_1")):
+        v, label = pc.microlitres(text)
+        if v != want_v:
+            bad.append("%s read as %r uL, expected %g" % (text, v, want_v))
+        if label != want_label:
+            bad.append("%s grouped under %r, expected %r" % (text, label, want_label))
+    if pc.microlitres("no_volume_here")[0] is not None:
+        bad.append("found a volume in a name that has none")
+    # and the 0.5 and 5 uL runs of one series must not share a group
+    a = pc.microlitres("100ng_60_0-5uL")
+    b = pc.microlitres("100ng_60_5uL")
+    if a[1] == b[1] and a[0] == b[0]:
+        bad.append("0-5uL and 5uL are indistinguishable")
     return bad
 
 
@@ -1076,8 +1283,16 @@ NEEDS_RUN = (classifier_boundaries, deamidation_is_not_an_isotope,
              picks_the_richer_table)
 STANDALONE = (refuses_a_published_shaped_table, refuses_a_file_that_is_not_a_database,
               an_estimated_axis_has_no_absolute_scale,
+              the_printed_cut_is_the_printed_median,
+              the_intensity_quartiles_carry_no_verdict,
+              curvature_needs_an_axis_with_a_known_shape,
+              a_planted_ceiling_reads_as_a_downward_bend,
+              a_planted_noise_floor_reads_as_an_upward_bend,
+              a_plain_power_law_shows_no_curvature,
+              a_baseline_subtraction_is_not_called_saturation,
+              curvature_needs_four_loads,
+              a_half_microlitre_is_not_five,
               the_normalization_cut_is_relative_not_absolute,
-              the_brightest_responding_more_is_not_called_agreement,
               the_volume_check_anchors_the_axis,
               the_volume_check_catches_a_wrong_label,
               a_run_with_no_volume_label_says_the_axis_is_unanchored,
