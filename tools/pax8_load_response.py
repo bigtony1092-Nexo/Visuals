@@ -508,7 +508,7 @@ def volume_confound(record, out):
 
 
 def load_response(ions, record, out, volume_slope=None, const_volumes=(),
-                  pooled_yield=None):
+                  pooled_yield=None, flag_share=None):
     """I(500)/I(100) per ion, per gradient. A ratio, not a fit."""
     out.append("")
     out.append("LOAD RESPONSE  (two points, per gradient)")
@@ -608,6 +608,28 @@ def load_response(ions, record, out, volume_slope=None, const_volumes=(),
                     out.append("    differs from the cohort's depends on response varying")
                     out.append("    with brightness, and the saturation section above is")
                     out.append("    what says whether it does.")
+                    fa = (flag_share or {}).get((grad, lo_ng))
+                    fb = (flag_share or {}).get((grad, hi_ng))
+                    if fa is not None and fb is not None and fb > fa + 0.02:
+                        out.append("    AND IT DOES HERE. The flagged share rises with"
+                                   " load (%.1f%% to" % (100 * fa))
+                        out.append("    %.1f%%), so response DOES vary with brightness --"
+                                   % (100 * fb))
+                        out.append("    and the ions this ratio was just re-aimed at are")
+                        out.append("    the bright ones, which is where saturation bends")
+                        out.append("    it. A yield gap and a rising flagged share"
+                                   " together is")
+                        out.append("    the case where the re-aiming changes the number,")
+                        out.append("    not merely the ion set. Do not read the ratio.")
+                        findings += 1
+                    elif fa is not None and fb is not None:
+                        out.append("    The flagged share does NOT rise with load (%.1f%%"
+                                   % (100 * fa))
+                        out.append("    to %.1f%%), so there is no evidence response"
+                                   % (100 * fb))
+                        out.append("    varies with brightness, and the re-aiming has")
+                        out.append("    changed which ions are measured without visibly")
+                        out.append("    changing what they measure.")
                 else:
                     out.append("    those yields agree to within %.0f point(s), so the"
                                " ratio is not" % abs(ya - yb))
@@ -837,7 +859,7 @@ def recheck_published(ions, record, out, published=PUBLISHED_RATIO):
     return 1
 
 
-def saturation_report(flags, infos, record, out):
+def saturation_report(flags, infos, record, out, share_out=None):
     """ApexRT's IsSaturated flag: per run, per gradient, and where it starts.
 
     THE INSTRUMENT'S FLAG, NOT GROUND TRUTH. ApexRT sets it; nothing here
@@ -875,7 +897,8 @@ def saturation_report(flags, infos, record, out):
             if sat.get("highest_clean") is not None:
                 g[3].append(sat["highest_clean"])
     if not any_feat:
-        out.append("    no run reported a feature count.")
+        out.append("    no run reported a feature count, so no flagged share is")
+        out.append("    available to the ratio test below.")
         return 0
     out.append("  per gradient, with the intensity bracket the flag starts in:")
     for grad in sorted(by_grad):
@@ -928,6 +951,9 @@ def saturation_report(flags, infos, record, out):
     out.append("  Flagged ions must stay OUT of any within-run normalization set"
                " (item 5):")
     out.append("  an ion whose high end was clipped cannot be used to cancel load.")
+    if share_out is not None:
+        for key, (n, sat) in by_level.items():
+            share_out[key] = (sat / n) if n else 0.0
     return findings
 
 
@@ -1057,7 +1083,8 @@ def main(argv=None):
             ions[key][run] = inten
     out.append("  %d distinct ion(s) across %d run(s)" % (len(ions), len(ions_by_run)))
 
-    findings += saturation_report(flags, infos, record, out)
+    flag_share = {}
+    findings += saturation_report(flags, infos, record, out, flag_share)
     # The constant-load series runs first: its slope is what lets the load ratio
     # be split into load and injection, and the two contrasts are confounded
     # without it.
@@ -1069,7 +1096,7 @@ def main(argv=None):
     findings += load_response(ions, record, out,
                               slope_out[0][0] if slope_out else None,
                               slope_out[0][1] if slope_out else (),
-                              pooled)
+                              pooled, flag_share)
     out.extend(const_lines)
     findings += recheck_published(ions, record, out)
 

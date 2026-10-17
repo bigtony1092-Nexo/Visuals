@@ -657,6 +657,50 @@ def case_the_owner_facing_ranking_is_printed(tmp):
     return bad
 
 
+
+
+def case_a_gap_plus_a_rising_flag_is_the_case_to_watch(tmp):
+    """The conjunction, not either alone.
+
+    A yield gap re-aims the ratio at the brighter ions. That only changes the
+    NUMBER where response varies with brightness, and a flagged share rising
+    with load is the evidence that it does. The two together is the case where
+    the ratio should not be read; either alone is not.
+    """
+    bad = []
+    # the saturation threshold must sit between the two load levels' intensity
+    # ranges, or the surviving bright low-load ions are flagged too and the
+    # pattern comes out backwards
+    d = tmp / "conj"
+    apex, search = plant(d, detect_floor=2e6, saturate_above=4e7)
+    rc, out = run_tool("--apex", apex, "--search", search)
+    if "SELECTION BIAS" not in out:
+        return ["the fixture produced no yield gap"]
+    if "AND IT DOES HERE" not in out:
+        bad.append("a yield gap with a rising flagged share was not joined")
+    if "where saturation bends" not in out:
+        bad.append("did not connect the re-aimed ion set to saturation")
+    if "Do not read the ratio" not in out:
+        bad.append("did not say what to do about the conjunction")
+
+    # a gap with NO rising flag must get the other branch, not this one
+    d2 = tmp / "gaponly"
+    apex2, search2 = plant(d2, detect_floor=2e6)
+    rc2, out2 = run_tool("--apex", apex2, "--search", search2)
+    if "SELECTION BIAS" not in out2:
+        bad.append("the gap-only fixture produced no yield gap")
+    if "AND IT DOES HERE" in out2:
+        bad.append("claimed the conjunction on a fixture with no rising flag")
+    if "does NOT rise with load" not in out2:
+        bad.append("did not report the absence of a rising flagged share")
+    if "without visibly" not in out2:
+        bad.append("did not say the re-aiming changed the ion set but not"
+                   " visibly what it measures")
+    if "Do not read the ratio" in out2:
+        bad.append("told the reader to discard a ratio on a gap alone")
+    return bad
+
+
 CASES = [case_the_join_recovers_a_planted_load_ratio,
          case_gradients_are_reported_separately,
          case_fragpipe_intensity_is_never_used,
@@ -680,7 +724,8 @@ CASES = [case_the_join_recovers_a_planted_load_ratio,
          case_a_yield_gap_between_levels_is_a_selection_bias,
          case_a_low_overall_yield_points_at_the_units,
          case_the_cross_check_band_is_reported_not_enforced,
-         case_the_owner_facing_ranking_is_printed]
+         case_the_owner_facing_ranking_is_printed,
+         case_a_gap_plus_a_rising_flag_is_the_case_to_watch]
 
 
 def main():
