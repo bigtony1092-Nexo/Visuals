@@ -59,6 +59,13 @@ load ladder invents 0.699 log10 units of load where the real span is 0.000.
 
   60 min and 120 min are different LC methods and are never pooled.
 
+ApexRT exits 3221225477 (0xC0000005, an access violation) on these runs. Its
+outputs were checked read-only and are not truncated: for all 96 files named in
+apexrt_done.json the current size equals the size recorded at completion, each
+ends with a newline, and each last line has the header's column count. Row counts
+are consistent within each group, and the two 100 ng runs are lower than the 500
+ng runs as the load would predict.
+
 Exit 0 when every test that had inputs ran, 1 on a finding, 2 when an input could
 not be read.
 """
@@ -70,6 +77,7 @@ import glob
 import json
 import math
 import os
+import random
 import re
 import statistics
 import sys
@@ -89,6 +97,7 @@ JOIN_RT_MIN = 0.2
 JOIN_DRIFT_BINS = 2.0
 QVALUE_CUT = 0.01
 
+BOOTSTRAP = 2000        # resamples for the ratio's interval
 EXPECTED_RATIO = 5.0           # 500 ng over 100 ng
 FLAT_TOL = 0.05                # log10 units: below this a volume series is flat
 PUBLISHED_RATIO = 5.37         # the figure to recheck, from docs/top3-estimator.md
@@ -192,11 +201,13 @@ def read_apex_groups(path):
     """
     acc = {}
     rows = 0
+    feat = flagged = 0
+    flagged_i, clean_i = [], []
     with open(path, newline="") as fh:
         reader = csv.reader(fh)
         first = next(reader, None)
         if first is None:
-            return [], 0, "empty"
+            return [], 0, "empty", {}
         # The file may or may not carry a header; the first field of a data row
         # is the function number.
         header = not str(first[0]).strip().isdigit()
@@ -219,6 +230,12 @@ def read_apex_groups(path):
                 continue
             if inten <= 0:
                 continue
+            feat += 1
+            if sat:
+                flagged += 1
+                flagged_i.append(inten)
+            else:
+                clean_i.append(inten)
             cur = acc.get(group)
             if cur is None:
                 acc[group] = [inten * mz, inten * rt, inten * drift, inten, sat, 1]
@@ -233,7 +250,10 @@ def read_apex_groups(path):
     for g, (wmz, wrt, wdr, tot, sat, n) in acc.items():
         groups.append((wmz / tot, wrt / tot, wdr / tot, tot, sat, n))
     groups.sort()
-    return groups, rows, None
+    stats = {"features": feat, "flagged": flagged,
+             "lowest_flagged": min(flagged_i) if flagged_i else None,
+             "highest_clean": max(clean_i) if clean_i else None}
+    return groups, rows, None, stats
 
 
 def _chain(first, reader):
@@ -245,14 +265,13 @@ def _chain(first, reader):
 def join_run(run, apex_dir, search_dir, out, ppm=JOIN_PPM, rt_tol=JOIN_RT_MIN,
              drift_tol=JOIN_DRIFT_BINS, qcut=QVALUE_CUT):
     """One run's identified ions with a measured intensity, or a reason there are none."""
-    psm_path = os.path.join(search_dir, "%s_apexrt_idts" % run,
-                            "%s_apexrt_idts" % run, "psm.tsv")
-    if not os.path.exists(psm_path):
-        hits = glob.glob(os.path.join(search_dir, "*%s*" % run, "**", "psm.tsv"),
-                         recursive=True)
-        psm_path = hits[0] if hits else None
+    hits = sorted(glob.glob(os.path.join(search_dir, "*%s*" % run, "**", "psm.tsv"),
+                            recursive=True))
+    psm_path = hits[0] if hits else None
     if not psm_path:
         return None, "no psm.tsv: this run was not searched, or the search produced none"
+    inner = os.path.basename(os.path.dirname(psm_path))
+    sanitised = inner != "%s_apexrt_idts" % run
     summary = os.path.join(apex_dir, run, "Summary", "%s_ApexRT_temp1.csv" % run)
     if not os.path.exists(summary):
         return None, "no Summary/%s_ApexRT_temp1.csv, so there is no measured intensity" % run
@@ -264,7 +283,7 @@ def join_run(run, apex_dir, search_dir, out, ppm=JOIN_PPM, rt_tol=JOIN_RT_MIN,
     if not psms:
         return None, ("no PSM at Qvalue <= %g (%d row(s), %d decoy(s))"
                       % (qcut, stats["total"], stats["decoys"]))
-    groups, apex_rows, gerr = read_apex_groups(summary)
+    groups, apex_rows, gerr, sat_stats = read_apex_groups(summary)
     if gerr or not groups:
         return None, "could not read peak groups from %s (%s)" % (summary, gerr)
 
@@ -296,7 +315,9 @@ def join_run(run, apex_dir, search_dir, out, ppm=JOIN_PPM, rt_tol=JOIN_RT_MIN,
         # that this is a per-ion summary rather than a per-spectrum one.
         if prev is None or best[3] > prev[0]:
             ions[key] = (best[3], bool(best[4]), q)
-    info = {"psm_rows": stats["total"], "psm_kept": len(psms),
+    info = {"sat": sat_stats, "psm_path": psm_path,
+            "inner": inner if sanitised else None,
+            "psm_rows": stats["total"], "psm_kept": len(psms),
             "decoys": stats["decoys"], "zero_intensity": stats["zero_intensity"],
             "apex_rows": apex_rows, "groups": len(groups),
             "spectra": len(spectra), "table": table_name,
@@ -351,6 +372,24 @@ def name_vs_record(record, out):
     out.append("  concentration and this cohort varied both, so a name can never")
     out.append("  establish load.")
     return len(bad)
+
+
+def bootstrap_median(values, n=BOOTSTRAP, seed=20261017):
+    """A percentile interval on the median, because ~30 ions is thin.
+
+    Resamples IONS. The single unreplicated low-load run is one measurement in
+    every resample, so its own error is not in this interval and nothing in the
+    cohort can put it there.
+    """
+    if len(values) < 5:
+        return None, None
+    rng = random.Random(seed)
+    k = len(values)
+    meds = []
+    for _ in range(n):
+        meds.append(statistics.median([values[rng.randrange(k)] for _ in range(k)]))
+    meds.sort()
+    return meds[int(0.025 * n)], meds[min(int(0.975 * n), n - 1)]
 
 
 def volume_confound(record, out):
@@ -455,6 +494,18 @@ def load_response(ions, record, out, volume_slope=None, const_volumes=()):
                    % (len(ratios), hi_ng, lo_ng, med))
         out.append("    quartiles %.3f to %.3f.  expected %.3f if the response is"
                    " proportional" % (q[0], q[2], expected))
+        lo_ci, hi_ci = bootstrap_median(ratios)
+        if lo_ci is not None:
+            out.append("    bootstrap 95%% interval on the median: %.3f to %.3f"
+                       " over %d resample(s)." % (lo_ci, hi_ci, BOOTSTRAP))
+            out.append("    That interval is over IONS only. It does not cover the one")
+            out.append("    unreplicated %g ng run, whose own error is not in it and"
+                       % lo_ng)
+            out.append("    cannot be estimated from this cohort.")
+            if lo_ci <= expected <= hi_ci:
+                out.append("    %.3f is inside the interval, so this cohort does not"
+                           " distinguish" % expected)
+                out.append("    the response from proportional.")
         shortfall = med / expected
         out.append("    that is %.0f%% of proportional." % (100 * shortfall))
         used_lo = {record[s]["recorded_uL"] for s in lo_runs}
@@ -482,6 +533,12 @@ def load_response(ions, record, out, volume_slope=None, const_volumes=()):
                        % (max(const_volumes or [5.0]), list(used_lo)[0]))
             out.append("    injection behaves differently at that volume this correction")
             out.append("    is wrong, and nothing here can tell.")
+            out.append("    AND THE LOW VOLUME IS THE WEAK POINT. %g uL in a 10 uL loop"
+                       % list(used_lo)[0])
+            out.append("    under partial-loop injection is far below the range that loop")
+            out.append("    is comfortable in. Pickup error there is probably the largest")
+            out.append("    uncertainty in every number above, and nothing in this cohort")
+            out.append("    measures it: the whole load contrast rests on that one volume.")
         elif span is None and volume_slope is not None:
             out.append("    the volume part was NOT subtracted: the runs on one side of")
             out.append("    this contrast sit at several volumes, so there is no single")
@@ -662,15 +719,62 @@ def recheck_published(ions, record, out, published=PUBLISHED_RATIO):
     return 1
 
 
-def saturation_report(flags, record, out):
-    """The saturated share per load level, straight from ApexRT's own flag.
+def saturation_report(flags, infos, record, out):
+    """ApexRT's IsSaturated flag: per run, per gradient, and where it starts.
 
-    This cohort cannot support a curvature-based saturation verdict -- two load
-    levels -- but it does not need one. IsSaturated is a detector flag set per
-    detection, so the question is answered by counting rather than by inferring.
+    THE INSTRUMENT'S FLAG, NOT GROUND TRUTH. ApexRT sets it; nothing here
+    verifies it, and a detector can clip without setting it or set it on a
+    detection that was fine. It is evidence, and better evidence than an
+    inference from two load levels, which is all this cohort could otherwise
+    offer.
     """
     out.append("")
-    out.append("SATURATION  (ApexRT IsSaturated, per load level)")
+    out.append("SATURATION  (ApexRT IsSaturated)")
+    out.append("  This is the instrument's own flag. Nothing here checks it: a detector")
+    out.append("  can clip without setting it, or set it on a detection that was fine.")
+    out.append("  It is evidence, not ground truth -- and it is the only direct")
+    out.append("  saturation evidence this cohort has, because two load levels cannot")
+    out.append("  support a curvature verdict.")
+
+    out.append("  per run, over ALL function-1 features (not just the matched ions):")
+    by_grad = defaultdict(lambda: [0, 0, [], []])
+    any_feat = False
+    for run in sorted(infos):
+        sat = infos[run].get("sat") or {}
+        rec = record.get(run)
+        feat, flg = sat.get("features") or 0, sat.get("flagged") or 0
+        if not feat:
+            continue
+        any_feat = True
+        out.append("    %-44s %8d feature(s), %6d flagged (%5.2f%%)"
+                   % (run[:44], feat, flg, 100.0 * flg / feat))
+        if rec:
+            g = by_grad[rec["gradient"]]
+            g[0] += feat
+            g[1] += flg
+            if sat.get("lowest_flagged") is not None:
+                g[2].append(sat["lowest_flagged"])
+            if sat.get("highest_clean") is not None:
+                g[3].append(sat["highest_clean"])
+    if not any_feat:
+        out.append("    no run reported a feature count.")
+        return 0
+    out.append("  per gradient, with the intensity bracket the flag starts in:")
+    for grad in sorted(by_grad):
+        feat, flg, lows, highs = by_grad[grad]
+        out.append("    %s min: %d of %d feature(s) flagged (%.2f%%)"
+                   % (grad, flg, feat, 100.0 * flg / feat if feat else 0.0))
+        if lows and highs:
+            out.append("      lowest flagged intensity %s, highest unflagged %s."
+                       % (_num(min(lows)), _num(max(highs))))
+            out.append("      The flag therefore turns on somewhere between those two;")
+            out.append("      they overlap when it is not a simple threshold.")
+        elif lows:
+            out.append("      lowest flagged intensity %s; nothing is unflagged."
+                       % _num(min(lows)))
+        else:
+            out.append("      nothing flagged at this gradient.")
+
     by_level = defaultdict(lambda: [0, 0])
     for run, per_ion in flags.items():
         rec = record.get(run)
@@ -681,30 +785,38 @@ def saturation_report(flags, record, out):
             by_level[key][0] += 1
             by_level[key][1] += 1 if sat else 0
     if not by_level:
-        out.append("  no run carried the flag.")
         return 0
+    out.append("  among the matched, identified ions:")
     findings = 0
     for (grad, ng), (n, sat) in sorted(by_level.items()):
-        out.append("    %s min, %g ng: %d of %d matched ion(s) saturated (%.1f%%)"
+        out.append("    %s min, %g ng: %d of %d ion(s) flagged (%.1f%%)"
                    % (grad, ng, sat, n, 100.0 * sat / n if n else 0.0))
     levels = sorted(by_level)
     if len(levels) >= 2:
-        lo = by_level[levels[0]]
-        hi = by_level[levels[-1]]
+        lo, hi = by_level[levels[0]], by_level[levels[-1]]
         lo_share = lo[1] / lo[0] if lo[0] else 0.0
         hi_share = hi[1] / hi[0] if hi[0] else 0.0
         if hi_share > lo_share + 0.02:
-            out.append("  The higher load saturates more (%.1f%% against %.1f%%)."
+            out.append("  The higher load flags more (%.1f%% against %.1f%%)."
                        % (100 * hi_share, 100 * lo_share))
-            out.append("  That is measured, not inferred: any load ratio computed over")
-            out.append("  saturated ions is a floor on the true ratio, because the high")
-            out.append("  end was clipped. Exclude them, or report the ratio twice.")
+            out.append("  Any load ratio over flagged ions is a FLOOR on the true ratio,")
+            out.append("  because the high end was clipped. The ratio test below splits")
+            out.append("  on the flag for exactly this reason.")
             findings += 1
         else:
-            out.append("  The saturated share does not rise with load (%.1f%% against"
+            out.append("  The flagged share does not rise with load (%.1f%% against"
                        " %.1f%%)," % (100 * hi_share, 100 * lo_share))
             out.append("  so clipping is not depressing the high end of the ratio.")
+    out.append("  Flagged ions must stay OUT of any within-run normalization set"
+               " (item 5):")
+    out.append("  an ion whose high end was clipped cannot be used to cancel load.")
     return findings
+
+
+def _num(v):
+    if v is None:
+        return "-"
+    return "%.3g" % v
 
 
 def main(argv=None):
@@ -778,7 +890,7 @@ def main(argv=None):
     out.append("  windows: %.1f ppm, %.2f min, %.1f drift BINS (Waters TWIMS, not 1/K0)"
                % (args.ppm, args.rt_tol, args.drift_tol))
     out.append("  PSMs at Qvalue <= %g, decoys dropped." % args.qvalue)
-    ions_by_run, flags, skipped = {}, {}, []
+    ions_by_run, flags, infos, skipped = {}, {}, {}, []
     for run in sorted(record):
         got, why = join_run(run, args.apex, args.search, out, args.ppm,
                             args.rt_tol, args.drift_tol, args.qvalue)
@@ -788,6 +900,7 @@ def main(argv=None):
         per_ion, info = got
         ions_by_run[run] = {k: v[0] for k, v in per_ion.items()}
         flags[run] = {k: v[1] for k, v in per_ion.items()}
+        infos[run] = info
         out.append("    %-44s %5d ion(s) of %4d PSM(s); %d unmatched, %d saturated"
                    % (run[:44], info["ions"], info["psm_kept"], info["unmatched"],
                       info["saturated"]))
@@ -797,6 +910,12 @@ def main(argv=None):
         if info["table"] and not info["table"].endswith("_plainFP_table.csv"):
             out.append("      spectrum table is named %s, not <run>_plainFP_table.csv"
                        % info["table"])
+        if info.get("inner"):
+            out.append("      FragPipe's inner folder is %s, not the run stem: the"
+                       % info["inner"])
+            out.append("      search sanitised the name. Found by searching rather than")
+            out.append("      by building the path, which would have called this run")
+            out.append("      unsearched.")
     for run, why in skipped:
         out.append("    %-44s SKIPPED: %s" % (run[:44], why))
     if skipped:
@@ -820,7 +939,7 @@ def main(argv=None):
             ions[key][run] = inten
     out.append("  %d distinct ion(s) across %d run(s)" % (len(ions), len(ions_by_run)))
 
-    findings += saturation_report(flags, record, out)
+    findings += saturation_report(flags, infos, record, out)
     # The constant-load series runs first: its slope is what lets the load ratio
     # be split into load and injection, and the two contrasts are confounded
     # without it.

@@ -117,7 +117,7 @@ def plant(root, no_psm=(), alt_table=(), load_scale=None, vol_slope=0.0,
     return str(apex), str(search)
 
 
-def run(*args):
+def run_tool(*args):
     p = subprocess.run([sys.executable, str(TOOL)] + [str(a) for a in args],
                        capture_output=True, text=True)
     return p.returncode, p.stdout + p.stderr
@@ -127,7 +127,7 @@ def case_the_join_recovers_a_planted_load_ratio(tmp):
     """Intensity proportional to load: the 500/100 ratio must come out near 5."""
     d = tmp / "ratio"
     apex, search = plant(d)
-    rc, out = run("--apex", apex, "--search", search)
+    rc, out = run_tool("--apex", apex, "--search", search)
     bad = []
     if "LOAD RESPONSE" not in out:
         return ["no load response section"]
@@ -157,7 +157,7 @@ def case_the_join_recovers_a_planted_load_ratio(tmp):
 def case_gradients_are_reported_separately(tmp):
     d = tmp / "grad"
     apex, search = plant(d)
-    rc, out = run("--apex", apex, "--search", search)
+    rc, out = run_tool("--apex", apex, "--search", search)
     bad = []
     if out.count("median I(") < 2:
         bad.append("the two gradients were not reported separately")
@@ -170,14 +170,14 @@ def case_fragpipe_intensity_is_never_used(tmp):
     """It is 0 in every row of every searched run."""
     d = tmp / "zero"
     apex, search = plant(d)
-    rc, out = run("--apex", apex, "--search", search)
+    rc, out = run_tool("--apex", apex, "--search", search)
     bad = []
     if "every psm.tsv Intensity in this run is 0" not in out:
         bad.append("did not notice that the FragPipe intensities are all zero")
     if "ApexRT's" not in out:
         bad.append("did not say where the intensity it used came from")
     # and a bare --psm must refuse outright
-    rc2, out2 = run("--psm", str(Path(search)))
+    rc2, out2 = run_tool("--psm", str(Path(search)))
     if rc2 != 2:
         bad.append("exit %d for --psm alone; it cannot measure anything" % rc2)
     if "REFUSED" not in out2 or "zeros as" not in out2:
@@ -192,7 +192,7 @@ def case_runs_without_a_psm_file_are_named(tmp):
                "PAX8_JP215_500ng_60_5uL_20260924_3")
     d = tmp / "nopsm"
     apex, search = plant(d, no_psm=missing)
-    rc, out = run("--apex", apex, "--search", search)
+    rc, out = run_tool("--apex", apex, "--search", search)
     bad = []
     for run_name in missing:
         if run_name not in out:
@@ -213,7 +213,7 @@ def case_the_alternate_table_name_is_found(tmp):
            "PAX8_JP210_500ng_60_1uL_20260924_3")
     d = tmp / "alt"
     apex, search = plant(d, alt_table=alt)
-    rc, out = run("--apex", apex, "--search", search)
+    rc, out = run_tool("--apex", apex, "--search", search)
     bad = []
     if "plain_table.csv, not" not in out:
         bad.append("the alternate spectrum-table name was not reported")
@@ -230,20 +230,30 @@ def case_saturation_comes_from_the_flag(tmp):
     d = tmp / "sat"
     # saturate the bright ions at 500 ng only
     apex, search = plant(d, saturate_above=2e7)
-    rc, out = run("--apex", apex, "--search", search)
+    rc, out = run_tool("--apex", apex, "--search", search)
     bad = []
     if "SATURATION" not in out:
         bad.append("no saturation section")
     if "IsSaturated" not in out:
         bad.append("did not name the flag it used")
-    if "measured, not inferred" not in out:
-        bad.append("did not distinguish the flag from an inference")
-    if "floor on the true ratio" not in out:
+    if "evidence, not ground truth" not in out:
+        bad.append("did not say the flag is the instrument's, not ground truth")
+    if "can clip without setting it" not in out:
+        bad.append("did not say how the flag can be wrong in either direction")
+    if "FLOOR on the true ratio" not in out:
         bad.append("did not say what saturation does to the load ratio")
+    if "per run, over ALL function-1 features" not in out:
+        bad.append("did not report the flagged share per run over all features")
+    if "intensity bracket the flag starts in" not in out:
+        bad.append("did not report where the flag turns on")
+    if "lowest flagged intensity" not in out:
+        bad.append("did not give the onset bracket's lower edge")
+    if "stay OUT of any within-run normalization set" not in out:
+        bad.append("did not say flagged ions are excluded from normalization")
     # and with nothing saturated it must say so rather than stay silent
     d2 = tmp / "nosat"
     apex2, search2 = plant(d2)
-    rc2, out2 = run("--apex", apex2, "--search", search2)
+    rc2, out2 = run_tool("--apex", apex2, "--search", search2)
     if "does not rise with load" not in out2:
         bad.append("did not report the absence of load-dependent saturation")
     return bad
@@ -252,7 +262,7 @@ def case_saturation_comes_from_the_flag(tmp):
 def case_a_constant_load_trend_is_found_and_not_called_load(tmp):
     d = tmp / "voltrend"
     apex, search = plant(d, vol_slope=0.30)
-    rc, out = run("--apex", apex, "--search", search)
+    rc, out = run_tool("--apex", apex, "--search", search)
     bad = []
     if "CONSTANT-LOAD SERIES" not in out:
         bad.append("no constant-load section")
@@ -272,7 +282,7 @@ def case_a_constant_load_trend_is_found_and_not_called_load(tmp):
 def case_a_flat_series_clears_no_verdict(tmp):
     d = tmp / "volflat"
     apex, search = plant(d, vol_slope=0.0)
-    rc, out = run("--apex", apex, "--search", search)
+    rc, out = run_tool("--apex", apex, "--search", search)
     bad = []
     if "CONSTANT-LOAD SERIES" not in out:
         return ["no constant-load section"]
@@ -285,7 +295,7 @@ def case_a_flat_series_clears_no_verdict(tmp):
 def case_the_disputed_run_is_named_before_any_number(tmp):
     d = tmp / "disp"
     apex, search = plant(d)
-    rc, out = run("--apex", apex, "--search", search)
+    rc, out = run_tool("--apex", apex, "--search", search)
     bad = []
     if "DISPUTED" not in out:
         bad.append("the disputed run was not named")
@@ -299,7 +309,7 @@ def case_the_disputed_run_is_named_before_any_number(tmp):
 def case_the_name_record_check_never_infers_load(tmp):
     d = tmp / "names"
     apex, search = plant(d)
-    rc, out = run("--apex", apex, "--search", search)
+    rc, out = run_tool("--apex", apex, "--search", search)
     bad = []
     if "NAME VERSUS RECORD" not in out:
         bad.append("no name-versus-record check")
@@ -314,7 +324,7 @@ def case_the_name_record_check_never_infers_load(tmp):
 def case_the_published_ratio_is_rechecked(tmp):
     d = tmp / "recheck"
     apex, search = plant(d)
-    rc, out = run("--apex", apex, "--search", search)
+    rc, out = run_tool("--apex", apex, "--search", search)
     bad = []
     if "RECHECK" not in out:
         bad.append("no recheck of the published ratio")
@@ -330,7 +340,7 @@ def case_the_published_ratio_is_rechecked(tmp):
 def case_units_are_stated(tmp):
     d = tmp / "units"
     apex, search = plant(d)
-    rc, out = run("--apex", apex, "--search", search, "--schema-only")
+    rc, out = run_tool("--apex", apex, "--search", search, "--schema-only")
     bad = []
     if "BINS" not in out:
         bad.append("did not state that drift is in TWIMS bins")
@@ -344,7 +354,7 @@ def case_units_are_stated(tmp):
 def case_schema_only_measures_nothing(tmp):
     d = tmp / "schema"
     apex, search = plant(d)
-    rc, out = run("--apex", apex, "--search", search, "--schema-only")
+    rc, out = run_tool("--apex", apex, "--search", search, "--schema-only")
     bad = []
     if rc != 0:
         bad.append("exit %d for a schema-only run" % rc)
@@ -397,7 +407,7 @@ def case_load_and_volume_are_separated(tmp):
     for n, vs in enumerate((0.0, 0.30, 0.60)):
         d = tmp / ("sep%d" % n)
         apex, search = plant(d, vol_slope=vs)
-        rc, out = run("--apex", apex, "--search", search)
+        rc, out = run_tool("--apex", apex, "--search", search)
         if "THE LOAD CONTRAST IS A VOLUME CONTRAST" not in out:
             bad.append("slope %g: did not declare the confound" % vs)
         i = out.find("60 min: 100 ng")
@@ -429,7 +439,7 @@ def case_load_and_volume_are_separated(tmp):
 def case_the_contrast_is_restricted_to_one_concentration(tmp):
     d = tmp / "matched"
     apex, search = plant(d)
-    rc, out = run("--apex", apex, "--search", search)
+    rc, out = run_tool("--apex", apex, "--search", search)
     bad = []
     if "restricted to the 0.5 ug/uL vial" not in out:
         bad.append("did not restrict the high side to the matched concentration")
@@ -443,7 +453,7 @@ def case_the_contrast_is_restricted_to_one_concentration(tmp):
 def case_the_extrapolation_is_declared(tmp):
     d = tmp / "extrap"
     apex, search = plant(d, vol_slope=0.30)
-    rc, out = run("--apex", apex, "--search", search)
+    rc, out = run_tool("--apex", apex, "--search", search)
     bad = []
     if "extrapolates a slope measured between" not in out:
         bad.append("did not say the correction extrapolates")
@@ -467,12 +477,66 @@ def case_without_a_volume_slope_the_confound_stays_declared(tmp):
             shutil.rmtree(Path(apex) / run_name, ignore_errors=True)
             shutil.rmtree(Path(search) / ("%s_apexrt_idts" % run_name),
                           ignore_errors=True)
-    rc, out = run("--apex", apex, "--search", search)
+    rc, out = run_tool("--apex", apex, "--search", search)
     bad = []
     if "LOAD ONLY" in out:
         bad.append("subtracted a volume effect with no series to measure one from")
     if "stay confounded" not in out and "NOT subtracted" not in out:
         bad.append("did not say load and injection remain confounded")
+    return bad
+
+
+
+
+def case_the_sanitised_inner_folder_is_found(tmp):
+    """FragPipe rewrites 0-5uL to 0_5uL in the INNER folder only.
+
+    The outer folder and the psm Spectrum prefix keep the hyphen. A path built
+    from the run stem misses it, and the disputed run would be reported as
+    unsearched -- the one run whose load is already in question.
+    """
+    d = tmp / "sanitised"
+    apex, search = plant(d)
+    run = "PAX8_JP213_100ng_60_0-5uL_20260924_4"
+    inner = run.replace("0-5uL", "0_5uL")
+    outer = Path(search) / ("%s_apexrt_idts" % run)
+    (outer / ("%s_apexrt_idts" % inner)).mkdir(parents=True, exist_ok=True)
+    (outer / ("%s_apexrt_idts" % run) / "psm.tsv").rename(
+        outer / ("%s_apexrt_idts" % inner) / "psm.tsv")
+    (outer / ("%s_apexrt_idts" % run)).rmdir()
+    rc, out = run_tool("--apex", apex, "--search", search)
+    bad = []
+    if "SKIPPED: no psm.tsv" in out and run in out.split("SKIPPED: no psm.tsv")[0][-200:]:
+        bad.append("the sanitised run was reported as unsearched")
+    hit = [l for l in out.splitlines() if run in l and "ion(s) of" in l]
+    if not hit:
+        bad.append("the sanitised run produced no ions")
+    if "sanitised the name" not in out:
+        bad.append("found the folder but did not say the name was rewritten")
+    if "would have called this run" not in out:
+        bad.append("did not say what building the path from the stem would do")
+    return bad
+
+
+
+def case_the_ratio_carries_a_bootstrap_interval(tmp):
+    """~30 ions per run is thin, and a bare median hides that."""
+    d = tmp / "boot"
+    apex, search = plant(d)
+    rc, out = run_tool("--apex", apex, "--search", search)
+    bad = []
+    if "bootstrap 95% interval" not in out:
+        bad.append("no interval on the median ratio")
+    if "over IONS only" not in out:
+        bad.append("did not say what the interval covers")
+    if "unreplicated" not in out or "not in it" not in out:
+        bad.append("did not say the single low-load run's error is outside it")
+    line = [l for l in out.splitlines() if "bootstrap 95% interval" in l]
+    if line:
+        import re as _re
+        nums = _re.findall(r"\d+\.\d+", line[0])
+        if len(nums) >= 2 and float(nums[0]) >= float(nums[1]):
+            bad.append("interval is inverted: %r" % line[0].strip())
     return bad
 
 
@@ -493,7 +557,9 @@ CASES = [case_the_join_recovers_a_planted_load_ratio,
          case_load_and_volume_are_separated,
          case_the_contrast_is_restricted_to_one_concentration,
          case_the_extrapolation_is_declared,
-         case_without_a_volume_slope_the_confound_stays_declared]
+         case_without_a_volume_slope_the_confound_stays_declared,
+         case_the_sanitised_inner_folder_is_found,
+         case_the_ratio_carries_a_bootstrap_interval]
 
 
 def main():
