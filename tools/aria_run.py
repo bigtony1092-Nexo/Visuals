@@ -23,7 +23,9 @@ The stages, and what each one is allowed to assume:
   5 EXPORT    write manifest.json describing what was actually produced,
               including the tables that are NOT there.
   6 CHECK     aria_check.py over the export: contract, panels, and the gates.
-  7 PANELS    plan_panels.py says which panels can render from this export.
+  7 PANELS    plan_panels.py says which panels can render, and
+              render_panels.py draws them to a single self-contained page --
+              blanks included, with the reason on each one.
 
     python3 tools/aria_run.py --raw RUN.raw --peaks peaks.jsonl \
         --targets targets.json --out export/ --sample-id CH215
@@ -957,28 +959,41 @@ def stage_check(run, out_dir, args):
 
 
 def stage_panels(run, method, out_dir):
-    run.banner("7 PANELS    what can render")
-    if not method:
-        run.skip("7 PANELS    renderability", "no --method given")
-        print("  skipped: no --method given, so no panel list was requested\n")
-        return True
-    argv = [sys.executable, str(TOOLS / "plan_panels.py"), str(method),
-            str(Path(out_dir) / "manifest.json")]
+    run.banner("7 PANELS    plan, then draw")
+    plan_ok = True
+    if method:
+        argv = [sys.executable, str(TOOLS / "plan_panels.py"), str(method),
+                str(Path(out_dir) / "manifest.json")]
+        proc = subprocess.run(argv, capture_output=True, text=True)
+        body = ((proc.stdout or "") + (proc.stderr or "")).rstrip()
+        print(body or "(no output)")
+        (Path(out_dir) / "panels.txt").write_text(body + "\n")
+        print("\n  wrote %s" % (Path(out_dir) / "panels.txt"))
+        if proc.returncode == 2:
+            run.cannot("7 PANELS    plan + draw", "plan_panels.py exited 2")
+            return False
+        plan_ok = proc.returncode == 0
+    else:
+        print("  no --method given: every panel the renderer can draw is offered")
+
+    argv = [sys.executable, str(TOOLS / "render_panels.py"), str(out_dir)]
+    if method:
+        argv += ["--method", str(method)]
     proc = subprocess.run(argv, capture_output=True, text=True)
     body = ((proc.stdout or "") + (proc.stderr or "")).rstrip()
-    print(body or "(no output)")
-    plan = Path(out_dir) / "panels.txt"
-    plan.write_text(body + "\n")
-    print("\n  wrote %s" % plan)
+    for line in body.splitlines():
+        print("  %s" % line)
     print()
-    if proc.returncode == 2:
-        run.cannot("7 PANELS    renderability", "plan_panels.py exited 2")
-        return False
     if proc.returncode != 0:
-        run.findings("7 PANELS    renderability",
-                     "some requested panels cannot render from this export")
+        run.cannot("7 PANELS    plan + draw",
+                   "render_panels.py exited %d, so the run produced no page"
+                   % proc.returncode)
         return False
-    run.ok("7 PANELS    renderability", "")
+    if not plan_ok:
+        run.findings("7 PANELS    plan + draw",
+                     "the page was drawn, but some requested panels are blank on it")
+        return False
+    run.ok("7 PANELS    plan + draw", str(Path(out_dir) / "panels.html"))
     return True
 
 
@@ -1048,7 +1063,7 @@ def main(argv=None):
     names = ["1 VENDOR    read the folder", "2 EXTRACT   vendor peaks",
              "3 ANNOTATE  match to targets", "4 IONLIST   annotated ions",
              "5 EXPORT    manifest", "6 CHECK     contract + gates",
-             "7 PANELS    renderability"]
+             "7 PANELS    plan + draw"]
 
     def finish(stage_index):
         for n in names[stage_index:]:

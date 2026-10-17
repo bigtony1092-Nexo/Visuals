@@ -161,6 +161,44 @@ per-protein roll-up this spine does not compute. Declaring it would name a metri
 nothing produced; naming `matched_intensity` would invent an enum value. Absent
 is what "no quant claim" looks like in this contract.
 
+## Stage 7: the page
+
+`plan_panels.py` decides which panels can render; `render_panels.py` draws them
+to one self-contained HTML file in the export. No scripts, no network: a viewer
+that needs a CDN is not a deliverable.
+
+Renderability is decided **only** by the plan. Two sources of truth about whether
+a panel may be drawn is how a blanked panel gets drawn anyway, so the renderer
+asks `plan_panels.assess()` and does not form its own opinion.
+
+What it refuses to do:
+
+- **Omit a blank.** A blanked panel is drawn as a blank card with the reason on
+  it. A page that renders nothing and a page that renders everything must not
+  look alike.
+- **Hide a point it could not plot.** A log axis cannot show a zero, and the
+  reader cannot see the gap. Every panel states how many points were drawn of how
+  many, and why the rest were not.
+- **Caption a false axis.** On SONAR the drift axis reads *quadrupole window
+  position — NOT mobility*. In a mixed export the drift panels carry one kind
+  only and say how many ions they excluded — a "MIXED" caption over points from
+  both kinds is a false point with a disclaimer beside it, not an exclusion.
+- **Blend tiers unmarked.** Each tier has its own colour *and* its own shape, so
+  the distinction survives a greyscale print, with a legend and a banner naming
+  which tiers are on the page.
+- **Say concentration.** Without a declared absolute standard every quant axis
+  reads *RELATIVE abundance, not concentration*.
+- **Assume a cluster_rank.** The SeqStart panel is primary-cluster only; an ion
+  with no rank is excluded and counted, never treated as rank 1.
+- **Draw a flight with no path.** `ion_flight` replays each ion's event
+  snapshots. With one snapshot per ion there is no path, and the panel says so —
+  a second snapshot appears when a stage *moves* an ion, which is the thing the
+  panel exists to make visible.
+
+Decimation, export warnings and the drift situation go in a banner above the
+charts, because by the time a reader is looking at a chart they are not going to
+re-read the manifest.
+
 ## Stage 6: the chain, fed from what the run just wrote
 
 `aria_check.py` re-reads the export from disk and runs the contract validator,
@@ -187,7 +225,9 @@ stage reported findings. 2 when a stage could not be run at all.
 ## What is still outside the spine
 
 - **Spectra, traces and fragment hits.** The MS/MS mirror, the isotope envelope
-  and the XIC panels need them and currently blank.
+  and the XIC panels need them and currently blank. The MS/MS mirror is the
+  load-bearing panel; until spectra are emitted, nothing on the page checks a
+  geometry-based identification in the frame practitioners already read.
 - **The cross-sample merge** that `atlas_consensus` requires.
 - **`one_over_k0`.** On a mobility run with no 1/K0 in the peak list, every
   mobility panel plots an empty axis. The extractor has the number; it is not
