@@ -276,10 +276,34 @@ def case_an_empty_export_refuses_rather_than_drawing_a_blank_page(tmp):
     bad = []
     if rc != 2:
         bad.append("exit %d on an export with no ions" % rc)
-    if "nothing to draw" not in out:
+    if "Nothing here to draw" not in out:
         bad.append("did not say there is nothing to draw")
     if (d / "panels.html").exists():
         bad.append("wrote a page for an export with no ions")
+
+    # A directory holding quant but no ion list is a different refusal: panels
+    # COULD be drawn from it, and the contract is the reason they are not.
+    d2 = export(tmp, "quantonly", [])
+    (d2 / "ions.jsonl").write_text("")
+    write(d2, "proteins.jsonl", [
+        {"sample_id": "CH215", "prot_accession": "Q99836", "protein_name": "M",
+         "top3avg": 7.209, "n_peptides_used": 3, "n_peptides_matched": 5,
+         "peptides_used": ["X"], "rank": None, "percentile": 94.0,
+         "normalized": None, "tier": "bare_proximity", "decoy_controlled": False}])
+    declare(d2, proteins=True)
+    rc2, out2, _ = render(d2)
+    if rc2 != 2:
+        bad.append("exit %d on a quant-only directory" % rc2)
+    if "proteins.jsonl" not in out2:
+        bad.append("did not say what the directory does hold")
+    if "const true" not in out2:
+        bad.append("did not name the contract rule that makes this a refusal")
+    if "no evidence trail" not in out2:
+        bad.append("did not say why quant without the ion list is not an export")
+    if "Nothing here to draw" in out2:
+        bad.append("claimed there was nothing to draw while holding a quant table")
+    if (d2 / "panels.html").exists():
+        bad.append("wrote a page from quant with no ion list behind it")
     return bad
 
 

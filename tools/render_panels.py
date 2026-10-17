@@ -1160,8 +1160,24 @@ def main(argv=None):
     manifest = json.loads(man_path.read_text())
     ions = read_jsonl(export_dir / "ions.jsonl")
     if not ions:
-        print("no ions.jsonl in %s: there is nothing to draw, and an empty page"
-              " would not say so" % export_dir, file=sys.stderr)
+        # "Nothing to draw" is wrong when a proteins or spectra table is sitting
+        # right there. The real reason is the contract: tables.ions is const
+        # true, so quant without the ion list it came from is a figure, not an
+        # export -- and that is the rule, not a gap in this tool.
+        others = [t for t in ("proteins", "spectra", "traces", "fragment_hits")
+                  if (export_dir / ("%s.jsonl" % t)).exists()]
+        print("no ions.jsonl in %s." % export_dir, file=sys.stderr)
+        if others:
+            print("The directory does hold %s. Panels could be drawn from %s"
+                  " alone, but the contract makes tables.ions const true: quant"
+                  " and spectra are derived from the ion list, and without it"
+                  " there is no evidence trail under them. This is a set of"
+                  " figures, not an export."
+                  % (", ".join("%s.jsonl" % t for t in others), others[0]),
+                  file=sys.stderr)
+        else:
+            print("Nothing here to draw, and an empty page would not say so.",
+                  file=sys.stderr)
         return 2
 
     declared = manifest.get("tables") or {}

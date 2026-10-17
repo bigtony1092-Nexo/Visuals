@@ -475,6 +475,37 @@ must not be conflated: an unassessed ion is not a clean one.
 - `atlas_consensus` needs a definition sharp enough to compute — how many samples, at
   what agreement.
 
+## 15 · A marker needs sites, and a bond is not an ion
+
+Two limits the chemistry gate learned from this project's own published
+fragmentation profiles (`docs/verification-run.md` records what they were used for).
+
+**Intensity reported per backbone bond.** The FITVCDYTNPCTK profiles publish
+summed b and y intensity per cleavage position, which is the honest way to
+compare curve shape across samples. `fragment_chemistry.py` accepts that shape
+(`{"bond": 6, ...}` in place of `{"fragment": "y7", ...}`). The bond markers read
+the same, because a bond is a bond however its ions were counted. The y-share
+does not: b and y are no longer separable, so it reports **merged** rather than
+0.000, which would say the source has no y ions when it has no column for them.
+
+**An enrichment over one site is that site's intensity.** FITVCDYTNPCTK has one
+proline and one aspartate across twelve bonds. Its real profiles give proline
+0.98x and 1.08x, and aspartate 1.72x and 1.85x, in two independent samples. None
+of the four is evidence. Bond intensities inside a single peptide span an order
+of magnitude — 826k to 9.1M in that peptide — so a single site lands where it
+lands. The gate now requires **three marker-bearing bonds** before it will read
+the ratio, and below that says CANNOT BE ASSESSED, which is neither a pass nor a
+failure. The aspartate numbers are suggestive and reproducible; reproducible
+across two samples of the same peptide means the measurement is stable, not that
+the effect generalises.
+
+## 16 · Quant with no ion list behind it is not an export
+
+`tables.ions` is `const: true`. Proteins and spectra are derived from the ion
+list, so a directory holding `proteins.jsonl` and no `ions.jsonl` has quant with
+no evidence trail under it. Panels *could* be drawn from it, and they are not:
+`render_panels.py` refuses and names this rule. A published figure is a figure.
+
 ## 14. A reference must pass the chemistry gate
 
 Any table used as the *reference* side of a pattern comparison has to be shown to

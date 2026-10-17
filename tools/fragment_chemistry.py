@@ -32,6 +32,18 @@ Input is JSON lines, one per fragment:
 absolute or relative; only shares within a source are used, so normalization per
 spectrum does not matter here.
 
+A source may instead report intensity per BACKBONE BOND, with b and y already
+summed into one number -- which is how this project's own fragmentation profiles
+are published:
+
+    {"source": "PXD076727-8838", "sequence": "FITVCDYTNPCTK",
+     "bond": 6, "intensity": 8855138.0}
+
+The bond markers read the same way, because a bond is a bond. The y-share does
+not: b and y are no longer separable, so it is reported as merged rather than as
+0.000, which would say the source has no y ions when in fact it has no column for
+them.
+
 Exit status is 1 if any source looks uniform, so this can gate a comparison.
 """
 
@@ -43,6 +55,12 @@ from collections import defaultdict
 
 FRAG = re.compile(r"^([by])(\d+)")
 UNIFORM_TOL = 1.25      # enrichment below this is not distinguishable from uniform
+# An enrichment ratio over ONE marker-bearing bond is that bond's intensity and
+# nothing else. Real bond intensities inside a single peptide span an order of
+# magnitude -- the FITVCDYTNPCTK profiles run 826k to 9.1M across 12 bonds -- so a
+# single site can land anywhere from 0.1x to 2x by chance alone. The ratio only
+# starts to mean something once several sites contribute.
+MIN_MARKER_SITES = 3
 
 
 def bond_of(label, length):
@@ -74,30 +92,47 @@ def summarise(rows):
     tot = y_int = 0.0
     obs = defaultdict(float)
     cnt = defaultdict(int)
+    sites = defaultdict(set)
     n_frag = 0
     skipped = 0
+    merged = 0
     for seq, label, inten in rows:
-        k = bond_of(label, len(seq))
+        if isinstance(label, int):
+            # A bond index: b and y already summed. Valid for the bond markers,
+            # and the y-share is not a question this row can answer.
+            k = label if 1 <= label <= len(seq) - 1 else None
+            merged += 1
+        else:
+            k = bond_of(label, len(seq))
         if k is None:
             skipped += 1
             continue
         n_frag += 1
         tot += inten
-        if label.strip()[0] == "y":
+        if not isinstance(label, int) and label.strip()[0] == "y":
             y_int += inten
         for name, hit in markers(seq, k).items():
             if hit:
                 obs[name] += inten
                 cnt[name] += 1
+                sites[name].add((seq, k))
     if not n_frag or tot <= 0:
         return None
-    out = {"fragments": n_frag, "skipped": skipped, "y_share": y_int / tot}
+    # A source that is wholly bond-level has no y column at all. One that mixes
+    # the two would give a share over a denominator that includes merged rows,
+    # which is not a y-share either, so it is withheld in both cases.
+    out = {"fragments": n_frag, "skipped": skipped, "merged": merged,
+           "y_share": None if merged else y_int / tot}
     for name in ("proline", "aspartate"):
         share = obs[name] / tot
         # The expectation is taken over the fragments this source actually
         # observed, which is what "if every bond broke equally" means here.
         expected = cnt[name] / n_frag
         out[name] = (share, expected, (share / expected) if expected else None)
+        # How many distinct bonds carry the marker, and over how many peptides.
+        # The ratio above is only as good as these two counts.
+        out[name + "_sites"] = len(sites[name])
+        out[name + "_peptides"] = len({seq for seq, _ in sites[name]})
     return out
 
 
@@ -113,7 +148,7 @@ def load(path):
                 r = json.loads(line)
                 seq = r["sequence"].strip().upper()
                 inten = float(r["intensity"])
-                frag = str(r["fragment"])
+                frag = int(r["bond"]) if "bond" in r else str(r["fragment"])
             except (ValueError, KeyError, AttributeError, TypeError):
                 bad += 1
                 continue
@@ -146,9 +181,10 @@ def main(argv=None):
     print("Share of b/y intensity on the bonds chemistry favours, against the share")
     print("expected if every backbone bond broke equally given the same fragments.")
     print()
-    print("%-22s %9s %8s %22s %22s" % (
-        "source", "fragments", "y-share", "proline (obs/exp)", "aspartate (obs/exp)"))
-    flat, unassessable = [], []
+    print("%-22s %9s %8s %22s %5s %22s %5s" % (
+        "source", "fragments", "y-share", "proline (obs/exp)", "sites",
+        "aspartate (obs/exp)", "sites"))
+    flat, unassessable, thin = [], [], []
     for name, rows in sources.items():
         s = summarise(rows)
         if s is None:
@@ -159,10 +195,19 @@ def main(argv=None):
             share, exp, enr = s[marker]
             cells.append("%.3f / %.3f = %4.2fx" % (share, exp, enr) if enr
                          else "%.3f / n/a" % share)
-        print("%-22s %9d %8.3f %22s %22s" % (
-            name[:22], s["fragments"], s["y_share"], cells[0], cells[1]))
+        print("%-22s %9d %8s %22s %5s %22s %5s" % (
+            name[:22], s["fragments"],
+            "merged" if s["y_share"] is None else "%.3f" % s["y_share"],
+            cells[0], "%d/%d" % (s["proline_sites"], s["proline_peptides"]),
+            cells[1], "%d/%d" % (s["aspartate_sites"], s["aspartate_peptides"])))
         enr = s["proline"][2]
-        if enr is None:
+        if enr is not None and s["proline_sites"] < MIN_MARKER_SITES:
+            # Below the floor the ratio is one or two bonds' intensity, so it
+            # cannot distinguish a flat source from a chemical one in either
+            # direction. Calling that "flat" would be a verdict from n=1.
+            thin.append((name, enr, s["proline_sites"], s["proline_peptides"],
+                         s["aspartate"][2], s["aspartate_sites"]))
+        elif enr is None:
             # No proline-containing peptide, so the marker had no opportunity.
             # That is "cannot assess", not "passes": leaving it out of `flat`
             # let a literally uniform source print the all-clear and exit 0.
@@ -170,22 +215,48 @@ def main(argv=None):
         elif enr < UNIFORM_TOL:
             flat.append((name, enr))
     print()
+    bondlevel = [n for n, rows in sources.items()
+                 if any(isinstance(l, int) for _, l, _ in rows)]
+    if bondlevel:
+        print("  %s: intensity is reported per backbone bond with b and y already"
+              % ", ".join(bondlevel))
+        print("  summed, so the y-share column reads `merged`, not zero. The bond")
+        print("  markers are unaffected: a bond is a bond however its ions were")
+        print("  counted. Beam-type CID favouring y over b simply cannot be checked")
+        print("  from this source.")
+        print()
     for name, enr in flat:
         print("  %s: proline enrichment %.2fx is below %.2fx — indistinguishable from"
               % (name, enr, UNIFORM_TOL))
         print("  uniform. This source carries no fragmentation chemistry, so it cannot")
         print("  serve as a reference: a wrong peptide will match it as well as the right")
         print("  one. Do not read a pattern comparison against it in either direction.")
+    for name, enr, nsite, npep, aenr, asite in thin:
+        print("  %s: the proline column rests on %d marker-bearing bond(s) across %d"
+              % (name, nsite, npep))
+        print("  peptide(s), below the %d this tool will read. An enrichment over one"
+              % MIN_MARKER_SITES)
+        print("  bond IS that bond's intensity, and bond intensities inside a single")
+        print("  peptide span an order of magnitude, so %.2fx here is not evidence of" % enr)
+        print("  chemistry OR of its absence. CANNOT BE ASSESSED, which is not a pass")
+        print("  and not a failure.", end="")
+        if aenr is not None and asite < MIN_MARKER_SITES:
+            print(" The aspartate column (%.2fx over %d site) is in the"
+                  % (aenr, asite))
+            print("  same position: suggestive, and resting on one bond.")
+        else:
+            print()
+        print("  Supply more peptides carrying the marker before reading either.")
     for name in unassessable:
         print("  %s: no proline-containing peptide, so the strongest marker had no" % name)
         print("  opportunity and this source CANNOT BE ASSESSED. That is not a pass.")
         print("  Supply peptides that can express the effect, or judge this source on")
         print("  the aspartate column and its y-share with that limitation stated.")
-    if not flat and not unassessable:
+    if not flat and not unassessable and not thin:
         print("  Every source shows the proline effect above %.2fx, so each carries real"
               % UNIFORM_TOL)
         print("  fragmentation chemistry and a comparison between them can be read.")
-    return 1 if (flat or unassessable) else 0
+    return 1 if (flat or unassessable or thin) else 0
 
 
 if __name__ == "__main__":
