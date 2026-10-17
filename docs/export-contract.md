@@ -474,3 +474,34 @@ must not be conflated: an unassessed ion is not a clean one.
   resolvable, or the hash is an audit dead end.
 - `atlas_consensus` needs a definition sharp enough to compute — how many samples, at
   what agreement.
+
+## 14. A reference must pass the chemistry gate
+
+Any table used as the *reference* side of a pattern comparison has to be shown to
+carry fragmentation chemistry before the comparison is read. Run
+`tools/fragment_chemistry.py` on both sides. A side whose proline enrichment sits
+below 1.25× its own observed opportunity is not a reference: a wrong peptide will
+match it as well as the right one, and the comparison says nothing in either
+direction.
+
+This is not hypothetical. The PAX8 fragment panel compared a FragPipe search
+output against the Thermo archive and the mismatched control *beat* the correct
+pairing, because the archive side sat at 1.01× — old low-resolution ion-trap MS2
+where the nearest real peak to each ladder position is a median 235 ppm away, so
+many matches are coincidental, and coincidental intensities are flat. The same
+comparison done same-file, MARCH against a FragPipe search of the identical raw
+file, gives the correct pairing winning 968 of 1,035 pairs.
+
+Two rules follow:
+
+**Prefer a same-file reference.** A search of the raw file being targeted shares
+the instrument, the day and the fragmentation regime. A cross-platform archive
+shares none of them and brings its own provenance problems.
+
+**Declare the scale a stored intensity is on.** The Thermo MSFragger route stored
+`100 × √(peak / base peak)` in a column named for an intensity. The values are
+real measurements, so nothing was fabricated — but a consumer reading them as
+linear is wrong by a square, and nothing in the schema said so. If a column holds
+a transform of a measurement, the name or the manifest must say which transform.
+The same applies to an m/z computed from a ladder sitting in a column named for a
+reported one: it reads as a measurement and is not.
