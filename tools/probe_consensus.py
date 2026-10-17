@@ -881,6 +881,24 @@ NORMALIZATION_FRACTION = 0.85  # an ion must reach this share of the median to n
 # the axis's arbitrary unit cancels. Splitting an ion's loads in half needs four.
 MIN_LOADS_FOR_BEND = 4
 BEND_FRACTION = 0.25
+# A run name's gradient length, e.g. the 60 in PAX8_JP210_500ng_60_1uL_..._1.
+# Taken as the only bare integer token in a plausible gradient range, which skips
+# the acquisition date, the replicate index and the ng and uL tokens (those carry
+# units). Reported, never guessed at: if the rule finds nothing the runs are not
+# split and the output says so.
+GRADIENT_MIN, GRADIENT_MAX = 10, 600
+TOKEN = re.compile(r"[^0-9A-Za-z]+")
+
+
+def gradient_of(run):
+    """The gradient length in a run name, or None."""
+    hits = []
+    for tok in TOKEN.split(str(run)):
+        if tok.isdigit() and GRADIENT_MIN <= int(tok) <= GRADIENT_MAX:
+            hits.append(int(tok))
+    return hits[0] if len(hits) == 1 else None
+
+
 # A volume may be written 0.5uL or 0-5uL; the second form is what the PAX8 run
 # names use. Matching only the plain decimal read "0-5uL" as FIVE microlitres and
 # filed it under a label ending "_0", which is a 10x error on the one axis that
@@ -966,10 +984,25 @@ def volume_check(factors, out):
         if v is not None:
             groups[label].append((v, run, f))
     usable = {k: sorted(v) for k, v in groups.items() if len(v) >= 2}
-    if not usable:
+    found = sum(len(v) for v in groups.values())
+    if not found:
         out.append("  no run name carries an injection volume. Nothing here is"
                    " anchored outside the intensities; only a declared load per"
                    " run (--load-map) can do that.")
+        return None
+    if not usable:
+        # The real PAX8 names hit this: all 24 carry a volume, and no two share a
+        # label because the vial number and replicate index stay in it. Printing
+        # "no run name carries a volume" here was simply false.
+        out.append("  %d run name(s) carry an injection volume, but no two share a"
+                   " label once the volume is removed, so there is nothing to" % found)
+        out.append("  compare. The vial number and replicate index stay in the label:")
+        for label in sorted(groups)[:4]:
+            out.append("    %s  <- %s" % (label, groups[label][0][1]))
+        out.append("  Volume could not tell you load here even if they did group:"
+                   " load is")
+        out.append("  volume x concentration, and this cohort varied both. Use"
+                   " --load-map.")
         return None
     out.append("  injection volumes appear in the run names. They are REPORTED, not")
     out.append("  converted to load: load is volume x concentration, and on the")
@@ -1003,6 +1036,86 @@ def volume_check(factors, out):
     out.append("  concentration, and the concentration is not in these names. Supply")
     out.append("  --load-map with the recorded ng per run.")
     return None
+
+
+def constant_load_check(per_ion_run, factors, out):
+    """At a FIXED load, does intensity depend on injection volume?
+
+    The Colorado design has replicates in exactly one place: 500 ng delivered at
+    1, 2 and 5 uL from vials at 0.5, 0.25 and 0.10 ug/uL, three runs each. The
+    load is constant, so the expectation is no change. A trend is trap loading or
+    a dilution effect, and it is measurable here precisely because the load is
+    not varying.
+    """
+    by_load_vol = defaultdict(lambda: defaultdict(list))
+    for run, f in factors.items():
+        v, _ = microlitres(run)
+        g = gradient_of(run)
+        if v is not None:
+            by_load_vol[(round(f, 9), g)][v].append(run)
+    series = {k: v for k, v in by_load_vol.items() if len(v) >= 2}
+    if not series:
+        return
+    out.append("  CONSTANT-LOAD CHECK: at one load, intensity should not depend on")
+    out.append("  injection volume. A trend is trap loading or dilution, not load.")
+    for (load, g), vols in sorted(series.items()):
+        out.append("    load factor %+.3f%s, %d volume(s):"
+                   % (load, ", %s min" % g if g else "", len(vols)))
+        meds, reps = [], []
+        for v in sorted(vols):
+            runs_at = vols[v]
+            # median over ions of the median intensity at this volume, in log10
+            per_ion = []
+            for key, per_run in per_ion_run.items():
+                here = [per_run[r] for r in runs_at if r in per_run]
+                if here:
+                    per_ion.append(math.log10(statistics.median(here)))
+            if not per_ion:
+                continue
+            meds.append((v, statistics.median(per_ion), len(runs_at)))
+            reps.append(len(runs_at))
+        if len(meds) < 2:
+            continue
+        base = meds[0][1]
+        for v, m, n in meds:
+            out.append("      %4g uL  n=%d  median log10 intensity %+.3f  (%+.3f)%s"
+                       % (v, m and n, m, m - base,
+                          "   <- single run, not judgeable" if n < 2 else ""))
+        # Judge the trend on the REPLICATED volumes only. A singleton column has
+        # no scatter of its own, and letting it suppress the verdict loses the
+        # finding -- the Colorado series has three replicated volumes and one
+        # singleton, and the singleton is the disputed run.
+        rep = [(v, m, n) for v, m, n in meds if n >= 2]
+        singles = [(v, m) for v, m, n in meds if n < 2]
+        if len(rep) < 2:
+            spread = max(m for _, m, _ in meds) - min(m for _, m, _ in meds)
+            out.append("      fewer than two replicated volumes, so the %.3f log10 spread"
+                       % spread)
+            out.append("      has no scatter to be judged against.")
+            continue
+        spread = max(m for _, m, _ in rep) - min(m for _, m, _ in rep)
+        out.append("      over the %d replicated volume(s): %.3f log10 units."
+                   % (len(rep), spread))
+        for v, m in singles:
+            near = min(rep, key=lambda t: abs(math.log10(t[0] / v)))
+            want = math.log10(v / near[0])
+            out.append("      the %g uL run is unreplicated. It sits %+.3f from the %g uL"
+                       % (v, m - near[1], near[0]))
+            out.append("      median; if its load matched, it would sit near 0, and if it"
+                       " carried")
+            out.append("      a different load that offset is evidence about which. Where"
+                       " a run's")
+            out.append("      load is disputed, this is the measurement that speaks to it.")
+        if spread < 0.05:
+            out.append("      %.3f log10 units across the volumes: flat, as a constant"
+                       % spread)
+            out.append("      load should be. The dilution and the trap are not showing.")
+        else:
+            out.append("      %.3f log10 units (%.2fx) across volumes at ONE load. That is"
+                       % (spread, 10 ** spread))
+            out.append("      not load, because load did not change. Trap loading or a")
+            out.append("      dilution effect, and it bounds how much of any load slope")
+            out.append("      elsewhere is really the injection.")
 
 
 def report_normalization_set(slopes, vals, cohort_med, declared, out):
@@ -1039,11 +1152,17 @@ def test_load(con, cfg, load_map, limit, out):
         out.append("  SKIPPED: no run column, so intensities cannot be tied to a load.")
         return False
 
+    # load_map is None when --load-map was not given, which is the usual case now.
+    given = load_map or {}
+    notes = {k: v for k, v in given.items() if str(k).startswith("_")}
+    runs_map = {k: v for k, v in given.items() if not str(k).startswith("_")}
+    disputed = notes.get("_disputed") or {}
+
     def ng_for(run):
         run = str(run)
-        if run in load_map:
-            return load_map[run]
-        for frag, ng in load_map.items():
+        if run in runs_map:
+            return runs_map[run]
+        for frag, ng in runs_map.items():
             if frag in run:
                 return ng
         return None
@@ -1069,7 +1188,10 @@ def test_load(con, cfg, load_map, limit, out):
         out.append("  SKIPPED: no usable intensity rows.")
         return False
 
-    declared = bool(load_map)
+    declared = bool(runs_map)
+    if given and not runs_map:
+        out.append("  the load map holds only comment keys (leading underscore) and no"
+                   " run entries, so the axis is estimated, not declared.")
     if declared:
         factors, unmatched = {}, Counter()
         for run in {run for per_run in per_ion_run.values() for run in per_run}:
@@ -1094,6 +1216,51 @@ def test_load(con, cfg, load_map, limit, out):
         if not factors:
             out.append("  SKIPPED: no load axis could be built.")
             return False
+
+    # 60 min and 120 min are different LC methods. A load slope pooled across them
+    # mixes method with load, and on the Colorado cohort each method holds exactly
+    # one 100 ng run, so pooling is also the only way to make the low end look
+    # replicated when it is not.
+    grads = {}
+    for run in factors:
+        grads.setdefault(gradient_of(run), []).append(run)
+    if len(grads) > 1 and None not in grads:
+        out.append("  %d gradient length(s) in this cohort: %s. These are different LC"
+                   % (len(grads), ", ".join("%s min (%d run%s)"
+                                            % (g, len(r), "" if len(r) == 1 else "s")
+                                            for g, r in sorted(grads.items()))))
+        out.append("  methods, so a pooled load slope would mix method with load. Each is")
+        out.append("  reported separately below; none is combined.")
+        for g, runs_in in sorted(grads.items()):
+            by_load = {}
+            for run in runs_in:
+                by_load.setdefault(round(factors[run], 9), []).append(run)
+            desc = ", ".join("%d run%s" % (len(v), "" if len(v) == 1 else "s")
+                             for _, v in sorted(by_load.items()))
+            out.append("    %s min: %d load level(s), %s"
+                       % (g, len(by_load), desc))
+            single = [k for k, v in by_load.items() if len(v) == 1]
+            if single and len(by_load) >= 2:
+                out.append("      %d level(s) rest on a SINGLE run, so the slope at this"
+                           % len(single))
+                out.append("      gradient is anchored by one unreplicated point. Its"
+                           " scatter is")
+                out.append("      not measurable and nothing checks it.")
+    elif len(grads) > 1:
+        out.append("  some run names carry a gradient length and some do not, so the runs")
+        out.append("  were NOT split by method. If this cohort mixes gradients, the slope")
+        out.append("  below mixes method with load.")
+
+    if declared and disputed:
+        for run, info in disputed.items():
+            hit = [r for r in factors if str(run) in str(r) or str(r) in str(run)]
+            out.append("  DISPUTED LOAD on %s: the map says %s ng, the alternative"
+                       " reading is %s ng." % (str(run)[:44], info.get("recorded"),
+                                               info.get("alternative")))
+            out.append("    %s" % info.get("why", "no reason recorded"))
+            out.append("    %s this cohort. Every number below that uses it inherits the"
+                       % ("IN" if hit else "NOT in"))
+            out.append("    dispute; re-run with the other value to see what moves.")
 
     n_loads = len({round(f, 9) for f in factors.values()})
     if n_loads < 2:
@@ -1256,6 +1423,7 @@ def test_load(con, cfg, load_map, limit, out):
     report_normalization_set(slopes, vals, cohort_med, declared, out)
 
     if declared:
+        constant_load_check(per_ion_run, factors, out)
         volume_check(factors, out)
     else:
         out.extend(volume_lines)

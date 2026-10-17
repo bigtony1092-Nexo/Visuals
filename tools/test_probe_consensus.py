@@ -872,6 +872,185 @@ def one_load_is_no_axis(db, tmp):
     return bad
 
 
+
+
+PAX8_LOADS = ROOT / "examples" / "pax8-colorado-loads.json"
+
+
+def plant_colorado(path, vol_effect=0.0):
+    """The real 24-run Colorado cohort: names and loads from the instrument record.
+
+    vol_effect adds a genuine trap/dilution trend per decade of injection volume,
+    at CONSTANT load, which is the one thing this design can measure well.
+    """
+    import json as _json
+    lm = {k: v for k, v in _json.loads(PAX8_LOADS.read_text()).items()
+          if not k.startswith("_")}
+    rng = random.Random(9)
+    con = sqlite3.connect(path)
+    con.execute("""CREATE TABLE observations (
+        id INTEGER PRIMARY KEY, PeptideSequence TEXT, Charge INTEGER,
+        RunName TEXT, PrecMz REAL, CalcMz REAL, CalcMass REAL,
+        PrecursorIntensity REAL)""")
+    rid, seen = 0, set()
+    for _ in range(150):
+        while True:
+            seq = "".join(rng.choice("GASPVTLINDQEMHFYW")
+                          for _ in range(rng.randint(7, 15))) + "K"
+            z = rng.choice([2, 3])
+            if (seq, z) not in seen:
+                seen.add((seq, z))
+                break
+        mass = WATER + sum(RESIDUE[c] for c in seq)
+        calc = mass / z + pc.PROTON
+        amp = 10 ** rng.uniform(3.5, 6.0)
+        for run, ng in lm.items():
+            v, _ = pc.microlitres(run)
+            trend = 1.0 + vol_effect * math.log10(v / 1.0)
+            rid += 1
+            con.execute("INSERT INTO observations VALUES (?,?,?,?,?,?,?,?)",
+                        (rid, seq, z, run, calc, calc, mass,
+                         amp * ng * trend * math.exp(rng.gauss(0, 0.07))))
+    con.commit()
+    con.close()
+    return lm
+
+
+def gradients_are_never_pooled(db, tmp):
+    """60 min and 120 min are different LC methods; pooling mixes method with load."""
+    p = tmp / "colorado.db"
+    plant_colorado(str(p))
+    rc, out = run("--db", str(p), "--load-map", str(PAX8_LOADS))
+    sec = section(out, "TEST 3")
+    bad = []
+    if "different LC" not in sec:
+        bad.append("did not say the gradients are different methods")
+    if "60 min (20 runs)" not in sec or "120 min (4 runs)" not in sec:
+        bad.append("did not break the cohort down by gradient: %r"
+                   % [l for l in sec.splitlines() if "gradient length" in l])
+    if "none is combined" not in sec:
+        bad.append("did not state that the gradients are not combined")
+    if "mix method with load" not in sec:
+        bad.append("did not say what pooling would cost")
+    return bad
+
+
+def a_load_level_on_one_run_is_named_unreplicated(db, tmp):
+    """Each Colorado gradient holds exactly one 100 ng run."""
+    p = tmp / "colorado2.db"
+    plant_colorado(str(p))
+    rc, out = run("--db", str(p), "--load-map", str(PAX8_LOADS))
+    sec = section(out, "TEST 3")
+    bad = []
+    if "SINGLE run" not in sec:
+        bad.append("did not flag the load level resting on one run")
+    if "not measurable" not in sec:
+        bad.append("did not say the scatter cannot be measured")
+    # both gradients must be flagged, not just one
+    if sec.count("SINGLE run") < 2:
+        bad.append("only %d gradient flagged; both have a single 100 ng run"
+                   % sec.count("SINGLE run"))
+    return bad
+
+
+def a_disputed_load_is_declared_not_trusted(db, tmp):
+    """JP213_100ng_60_0-5uL: 500 ng by the record, 125 on the other reading."""
+    p = tmp / "colorado3.db"
+    plant_colorado(str(p))
+    rc, out = run("--db", str(p), "--load-map", str(PAX8_LOADS))
+    sec = section(out, "TEST 3")
+    bad = []
+    if "DISPUTED LOAD" not in sec:
+        bad.append("the disputed run was used without saying so")
+    if "500" not in sec or "125" not in sec:
+        bad.append("did not give both readings")
+    if "inherits the" not in sec:
+        bad.append("did not say what else the dispute affects")
+    if "IN this cohort" not in sec:
+        bad.append("did not say whether the disputed run is present")
+    return bad
+
+
+def the_constant_load_series_is_its_own_test(db, tmp):
+    """At a fixed 500 ng, intensity should not track injection volume."""
+    flat = tmp / "flatvol.db"
+    plant_colorado(str(flat), vol_effect=0.0)
+    rc, out = run("--db", str(flat), "--load-map", str(PAX8_LOADS))
+    sec = section(out, "TEST 3")
+    bad = []
+    if "CONSTANT-LOAD CHECK" not in sec:
+        bad.append("no constant-load check on a cohort built around one")
+    if "should not depend on" not in sec:
+        bad.append("did not state the expectation")
+    # a real trend must be found and must NOT be called load
+    trend = tmp / "trendvol.db"
+    plant_colorado(str(trend), vol_effect=0.60)
+    rc2, out2 = run("--db", str(trend), "--load-map", str(PAX8_LOADS))
+    sec2 = section(out2, "TEST 3")
+    if "across volumes at ONE load" not in sec2:
+        bad.append("a planted volume trend at constant load was not reported")
+    if "not load, because load did not change" not in sec2:
+        bad.append("did not rule out reading the volume trend as load")
+    if "bounds how much of any load slope" not in sec2:
+        bad.append("did not say what the trend is useful for")
+    return bad
+
+
+def the_real_names_do_carry_volumes(db, tmp):
+    """The old message said they carried none, which was false for all 24."""
+    p = tmp / "colorado4.db"
+    plant_colorado(str(p))
+    rc, out = run("--db", str(p))          # no load map: the volume path
+    sec = section(out, "TEST 3")
+    bad = []
+    if "no run name carries an injection volume" in sec:
+        bad.append("claimed the real PAX8 names carry no volume; all 24 do")
+    if "carry an injection volume, but no two share a label" not in sec:
+        bad.append("did not state the real reason there is nothing to compare")
+    if "vial number and replicate index stay in the label" not in sec:
+        bad.append("did not say why the grouping fails")
+    for n in (24,):
+        if str(n) not in sec:
+            bad.append("did not count how many names carry a volume")
+    return bad
+
+
+def the_shipped_load_map_matches_the_record(db, tmp):
+    """The map is data; its shape is worth asserting so a bad edit is caught."""
+    import json as _json
+    doc = _json.loads(PAX8_LOADS.read_text())
+    loads = {k: v for k, v in doc.items() if not k.startswith("_")}
+    bad = []
+    if len(loads) != 24:
+        bad.append("%d runs in the map, the cohort has 24" % len(loads))
+    counts = {}
+    for v in loads.values():
+        counts[v] = counts.get(v, 0) + 1
+    if counts != {500.0: 22, 100.0: 2}:
+        bad.append("load distribution is %r, the record says 22 at 500 and 2 at 100"
+                   % counts)
+    if "_disputed" not in doc:
+        bad.append("the disputed run is not flagged in the map")
+    else:
+        d = doc["_disputed"]
+        if len(d) != 1:
+            bad.append("%d disputed entries, expected 1" % len(d))
+        for run, info in d.items():
+            if loads.get(run) != info.get("recorded"):
+                bad.append("%s is %r in the map but the dispute records %r"
+                           % (run, loads.get(run), info.get("recorded")))
+            if info.get("alternative") == 100.0:
+                bad.append("the alternative reading is 100 ng, which the record"
+                           " rules out on both readings")
+    # every key must be a real-looking run stem, and every value a positive load
+    for k, v in loads.items():
+        if not isinstance(v, (int, float)) or v <= 0:
+            bad.append("%s has load %r" % (k, v))
+        if pc.gradient_of(k) not in (60, 120):
+            bad.append("%s has no readable gradient" % k)
+    return bad
+
+
 def picks_the_richer_table(_db, out):
     if "table    observations" not in out:
         return ["chose the wrong table: %r" % out.splitlines()[2:3]]
@@ -1547,6 +1726,12 @@ STANDALONE = (refuses_a_published_shaped_table, refuses_a_file_that_is_not_a_dat
               a_constant_load_across_volumes_is_recognised,
               the_real_pax8_axis_is_two_points_and_says_so,
               one_load_is_no_axis,
+              gradients_are_never_pooled,
+              a_load_level_on_one_run_is_named_unreplicated,
+              a_disputed_load_is_declared_not_trusted,
+              the_constant_load_series_is_its_own_test,
+              the_real_names_do_carry_volumes,
+              the_shipped_load_map_matches_the_record,
               a_run_with_no_volume_label_says_the_axis_is_unanchored,
               a_declared_load_map_is_still_not_circular,
               the_median_per_ion_run_is_used_not_the_max,
