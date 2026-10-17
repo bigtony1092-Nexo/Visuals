@@ -146,6 +146,9 @@ tools/ladder_stats.py             intervals on the real-vs-reversed rates, and
                                   t-tests a candidate variable without scoring it
 tools/test_ladder_stats.py        checks the intervals by hand and proves the
                                   covariate path cannot score
+tools/resolvability.py            who can be told apart from whom, in sigma —
+                                  the (rt, drift) space a fragment is assigned in
+tools/test_resolvability.py       proves the same gap flips with the scale
 viewer/aria-ion-panels.html       the viewer — conventional and bridge panels
 ion-flight-atlas.html             the 3-D flight map, standalone and synthetic
 ```
