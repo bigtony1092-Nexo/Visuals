@@ -28,6 +28,7 @@ exported ion in memory. For an export in the hundreds of millions, use --limit.
 
 import argparse
 import json
+import re
 import sys
 from collections import Counter, defaultdict
 from datetime import datetime
@@ -64,6 +65,31 @@ RESIDUE = {
 WATER = 18.010565
 CARBAMIDOMETHYL = 57.02146
 DELTA_TOL = 0.01
+
+
+def required_residues(residues):
+    """Split a candidate's `residues` into (single residues, positional terms).
+
+    "STY" needs one of S, T or Y. "N-term" needs a position, not a residue N —
+    scanning character by character turned it into residue N and reported a
+    legitimate N-terminal modification as impossible on any peptide lacking one.
+    A purely positional requirement is satisfiable by every peptide, so there is
+    nothing to look for in the sequence.
+    """
+    tokens = [t.strip() for t in re.split(r"[,;/\s]+", residues or "") if t.strip()]
+    sites, positional = [], []
+    for t in tokens:
+        if len(t) == 1 and t in RESIDUE:
+            sites.append(t)
+        elif len(t) == 1:
+            positional.append(t)          # an unknown single letter; not a residue
+        else:
+            positional.append(t)          # N-term, C-term, protein N-term, ...
+    # A bare multi-letter run of residue codes, as in "STY", is a residue list.
+    if not sites and len(tokens) == 1 and all(c in RESIDUE for c in tokens[0]):
+        sites = list(tokens[0])
+        positional = []
+    return sites, positional
 
 
 def peptide_mass(sequence):
@@ -182,7 +208,15 @@ def parse_instant(value):
 def check_manifest(report, manifest, export_dir, validators, names, where):
     check_schema(report, (validators or {}).get("manifest"), where, manifest)
 
-    samples = {s["sample_id"]: s for s in manifest.get("samples", [])}
+    samples = {}
+    for i, sample in enumerate(manifest.get("samples", [])):
+        sid = sample.get("sample_id") if isinstance(sample, dict) else None
+        if sid is None:
+            # Dying here threw away every finding already collected. A missing
+            # id is itself a finding; report it and carry on.
+            report.error(where, f"samples[{i}] has no sample_id, so no ion can name it")
+            continue
+        samples[sid] = sample
     if not samples:
         report.error(where, "samples[] is empty — no ion can name a sample that exists")
 
@@ -330,7 +364,12 @@ def check_ion(report, where, line, ion, samples, seen_uids):
         isotopes = [iso for iso in isotopes if isinstance(iso, dict)]
         ks = [iso.get("k") for iso in isotopes]
         if len(set(ks)) != len(ks):
-            dupes = sorted({k for k in ks if ks.count(k) > 1})
+            # ks can hold None for an entry missing k, and sorted() will not
+            # order None against an int. Sort the comparable ones and name the
+            # rest separately.
+            dupes = sorted({k for k in ks if ks.count(k) > 1 and isinstance(k, int)})
+            if any(k is None and ks.count(k) > 1 for k in ks):
+                dupes = dupes + ["missing"]
             report.error(where, f"{at}: isotopes[] repeats k={dupes}")
         mono = next((iso for iso in isotopes if iso.get("k") == 0), None)
         if mono is None:
@@ -463,7 +502,7 @@ def check_spectra(report, path, uids, samples, validators, limit):
             continue
         at = f"line {line}"
         uid = spec.get("ion_uid")
-        if uids and uid not in uids:
+        if uids and not limit and uid not in uids:
             report.error(where, f"{at}: ion_uid {uid} is not an ion in ions.jsonl")
         if spec.get("sample_id") and spec["sample_id"] not in samples:
             report.error(where, f"{at}: sample_id {spec['sample_id']!r} is not in manifest.samples")
@@ -518,7 +557,7 @@ def check_traces(report, path, uids, validators, limit):
             continue
         at = f"line {line}"
         uid = tr.get("ion_uid")
-        if uids and uid not in uids:
+        if uids and not limit and uid not in uids:
             report.error(where, f"{at}: ion_uid {uid} is not an ion in ions.jsonl")
         key = (uid, tr.get("isotope_k"))
         if key in seen:
@@ -611,7 +650,7 @@ def check_fragment_hits(report, path, uids, samples, validators, limit):
         # --- fragments must be detections the ledger holds ----------------------
         for m in matched:
             uid = m.get("ion_uid")
-            if uid and uids and uid not in uids:
+            if uid and uids and not limit and uid not in uids:
                 report.error(where, f"{at}: fragment {m.get('label')} cites ion_uid {uid},"
                                     " which is not an ion in ions.jsonl")
 
@@ -653,7 +692,9 @@ def check_fragment_hits(report, path, uids, samples, validators, limit):
                     )
             for cand in (delta.get("candidates") or []):
                 residues = cand.get("residues") or ""
-                sites = [r for r in residues if r in RESIDUE]
+                sites, positional = required_residues(residues)
+                if positional and not sites:
+                    continue
                 if sites and sequence and cand.get("plausible") is True:
                     if not any(r in sequence for r in sites):
                         report.error(
@@ -716,7 +757,7 @@ def check_proteins(report, path, samples, peptides, validators, limit, excerpt):
                 where,
                 f"{at}: peptides_used lists {len(listed)} peptides but n_peptides_used is {used}",
             )
-        if listed and peptides and not excerpt:
+        if listed and peptides and not excerpt and not limit:
             orphans = [p for p in listed if p not in peptides]
             if orphans:
                 report.warn(
@@ -741,6 +782,7 @@ def check_totals(report, manifest, n_ions, tiers, kinds, limited, excerpt, where
     exported = counts.get("ions_exported")
     total = counts.get("ions_total")
 
+    truncated = bool(limited)        # --limit only: reading stopped early
     if limited or excerpt:
         why = "--limit was given" if limited else "--excerpt was given"
         report.note(where, f"{why}, so record counts were not compared with counts{{}}")
@@ -779,7 +821,18 @@ def check_totals(report, manifest, n_ions, tiers, kinds, limited, excerpt, where
     tables = manifest.get("tables") or {}
     declared_kinds = set(tables.get("spectrum_kinds") or [])
     present = {k for k in kinds if k}
-    if declared_kinds or present:
+    if truncated and declared_kinds - present:
+        # Under --limit only a prefix of spectra.jsonl was read, so a declared
+        # kind absent from the slice says nothing about the export. Under
+        # --excerpt every line of the given files was read, so absence there is
+        # a real finding and keeps its ERROR below.
+        report.note(
+            where,
+            "tables.spectrum_kinds declares " + ", ".join(sorted(declared_kinds - present)) +
+            " which this truncated read did not reach; run without --limit to"
+            " check that claim",
+        )
+    elif declared_kinds or present:
         missing = sorted(declared_kinds - present)
         extra = sorted(present - declared_kinds)
         if missing:
@@ -790,6 +843,16 @@ def check_totals(report, manifest, n_ions, tiers, kinds, limited, excerpt, where
                 " selected and then come back empty",
             )
         if extra and declared_kinds:
+            report.warn(
+                where,
+                "spectra.jsonl holds " + ", ".join(extra) +
+                " which tables.spectrum_kinds does not declare",
+            )
+    if truncated:
+        extra = sorted(present - declared_kinds)
+        if extra and declared_kinds:
+            # An UNdeclared kind found in a partial read is still a real finding:
+            # the slice proves it exists.
             report.warn(
                 where,
                 "spectra.jsonl holds " + ", ".join(extra) +

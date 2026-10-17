@@ -224,7 +224,25 @@ def unmutated(manifest, tables):
     """The control. The shipped examples must validate clean."""
 
 
+def a_sample_with_no_id(manifest, tables):
+    """Must be reported, not raise before any finding is printed."""
+    manifest["samples"][0].pop("sample_id", None)
+
+
+def isotopes_repeat_k_with_one_missing(manifest, tables):
+    """A repeated k plus an entry with no k used to raise TypeError in sorted()."""
+    for ion in tables["ions"]:
+        iso = ion.get("isotopes")
+        if isinstance(iso, list) and len(iso) >= 2:
+            iso[1] = dict(iso[1])
+            iso[1]["k"] = iso[0].get("k")          # duplicate
+            iso.append({"rel": 0.1})               # no k at all
+            return
+
+
 CASES = [
+    (a_sample_with_no_id, "has no sample_id", 1),
+    (isotopes_repeat_k_with_one_missing, "isotopes[] repeats k", 1),
     (quad_window_carries_mobility, "quad_window but one_over_k0 is set", 1),
     (bare_proximity_claims_decoy_control, "bare_proximity with decoy_controlled=true", 1),
     (validated_tier_disclaims_decoy_control, "atlas_consensus with decoy_controlled=false", 1),
@@ -260,6 +278,38 @@ CASES = [
 ]
 
 
+def residue_parsing_separates_positions_from_residues():
+    """"N-term" is a position, not residue N.
+
+    Scanned character by character it became residue N, so a legitimate
+    N-terminal modification read as impossible on any peptide lacking one.
+    Checked directly rather than through a mutation, because changing a
+    fixture's sequence also breaks its delta-mass arithmetic and the resulting
+    error hides the one under test.
+    """
+    sys.path.insert(0, str(ROOT / "tools"))
+    import validate_export as ve
+    bad = []
+    for residues, want_sites, want_pos in (
+            ("STY", ["S", "T", "Y"], []),
+            ("S", ["S"], []),
+            ("N-term", [], ["N-term"]),
+            ("C-term", [], ["C-term"]),
+            ("protein N-term", [], ["protein", "N-term"]),
+            ("K, N-term", ["K"], ["N-term"]),
+            ("", [], []),
+            (None, [], []),
+    ):
+        sites, pos = ve.required_residues(residues)
+        if sorted(sites) != sorted(want_sites):
+            bad.append("required_residues(%r) sites %r, expected %r"
+                       % (residues, sites, want_sites))
+        if bool(pos) != bool(want_pos):
+            bad.append("required_residues(%r) positional %r, expected %r"
+                       % (residues, pos, want_pos))
+    return bad
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -268,6 +318,12 @@ def main():
     args = ap.parse_args()
 
     failed = 0
+    unit = residue_parsing_separates_positions_from_residues()
+    failed += bool(unit)
+    print("%s residue_parsing_separates_positions_from_residues"
+          % ("ok  " if not unit else "FAIL"))
+    for line in unit:
+        print("     %s" % line)
     for mutate, expect, want_rc in CASES:
         with tempfile.TemporaryDirectory() as tmp:
             build(Path(tmp), mutate)
@@ -285,7 +341,8 @@ def main():
             for line in out.splitlines():
                 print(f"     {line}")
 
-    print(f"\n{len(CASES) - failed}/{len(CASES)} passed")
+    total = len(CASES) + 1
+    print(f"\n{total - failed}/{total} passed")
     return 1 if failed else 0
 
 

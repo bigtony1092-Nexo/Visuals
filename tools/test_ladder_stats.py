@@ -178,7 +178,59 @@ def a_missing_covariate_is_named(tmp):
     return bad
 
 
-CASES = [wilson_matches_known_values, ratio_interval_is_wide_at_four_events,
+def a_gate_with_no_reversed_ions_does_not_crash(tmp):
+    """rev_total 0 crashed on 100*dk/dn before the n>0 guard was added."""
+    g = {"gates": [{"name": "5+ fragments", "real_total": 643, "real_again": 373,
+                    "rev_total": 0, "rev_again": 0}]}
+    rc, out = run(write(tmp, g, "norev.json"))
+    bad = []
+    if "Traceback" in out:
+        bad.append("crashed on a gate with no reversed ions")
+    if "no rate to interval" not in out:
+        bad.append("did not say why the reversed rate is absent")
+    return bad
+
+
+def ladder_lengths_as_json_floats_are_accepted(tmp):
+    """21.0 is how 21 survives most JSON writers.
+
+    Rejecting floats made symmetric ladders "SKIPPED", which exits 1 — the
+    status this tool reserves for ASYMMETRIC, so a clean run read as a defect.
+    """
+    ions = [{"uid": "i%d" % n, "real_ladder": 20.0, "rev_ladder": 20.0}
+            for n in range(40)]
+    rc, out = run(write(tmp, {"ions": ions}, "floats.json"))
+    bad = []
+    if rc != 0:
+        bad.append("exit %d on symmetric ladders written as floats" % rc)
+    if "SYMMETRIC" not in out:
+        bad.append("did not recognise float lengths")
+    if "SKIPPED" in out:
+        bad.append("skipped float ladder lengths")
+    return bad
+
+
+def scatter_is_not_reported_as_a_trim(tmp):
+    """Median 1.0 with half the pairs differing is scatter, not a trimming rule."""
+    ions = ([{"uid": "a%d" % n, "real_ladder": 20, "rev_ladder": 19} for n in range(20)]
+            + [{"uid": "b%d" % n, "real_ladder": 20, "rev_ladder": 21} for n in range(20)])
+    rc, out = run(write(tmp, {"ions": ions}, "scatter.json"))
+    bad = []
+    if rc != 1:
+        bad.append("exit %d: per-ion asymmetry was not flagged" % rc)
+    if "ASYMMETRIC IN SCATTER" not in out:
+        bad.append("did not distinguish scatter from a systematic trim")
+    if "0.0% shorter" in out or "0.0% longer" in out:
+        bad.append("reported a 0.0% systematic trim")
+    if "per-ion condition" not in out:
+        bad.append("did not point at a per-ion cause")
+    return bad
+
+
+CASES = [wilson_matches_known_values,
+         a_gate_with_no_reversed_ions_does_not_crash,
+         ladder_lengths_as_json_floats_are_accepted,
+         scatter_is_not_reported_as_a_trim, ratio_interval_is_wide_at_four_events,
          the_slide_numbers_get_intervals, asymmetric_ladders_fail_the_run,
          symmetric_ladders_pass, a_covariate_that_separates_is_reported_not_scored,
          a_covariate_that_does_not_separate_says_so, scoring_with_a_covariate_raises,

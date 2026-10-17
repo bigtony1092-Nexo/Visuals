@@ -113,12 +113,13 @@ def load(path):
                 r = json.loads(line)
                 seq = r["sequence"].strip().upper()
                 inten = float(r["intensity"])
-            except (ValueError, KeyError, AttributeError):
+                frag = str(r["fragment"])
+            except (ValueError, KeyError, AttributeError, TypeError):
                 bad += 1
                 continue
             if not seq or inten <= 0:
                 continue
-            by_source[str(r.get("source") or path)].append((seq, str(r["fragment"]), inten))
+            by_source[str(r.get("source") or path)].append((seq, frag, inten))
     return by_source, bad
 
 
@@ -147,7 +148,7 @@ def main(argv=None):
     print()
     print("%-22s %9s %8s %22s %22s" % (
         "source", "fragments", "y-share", "proline (obs/exp)", "aspartate (obs/exp)"))
-    flat = []
+    flat, unassessable = [], []
     for name, rows in sources.items():
         s = summarise(rows)
         if s is None:
@@ -160,8 +161,14 @@ def main(argv=None):
                          else "%.3f / n/a" % share)
         print("%-22s %9d %8.3f %22s %22s" % (
             name[:22], s["fragments"], s["y_share"], cells[0], cells[1]))
-        if s["proline"][2] and s["proline"][2] < UNIFORM_TOL:
-            flat.append((name, s["proline"][2]))
+        enr = s["proline"][2]
+        if enr is None:
+            # No proline-containing peptide, so the marker had no opportunity.
+            # That is "cannot assess", not "passes": leaving it out of `flat`
+            # let a literally uniform source print the all-clear and exit 0.
+            unassessable.append(name)
+        elif enr < UNIFORM_TOL:
+            flat.append((name, enr))
     print()
     for name, enr in flat:
         print("  %s: proline enrichment %.2fx is below %.2fx — indistinguishable from"
@@ -169,11 +176,16 @@ def main(argv=None):
         print("  uniform. This source carries no fragmentation chemistry, so it cannot")
         print("  serve as a reference: a wrong peptide will match it as well as the right")
         print("  one. Do not read a pattern comparison against it in either direction.")
-    if not flat:
+    for name in unassessable:
+        print("  %s: no proline-containing peptide, so the strongest marker had no" % name)
+        print("  opportunity and this source CANNOT BE ASSESSED. That is not a pass.")
+        print("  Supply peptides that can express the effect, or judge this source on")
+        print("  the aspartate column and its y-share with that limitation stated.")
+    if not flat and not unassessable:
         print("  Every source shows the proline effect above %.2fx, so each carries real"
               % UNIFORM_TOL)
         print("  fragmentation chemistry and a comparison between them can be read.")
-    return 1 if flat else 0
+    return 1 if (flat or unassessable) else 0
 
 
 if __name__ == "__main__":

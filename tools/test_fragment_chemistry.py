@@ -143,7 +143,54 @@ def unparseable_fragments_are_counted_not_guessed(tmp):
     return []
 
 
-CASES = [bond_mapping_is_right, a_real_pattern_is_credited, a_flat_pattern_is_refused,
+def a_source_with_no_proline_cannot_be_assessed(tmp):
+    """No proline-containing peptide means the marker had no opportunity.
+
+    That is not a pass. Before the fix, enrichment came back None, the source
+    was left out of the flat list, and a literally uniform source printed
+    "Every source shows the proline effect" and exited 0.
+    """
+    f = tmp / "nopro.jsonl"
+    rows = []
+    for seq in ("AAGSTVLK", "SDEGTVAR", "GGSSTTAAK"):     # no P anywhere
+        for kind in "by":
+            for n in range(1, len(seq)):
+                rows.append({"source": "no_proline", "sequence": seq, "charge": 2,
+                             "fragment": "%s%d" % (kind, n), "intensity": 1.0})
+    write(f, rows)
+    rc, out = run(str(f))
+    bad = []
+    if rc != 1:
+        bad.append("exit %d: treated an unassessable source as a pass" % rc)
+    if "CANNOT BE ASSESSED" not in out:
+        bad.append("did not say the source cannot be assessed")
+    if "Every source shows the proline effect" in out:
+        bad.append("printed the all-clear for a source with no proline opportunity")
+    return bad
+
+
+def a_record_missing_its_fragment_does_not_abort(tmp):
+    f = tmp / "broken.jsonl"
+    rows = plant("march", 4.0, 2.0)
+    rows.append({"source": "march", "sequence": "ATLTPSNTPLGR", "charge": 2,
+                 "intensity": 5.0})                        # no `fragment`
+    rows.append({"source": "march", "sequence": "ATLTPSNTPLGR", "charge": 2,
+                 "fragment": None, "intensity": 5.0})
+    write(f, rows)
+    rc, out = run(str(f))
+    bad = []
+    if "Traceback" in out:
+        bad.append("crashed on a record missing `fragment`")
+    if "carries real" not in out:
+        bad.append("two malformed lines lost an otherwise good source")
+    if "unparseable lines skipped" not in out:
+        bad.append("did not count the malformed lines")
+    return bad
+
+
+CASES = [bond_mapping_is_right,
+         a_source_with_no_proline_cannot_be_assessed,
+         a_record_missing_its_fragment_does_not_abort, a_real_pattern_is_credited, a_flat_pattern_is_refused,
          a_real_and_a_flat_source_are_told_apart,
          unparseable_fragments_are_counted_not_guessed]
 

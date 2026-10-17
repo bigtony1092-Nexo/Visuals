@@ -119,6 +119,35 @@ def charge_and_mz_do_not_separate_fragments(tmp):
     return bad
 
 
+def a_reproducible_order_is_not_reported_as_a_defect(tmp):
+    """--rank-rt plus a stable order gives sigma 0, which is the BEST case.
+
+    The axis has no scatter to measure because the order never changed. Saying
+    "a run-level constant or a coarsely rounded value does this" would blame the
+    data for being good.
+    """
+    rows = []
+    for i in range(6):
+        for j, jit in enumerate((-0.4, 0.0, 0.4)):
+            rows.append({"run": "r%d" % j, "uid": "P%d|2" % i, "mz": 500.0 + 60 * i,
+                         "z": 2, "drift": 40.0 + 12.0 * i + jit,
+                         "rt": 10.0 + 3.0 * i + 0.05 * jit})
+    rc, out = run(write(tmp, rows, "stable.json"), "--estimate-sigma", "--rank-rt")
+    bad = []
+    if "best case" not in out:
+        bad.append("blamed the data for a perfectly reproducible elution order")
+    if "coarsely rounded" in out:
+        bad.append("gave the wrong diagnosis for a rank axis with no scatter")
+    if "choose the tolerance" not in out:
+        bad.append("did not say the tolerance must be chosen rather than measured")
+    # And with a chosen tolerance it must then work.
+    rc2, out2 = run(write(tmp, rows, "stable2.json"), "--estimate-sigma",
+                    "--rank-rt", "--sigma-rt", "1.0")
+    if "uniquely resolved" not in out2:
+        bad.append("did not run once a rank tolerance was supplied")
+    return bad
+
+
 def a_zero_sigma_is_refused_not_divided_by(tmp):
     """An axis that did not vary gives SD 0. That is no scale, not a perfect one.
 
@@ -174,7 +203,32 @@ def crowding_is_reported_not_hidden(tmp):
     return bad
 
 
+def the_verdict_does_not_depend_on_line_order(tmp):
+    """One coordinate per precursor, as a median, not whichever row came first.
+
+    Keeping the first row seen compared coordinates from different runs, so
+    shuffling the input could flip a pair between resolved and colliding.
+    """
+    rows = []
+    for i, uid in enumerate(("A|2", "B|2")):
+        for j, jit in enumerate((-3.0, 0.0, 3.0)):
+            rows.append({"run": "r%d" % j, "uid": uid, "mz": 600.0 + 100 * i,
+                         "z": 2, "drift": 70.0 + 7.4 * i + jit, "rt": 20.0 + 0.1 * jit})
+    import itertools
+    verdicts = set()
+    for k, perm in enumerate(itertools.permutations(rows)):
+        if k > 20:
+            break
+        rc, _ = run(write(tmp, list(perm), "ord%d.json" % k),
+                    "--sigma-drift", "0.87", "--sigma-rt", "0.15")
+        verdicts.add(rc)
+    return (["verdict changed with input order: exit codes %s" % sorted(verdicts)]
+            if len(verdicts) > 1 else [])
+
+
 CASES = [the_same_gap_flips_with_the_measurement_scale,
+         the_verdict_does_not_depend_on_line_order,
+         a_reproducible_order_is_not_reported_as_a_defect,
          a_zero_sigma_is_refused_not_divided_by,
          separation_on_either_axis_resolves,
          sigma_comes_from_within_uid_not_between,

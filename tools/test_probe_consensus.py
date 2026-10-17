@@ -264,8 +264,10 @@ def load_test_skips_without_a_map(db, tmp):
         bad.append("test 3 vanished instead of reporting a skip")
     elif "SKIPPED" not in section(out, "TEST 3"):
         bad.append("test 3 ran without a load map")
-    if rc != 0:
-        bad.append("exit %d, expected 0 when no load map was asked for" % rc)
+    # Exit status aggregates every test now, and ar1/rejects skip on this table,
+    # so check the load section itself rather than the global code.
+    if rc not in (0, 1):
+        bad.append("exit %d, expected 0 or 1" % rc)
     return bad
 
 
@@ -360,8 +362,8 @@ def a_mass_gated_table_is_not_evidence(db, tmp):
     _mini_db(gated, shift_da=0.0)
     rc, out = run("--db", str(gated))
     bad = []
-    if rc != 0:
-        bad.append("exit %d, expected 0" % rc)
+    if rc not in (0, 1):
+        bad.append("exit %d, expected 0 or 1" % rc)
     if "Any isotope:   0 rows" not in out:
         bad.append("expected zero isotope picks in a table with none")
     if "THIS RESULT IS NOT EVIDENCE" not in out:
@@ -749,12 +751,122 @@ def no_quarantine_means_no_control(db, tmp):
     return bad
 
 
+def normalized_fragments_are_caught_ACROSS_RUNS(db, tmp):
+    """The guard must key on a spectrum, not an ion.
+
+    This is the case that slipped past: fragments normalized per spectrum, read
+    across three runs, sum to 3.0 per (sequence, charge) rather than 1.0, so a
+    guard keyed on the ion never fires. The original test used one run and
+    passed while the guard was broken for every realistic input.
+    """
+    multi = tmp / "ar1norm_multirun.db"
+    rng = random.Random(77)
+    con = sqlite3.connect(multi)
+    con.execute("""CREATE TABLE observations (
+        id INTEGER PRIMARY KEY, peptide_sequence TEXT, charge_state INTEGER,
+        sample_name TEXT, precursor_mz REAL, calc_mz REAL,
+        precursor_intensity REAL, intensity REAL, frag_type TEXT)""")
+    rid = 0
+    for p_i in range(80):
+        seq = "".join(rng.choice("GASPVTLINDQEMHFYW") for _ in range(12)) + "K"
+        z = 2
+        calc_mz = (WATER + sum(RESIDUE[c] for c in seq)) / z + pc.PROTON
+        for sample in ("run_A", "run_B", "run_C"):
+            prec = 10 ** rng.uniform(4, 7)
+            raw = [rng.uniform(0.01, 0.12) for _ in range(8)]
+            tot = sum(raw)
+            for j, v in enumerate(raw):
+                rid += 1
+                con.execute("INSERT INTO observations VALUES (?,?,?,?,?,?,?,?,?)",
+                            (rid, seq, z, sample, calc_mz * (1 + 2.0 / 1e6), calc_mz,
+                             prec, v / tot, "y%d" % (j + 1)))
+    con.commit()
+    con.close()
+    rc, out = run("--db", str(multi))
+    t4 = section(out, "TEST 4")
+    bad = []
+    if "THE PRODUCT INTENSITIES ARE NORMALIZED" not in t4:
+        bad.append("missed per-spectrum normalization spanning 3 runs")
+    if re.search(r"ar1 per row\s+median", t4):
+        bad.append("reported an ar1 distribution from normalized fragments")
+    if "spectra (run, sequence, charge)" not in t4:
+        bad.append("did not say it keyed on the spectrum")
+    return bad
+
+
+def spread_sampling_does_not_duplicate_rows(db, tmp):
+    """Each block must be bounded above, or slices overrun into each other."""
+    rc, out = run("--db", str(db), "--limit", "5000", "--order", "spread")
+    bad = []
+    m = re.search(r"(\d+) rows carried both a reported and a calculated", out)
+    if not m:
+        return ["no row count reported"]
+    read = int(m.group(1))
+    total = 1893          # the planted table's size
+    if read > total:
+        bad.append("read %d rows from a %d-row table: slices overlapped" % (read, total))
+    a1 = [l for l in out.splitlines() if l.strip().startswith("A1 only:")]
+    if a1 and "33 ions" not in a1[0]:
+        bad.append("ion count distorted by duplication: %r" % a1[0].strip())
+    return bad
+
+
+def a_cut_far_beyond_the_histogram_is_still_called_cut(db, tmp):
+    """Picks sit at ~1000 ppm, past the 400 ppm histogram limit.
+
+    Taking 95% of an uncapped maximum against capped bins puts the edge window
+    past every bin, finds zero rows, and calls a hard-cut distribution "ended" —
+    in exactly the case the tool was built for.
+    """
+    wide = tmp / "wide_ppm.db"
+    rng = random.Random(4)
+    con = sqlite3.connect(wide)
+    con.execute("""CREATE TABLE observations (
+        id INTEGER PRIMARY KEY, PeptideSequence TEXT, Charge INTEGER,
+        RunName TEXT, PrecMz REAL, CalcMz REAL)""")
+    for i in range(600):
+        seq = "".join(rng.choice("GASPVTLINDQEMHFYW") for _ in range(12)) + "K"
+        z = 2
+        calc_mz = (WATER + sum(RESIDUE[c] for c in seq)) / z + pc.PROTON
+        # A sixth of the rows sit at a pick's distance, the rest near zero:
+        # appreciable density right at the edge, which is the definition of cut.
+        shift = pc.C13 if i % 6 == 0 else 0.0
+        con.execute("INSERT INTO observations VALUES (?,?,?,?,?,?)",
+                    (i + 1, seq, z, "run_A",
+                     (calc_mz + shift / z) * (1 + rng.gauss(0, 1) / 1e6), calc_mz))
+    con.commit()
+    con.close()
+    rc, out = run("--db", str(wide))
+    t1 = section(out, "TEST 1")
+    bad = []
+    if "looks like it ended rather than being cut" in t1:
+        bad.append("called a distribution with 17% of rows at the maximum 'ended'")
+    if "+" not in t1.split("Mass error")[1][:160]:
+        bad.append("did not mark the capped percentiles as lower bounds")
+    if "histogram limit" not in t1:
+        bad.append("did not say the percentiles hit the histogram limit")
+    return bad
+
+
+def a_skipped_test_is_not_a_pass(db, tmp):
+    """Exit status must reflect every test, not just the load response."""
+    rc, out = run("--db", str(db))
+    bad = []
+    if rc != 1:
+        bad.append("exit %d with ar1 and rejects both skipped" % rc)
+    if "NOT RUN:" not in out:
+        bad.append("did not name the tests that did not run")
+    if "skipped test is not a passed one" not in out:
+        bad.append("did not say why the exit status is 1")
+    return bad
+
+
 def limit_reads_a_spread_not_the_oldest(db, tmp):
     """--limit must not silently mean 'the oldest rows'."""
     rc, out = run("--db", str(db), "--limit", "200")
     bad = []
-    if rc != 0:
-        bad.append("exit %d, expected 0" % rc)
+    if rc not in (0, 1):
+        bad.append("exit %d, expected 0 or 1" % rc)
     if "spread evenly across the table" not in out:
         bad.append("did not say which rows a limited read covered")
     rc2, out2 = run("--db", str(db), "--limit", "200", "--order", "oldest")
@@ -796,7 +908,11 @@ STANDALONE = (refuses_a_published_shaped_table, refuses_a_file_that_is_not_a_dat
               rejected_picks_are_the_positive_control,
               a_tally_only_quarantine_is_not_a_control,
               an_empty_quarantine_is_a_real_negative,
-              no_quarantine_means_no_control)
+              no_quarantine_means_no_control,
+              normalized_fragments_are_caught_ACROSS_RUNS,
+              spread_sampling_does_not_duplicate_rows,
+              a_cut_far_beyond_the_histogram_is_still_called_cut,
+              a_skipped_test_is_not_a_pass)
 
 
 def main(argv=None):
@@ -813,7 +929,10 @@ def main(argv=None):
         loads = tmp / "loads.json"
         loads.write_text(json.dumps({"%dng" % int(ng): ng for ng in LOADS}))
         rc, out = run("--db", str(db), "--load-map", str(loads))
-        if rc != 0:
+        # 1 is correct here: the planted table has no product-intensity column
+        # and no rejects table, so ar1 and rejects skip, and a skipped test is
+        # not a passed one. Only a crash or a usage error (2) is a setup failure.
+        if rc not in (0, 1) or "TEST 1" not in out:
             print("FAIL the probe exited %d on the planted database" % rc)
             print(out)
             return 1

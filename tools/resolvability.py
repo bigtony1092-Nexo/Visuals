@@ -122,10 +122,19 @@ def occupancy(rows, sd, sr, k):
     set is the intersection. Charge is not used — fragments do not carry it any
     more than they carry the parent's m/z.
     """
-    uniq = {}
+    # One coordinate per precursor, as the MEDIAN of its observations. Keeping
+    # the first row seen compared coordinates from different runs and made the
+    # verdict depend on input line order.
+    grouped = defaultdict(list)
     for r in rows:
-        uniq.setdefault(r["uid"], r)
-    ions = list(uniq.values())
+        grouped[r["uid"]].append(r)
+    ions = []
+    for uid, group in grouped.items():
+        ions.append({"uid": uid, "z": group[0]["z"],
+                     "mz": st.median([g["mz"] for g in group]),
+                     "drift": st.median([g["drift"] for g in group]),
+                     "rt": st.median([g["rt"] for g in group]),
+                     "n_obs": len(group)})
     ions.sort(key=lambda r: r["drift"])
     out = {}
     for i, a in enumerate(ions):
@@ -177,10 +186,23 @@ def main(argv=None):
             elif est == 0.0:
                 notes.append("%s estimated at ZERO from %d precursors: that axis did not"
                              % (name, used))
-                notes.append("  vary across repeats at all, so it carries no measurement")
-                notes.append("  scale. A run-level constant or a coarsely rounded value")
-                notes.append("  does this. Supply --%s explicitly or fix the source."
-                             % name.replace("_", "-"))
+                notes.append("  vary across the repeats at all, so it carries no measurement")
+                notes.append("  scale that can be measured.")
+                if axis == "rt" and args.rank_rt:
+                    # Not a defect: --rank-rt reduces rt to elution order, and an
+                    # order that never changes between runs is the best case. There
+                    # is simply nothing to estimate from, so the tolerance has to be
+                    # chosen — how much rank slip counts as the same position —
+                    # rather than measured.
+                    notes.append("  With --rank-rt that means the elution ORDER was identical in")
+                    notes.append("  every run, which is the best case and not a problem. Rank has")
+                    notes.append("  no scatter to measure, so choose the tolerance instead: pass")
+                    notes.append("  --sigma-rt as the rank slip you count as the same position")
+                    notes.append("  (1.0 is one position out of the 0-100 scale).")
+                else:
+                    notes.append("  A run-level constant or a coarsely rounded value does this.")
+                    notes.append("  Supply --%s explicitly or fix the source."
+                                 % name.replace("_", "-"))
             else:
                 notes.append("%s estimated at %.4f from %d precursors seen 3+ times"
                              % (name, est, used))

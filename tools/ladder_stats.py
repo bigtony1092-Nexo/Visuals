@@ -40,6 +40,7 @@ anything.
 import argparse
 import json
 import math
+import statistics as st
 import sys
 
 Z = 1.959964          # two-sided 95%
@@ -135,9 +136,16 @@ def report_gates(gates, out):
         ci = katz_ratio(rk, rn, dk, dn)
         ratio = (rk / rn) / (dk / dn) if dk and dn and rn else float("inf")
         cis = "%.1f-%.1f" % ci if ci else "no upper bound (zero events)"
+        # Every rate needs its own n>0 guard, not just the interval functions:
+        # a gate with no reversed ions at all crashed here rather than reporting.
+        rpct = 100 * rk / rn if rn else float("nan")
+        dpct = 100 * dk / dn if dn else float("nan")
         out.append("  %-16s %4d/%-5d %5.1f%% (%.1f-%.1f)  %4d/%-5d %5.2f%% (%.2f-%.2f)  %5.2fx (%s)"
-                   % (g.get("name", "?"), rk, rn, 100 * rk / rn, 100 * rlo, 100 * rhi,
-                      dk, dn, 100 * dk / dn, 100 * dlo, 100 * dhi, ratio, cis))
+                   % (g.get("name", "?"), rk, rn, rpct, 100 * rlo, 100 * rhi,
+                      dk, dn, dpct, 100 * dlo, 100 * dhi, ratio, cis))
+        if not rn or not dn:
+            out.append("      %s total is zero, so there is no rate to interval."
+                       % ("real" if not rn else "reversed"))
         if dk and dk < 10:
             out.append("      %d reversed events is too few for three significant figures."
                        % dk)
@@ -153,9 +161,14 @@ def check_symmetry(ions, out):
     the gate, so a few per cent of trimming costs far more than a few per cent of
     decoys. That makes every rate above a floor rather than an estimate.
     """
-    pairs = [(i["real_ladder"], i["rev_ladder"]) for i in ions
-             if isinstance(i.get("real_ladder"), int) and isinstance(i.get("rev_ladder"), int)
-             and i["real_ladder"] > 0]
+    # JSON has no integer type distinction: a ladder length of 21 round-trips as
+    # 21.0 through many writers. Rejecting floats made symmetric ladders "SKIPPED",
+    # which exits 1 — the status this tool reserves for ASYMMETRIC.
+    pairs = [(float(i["real_ladder"]), float(i["rev_ladder"])) for i in ions
+             if isinstance(i.get("real_ladder"), (int, float))
+             and isinstance(i.get("rev_ladder"), (int, float))
+             and not isinstance(i.get("real_ladder"), bool)
+             and float(i["real_ladder"]) > 0]
     out.append("LADDER SYMMETRY")
     if not pairs:
         out.append("  SKIPPED: no ion carries both real_ladder and rev_ladder counts.")
@@ -163,8 +176,11 @@ def check_symmetry(ions, out):
     short = sum(1 for r, v in pairs if v < r)
     longer = sum(1 for r, v in pairs if v > r)
     ratios = sorted(v / r for r, v in pairs)
-    med = ratios[len(ratios) // 2]
-    mean = sum(ratios) / len(ratios)
+    # A proper median, which averages the middle pair on an even count. Taking
+    # ratios[n//2] returns the upper element, so 20 ions at 0.95 against 20 at
+    # 1.05 read as a 5% systematic trim instead of as scatter about 1.0.
+    med = st.median(ratios)
+    mean = st.fmean(ratios)
     out.append("  %d ions. reversed/real length: median %.3f, mean %.3f"
                % (len(pairs), med, mean))
     out.append("  reversed shorter in %d, longer in %d, equal in %d"
@@ -174,8 +190,19 @@ def check_symmetry(ions, out):
         out.append("  treats them alike and the rates above are estimates, not floors.")
         return True
     out.append("")
-    out.append("  ASYMMETRIC — the reversed ladder is %.1f%% %s than the real one."
-               % (abs(1 - med) * 100, "shorter" if med < 1 else "longer"))
+    if abs(1 - med) < 0.005:
+        # The median matches but enough individual pairs differ to fail the
+        # count test. Saying "0.0% longer" and blaming a systematic trim would
+        # be the wrong diagnosis for a scatter.
+        out.append("  ASYMMETRIC IN SCATTER — the median ratio is %.3f, so there is no" % med)
+        out.append("  systematic trim, but %d of %d pairs differ in length. The ladders are"
+                   % (short + longer, len(pairs)))
+        out.append("  built alike on average and unalike case by case, which still biases a")
+        out.append("  count gate per ion. Look for a per-ion condition (a modification, a")
+        out.append("  terminal residue) rather than a global trimming rule.")
+    else:
+        out.append("  ASYMMETRIC — the reversed ladder is %.1f%% %s than the real one."
+                   % (abs(1 - med) * 100, "shorter" if med < 1 else "longer"))
     out.append("  This biases every gate defined as an absolute fragment count, and the")
     out.append("  loss lands exactly at the gate: ions sitting one or two fragments above")
     out.append("  it fall below. So a few per cent of trimming costs far more than a few")

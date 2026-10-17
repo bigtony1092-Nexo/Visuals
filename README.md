@@ -133,6 +133,8 @@ schema/trace.schema.json          extracted ion chromatograms (optional)
 schema/fragment_hit.schema.json   fragment-first candidates (optional)
 
 examples/                         four filled methods and a matching export
+tools/aria_check.py               runs the chain in order and stops at a gate
+tools/test_aria_check.py          proves 'not reached' never reads as 'passed'
 tools/plan_panels.py              says which panels will render, and why not
 tools/validate_export.py          checks a real export against the contract
 tools/test_validate_export.py     proves the validator catches what it claims to

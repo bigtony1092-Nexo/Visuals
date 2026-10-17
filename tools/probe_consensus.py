@@ -319,7 +319,16 @@ def fetch(con, cfg, limit, order="oldest", blocks=64):
         step = (hi - lo) / blocks
         for b in range(blocks):
             start = int(lo + b * step)
-            queries.append((base + where + ' AND rowid >= %d LIMIT %d' % (start, per), ()))
+            # Bound each slice above as well as below. Without the upper bound a
+            # block whose range holds fewer than `per` rows runs on into the next
+            # block's rows, so a small table returns the same row many times and
+            # every count downstream is inflated.
+            stop = int(lo + (b + 1) * step) if b + 1 < blocks else hi + 1
+            if stop <= start:
+                continue
+            queries.append((base + where
+                            + ' AND rowid >= %d AND rowid < %d LIMIT %d'
+                            % (start, stop, per), ()))
     else:
         sql = base + where
         if limit:
@@ -491,39 +500,55 @@ def test_isotope(records, cfg, offsets, out):
     out.append("  Any isotope:   %d rows, %d ions." % (any_rows, any_ions))
     out.append("  The study's 33 is one of these two; which depends on whether it counted")
     out.append("  A1 alone. Compare ions, not rows: one ion appears once per run.")
+    HIST_MAX = PPM_BINS * PPM_BIN      # everything past this lands in one bin
+
     def pct(q):
-        """The |ppm| value at quantile q, from the histogram."""
+        """The |ppm| value at quantile q, from the histogram.
+
+        Returns (value, capped). The last bin is an overflow holding everything
+        beyond HIST_MAX, so a quantile landing in it is only a lower bound and
+        must say so rather than reporting the cap as a measurement.
+        """
         want = q * measured
         seen = 0
         for i, n in enumerate(hist):
             seen += n
             if seen >= want:
-                return i * PPM_BIN
-        return widest_ppm
+                return (i * PPM_BIN, i >= PPM_BINS)
+        return (widest_ppm, False)
 
+    qs = [pct(q) for q in (0.5, 0.95, 0.99)]
     out.append("")
     out.append("  Mass error of the measured rows, |ppm|:")
-    out.append("    median %.1f   p95 %.1f   p99 %.1f   max %.1f"
-               % (pct(0.5), pct(0.95), pct(0.99), widest_ppm))
+    out.append("    median %s   p95 %s   p99 %s   max %.1f"
+               % tuple(["%.1f%s" % (v, "+" if cap else "") for v, cap in qs]
+                       + [widest_ppm]))
+    if any(cap for _, cap in qs):
+        out.append("    (+ means at or past the %.0f ppm histogram limit, so a lower bound)"
+                   % HIST_MAX)
     out.append("  Measured rows beyond %.0f ppm: %d of %d."
                % (GATE_PPM, beyond_gate, measured))
-    edge_from = widest_ppm * (1 - EDGE_FRACTION)
+    # The edge test must run on the same scale the histogram can express. Taking
+    # 95% of an uncapped maximum against capped bins puts the window past every
+    # bin, finds zero rows, and calls a cut distribution "ended".
+    top = min(widest_ppm, HIST_MAX)
+    edge_from = top * (1 - EDGE_FRACTION)
     edge_rows = sum(n for i, n in enumerate(hist) if i * PPM_BIN >= edge_from)
     cut = (measured and edge_rows >= EDGE_MIN
            and edge_rows / measured >= EDGE_SHARE)
     if measured:
         out.append("  In the last 5%% of that range (%.1f to %.1f ppm): %d rows, %.2f%% of all."
-                   % (edge_from, widest_ppm, edge_rows, 100.0 * edge_rows / measured))
+                   % (edge_from, top, edge_rows, 100.0 * edge_rows / measured))
     if cut:
         out.append("  That is appreciable density right at the edge, then nothing. The")
         out.append("  distribution was CUT at about %.0f ppm rather than ending there, so"
-                   % widest_ppm)
+                   % top)
         out.append("  what lies past the cut was never stored and cannot be counted here.")
     elif measured:
         out.append("  The distribution has thinned to almost nothing by its own maximum, so")
         out.append("  it looks like it ended rather than being cut.")
         out.append("  Read that narrowly: it rules out a cutoff AT %.0f ppm. It says nothing"
-                   % widest_ppm)
+                   % top)
         out.append("  about a cutoff higher up, because no row in this sample goes near one.")
     if any_ions == 0 and beyond_gate == 0:
         out.append("")
@@ -622,6 +647,13 @@ def test_ar1(con, cfg, limit, out):
         return False
 
     cols = [r["seq"], r["charge"], prod, prec]
+    # The normalization guard has to key on a SPECTRUM, not on an ion. Keyed on
+    # (sequence, charge) alone, a source normalized per spectrum and read across
+    # three runs sums to 3.0 rather than 1.0 and the refusal never fires — which
+    # is the defect this guard exists to catch, in the guard itself.
+    run_col = r.get("run")
+    if run_col:
+        cols.append(run_col)
     if r.get("frag_type"):
         cols.append(r["frag_type"])
     sql = 'SELECT %s FROM "%s" WHERE "%s" > 0 AND "%s" > 0' % (
@@ -636,7 +668,9 @@ def test_ar1(con, cfg, limit, out):
     by_type = defaultdict(list)
     for row in con.execute(sql):
         seq, z, ip, iprec = row[0], row[1], row[2], row[3]
-        ftype = row[4] if len(row) > 4 else None
+        rest = list(row[4:])
+        run = rest.pop(0) if run_col else None
+        ftype = rest.pop(0) if (r.get("frag_type") and rest) else None
         try:
             ar1 = float(ip) / float(iprec)
         except (TypeError, ValueError, ZeroDivisionError):
@@ -644,7 +678,7 @@ def test_ar1(con, cfg, limit, out):
         if ar1 <= 0:
             continue
         ratios.append(ar1)
-        key = (seq, z)
+        key = (run, seq, z) if run_col else (seq, z)
         per_precursor[key] += ar1
         prod_sum[key] += float(ip)
         prod_max[key] = max(prod_max[key], float(ip))
@@ -657,7 +691,10 @@ def test_ar1(con, cfg, limit, out):
 
     sums = sorted(per_precursor.values())
     n_prec = len(prod_sum)
-    out.append("  %d rows, %d precursors." % (len(ratios), n_prec))
+    out.append("  %d rows, %d %s." % (len(ratios), n_prec,
+               "spectra (run, sequence, charge)" if run_col
+               else "precursors (NO run column: a per-spectrum normalization "
+                    "spanning runs cannot be detected)"))
 
     # The guard is on the RAW product intensities, not on ar1. A spectrum
     # normalized to its total has sum(product) == 1 per precursor; one normalized
@@ -998,11 +1035,23 @@ def main(argv=None):
         with open(args.load_map) as fh:
             load_map = json.load(fh)
     ran_load = test_load(con, cfg, load_map, args.limit, out)
-    test_ar1(con, cfg, args.limit, out)
-    test_rejects(con, entries, args.limit, out)
+    ran_ar1 = test_ar1(con, cfg, args.limit, out)
+    ran_rej = test_rejects(con, entries, args.limit, out)
 
+    skipped = []
+    if args.load_map and not ran_load:
+        skipped.append("load response")
+    if not ran_ar1:
+        skipped.append("ar1")
+    if not ran_rej:
+        skipped.append("rejects")
+    if skipped:
+        out.append("")
+        out.append("NOT RUN: %s. Each says above why. Exit status is 1 because a"
+                   % ", ".join(skipped))
+        out.append("skipped test is not a passed one.")
     print("\n".join(out))
-    return 0 if (ran_load or not args.load_map) else 1
+    return 1 if skipped else 0
 
 
 if __name__ == "__main__":
