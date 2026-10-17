@@ -147,6 +147,56 @@ def case_extractor_failure_stops_the_run(tmp):
     return bad
 
 
+def case_an_extractor_that_works_feeds_the_whole_run(tmp):
+    """The adapter's happy path -- the one a real machine uses.
+
+    Both failure modes were covered and this was not, which is how a boundary
+    that only ever gets exercised by its errors stops working unnoticed.
+    """
+    raw = waters(tmp, "ex.raw")
+    out_dir = Path(tmp) / "out_ex"
+    # Stand in for ApexRT: reads the raw folder, writes a peak list where asked.
+    script = Path(tmp) / "fake_extract.py"
+    script.write_text(
+        "import json, os, sys\n"
+        "raw, out = sys.argv[1], sys.argv[2]\n"
+        "n = len([f for f in os.listdir(raw) if f.endswith('.DAT')])\n"
+        "rows = [{'mz': 650.3123, 'rt': 20.0 + 0.3 * i, 'drift': 0.801,\n"
+        "         'charge': 2, 'intensity': 1e6, 'n_scans': 7,\n"
+        "         'score_kind': 'q_value', 'q_value': 0.002} for i in range(n)]\n"
+        "open(out, 'w').write(''.join(json.dumps(r) + chr(10) for r in rows))\n"
+        "print('wrote %d peaks' % len(rows))\n")
+    cmd = "%s %s {raw} {peaks}" % (sys.executable, script)
+    rc, out = run("--raw", raw, "--extract", cmd, "--out", out_dir,
+                  "--targets", jsonl(Path(tmp) / "t_ex.jsonl", [TARGET]),
+                  "--rt-tol", 3.0, "--drift-tol", 0.02, "--sample-id", "CH215")
+    bad = []
+    if "wrote 2 peaks" not in out:
+        bad.append("the extractor's own stdout was not shown to the operator")
+    if "{raw}" in out or "{peaks}" in out:
+        bad.append("a placeholder was left unsubstituted in the command")
+    if not (out_dir / "peaks.jsonl").exists():
+        bad.append("the extractor's peak list was not kept in the export, so the"
+                   " run cannot be re-checked against what it actually read")
+    if not (out_dir / "ions.jsonl").exists():
+        return bad + ["no ion list from a working extractor"]
+    ions = [json.loads(l) for l in (out_dir / "ions.jsonl").read_text().splitlines()]
+    if len(ions) != 2:
+        bad.append("%d ions from 2 extracted peaks" % len(ions))
+    if ions and ions[0]["confidence"]["tier"] != "pass2_confirmed":
+        bad.append("tier is %r; the extractor supplied a decoy-controlled q-value"
+                   % ions[0]["confidence"]["tier"])
+    man = json.loads((out_dir / "manifest.json").read_text())
+    if script.name not in str(man["pipeline"].get("extract", "")):
+        bad.append("the manifest does not record which extractor produced the"
+                   " peaks: %r" % man["pipeline"].get("extract"))
+    if not (out_dir / "panels.html").exists():
+        bad.append("the run did not reach a drawn page")
+    if rc != 0:
+        bad.append("exit %d on a clean extract-to-page run" % rc)
+    return bad
+
+
 def case_empty_peak_list_is_a_gate(tmp):
     raw = waters(tmp, "f.raw")
     peaks = Path(tmp) / "pk_f.jsonl"
@@ -677,6 +727,7 @@ def case_targets_and_atlas_together_are_refused(tmp):
 CASES = [case_no_extractor_refuses, case_unknown_drift_kind_is_a_gate,
          case_declared_drift_kind_proceeds_and_is_recorded,
          case_extractor_exit_zero_with_no_output, case_extractor_failure_stops_the_run,
+         case_an_extractor_that_works_feeds_the_whole_run,
          case_empty_peak_list_is_a_gate, case_peak_without_a_coordinate_cannot_be_identified,
          case_ion_uid_is_content_addressed, case_sonar_drift_is_carried_but_never_matched,
          case_dda_drift_is_null, case_tiers_follow_the_evidence,
