@@ -45,7 +45,7 @@ def record():
 
 
 def plant(root, no_psm=(), alt_table=(), load_scale=None, vol_slope=0.0,
-          saturate_above=None, seed=4):
+          saturate_above=None, detect_floor=None, seed=4):
     """Write the three real file shapes for every recorded run.
 
     load_scale   intensity multiplier per ng, so the planted load response is known
@@ -69,6 +69,10 @@ def plant(root, no_psm=(), alt_table=(), load_scale=None, vol_slope=0.0,
             scale = (load_scale or (lambda ng: ng))(r["load_ng"])
             trend = 10 ** (vol_slope * math.log10(r["recorded_uL"]))
             inten = amps[(pep, z)] * scale * trend * math.exp(rng.gauss(0, 0.05))
+            if detect_floor and inten < detect_floor:
+                # below the floor the feature is simply absent from the ApexRT
+                # table, which is how a low-load run loses its weakest ions
+                continue
             sat = 1 if (saturate_above and inten > saturate_above) else 0
             # three detections in one peak group, as the real tables carry
             for k in range(3):
@@ -540,6 +544,119 @@ def case_the_ratio_carries_a_bootstrap_interval(tmp):
     return bad
 
 
+
+
+def case_a_yield_gap_between_levels_is_a_selection_bias(tmp):
+    """Fewer matches at the low load is not just a smaller n.
+
+    With a detection floor the 100 ng side loses its weakest ions, so the ones
+    it keeps are its strongest. That inflates the low side and DEPRESSES the
+    ratio, and the tool must say so and say which way the true value lies.
+    """
+    d = tmp / "bias"
+    # the floor sits between the 100 ng and 500 ng intensity ranges, so it bites
+    # only on the low-load runs
+    apex, search = plant(d, detect_floor=2e6)
+    rc, out = run_tool("--apex", apex, "--search", search)
+    bad = []
+    if "JOIN YIELD" not in out:
+        bad.append("no join-yield table")
+    yl = [l for l in out.splitlines() if "join yield" in l and "ng" in l]
+    if not yl:
+        return bad + ["no per-level yield beside the ratio"]
+    if "SELECTION BIAS" not in out:
+        bad.append("a yield gap between levels was not called a selection bias: %r"
+                   % [l.strip() for l in yl])
+        return bad
+    if "not merely a smaller n" not in out:
+        bad.append("did not rule out the benign reading")
+    if "BRIGHTEST ions' ratio" not in out:
+        bad.append("did not say what the ratio is now measured over")
+    if "DIRECTION is not knowable" not in out:
+        bad.append("claimed a direction the gap alone does not give")
+    if "paired" not in out:
+        bad.append("did not say the ratio is paired, which is why it is re-aimed"
+                   " rather than depressed")
+    for banned in ("DEPRESSES the ratio", "true ratio is higher",
+                   "true ratio is lower"):
+        if banned in out:
+            bad.append("asserts a direction this ratio does not have: %r" % banned)
+    # The measurement behind that: a 58-point yield gap must NOT move the paired
+    # median much. If it does, the claim in the output is wrong.
+    section = out.split("LOAD RESPONSE", 1)[1]
+    m = [l for l in section.splitlines() if "median I(" in l]
+    n = [l for l in section.splitlines() if "ion(s) at both levels" in l]
+    if m:
+        val = float(m[0].split("=")[1].strip())
+        if abs(val - 5.0) > 0.4:
+            bad.append("paired ratio %.3f under a 58-point yield gap; the output"
+                       " says such a gap re-aims the ratio rather than shifting"
+                       " it" % val)
+    if n:
+        count = int(n[0].strip().split()[0])
+        if count >= 12:
+            bad.append("%d ion(s) survived, so the fixture's floor did not create"
+                       " a yield gap at all" % count)
+    return bad
+
+
+def case_a_low_overall_yield_points_at_the_units(tmp):
+    """The join's two unit traps are where a collapsed yield would come from."""
+    d = tmp / "tight"
+    apex, search = plant(d)
+    # a drift window far below the planted spacing kills most matches
+    rc, out = run_tool("--apex", apex, "--search", search, "--drift-tol", "0.0001",
+                       "--rt-tol", "0.0001")
+    bad = []
+    if "BELOW HALF" not in out:
+        bad.append("a collapsed yield was not flagged")
+    if "SECONDS" not in out or "MINUTES" not in out:
+        bad.append("did not name the retention unit trap")
+    if "TWIMS BINS" not in out or "1/K0" not in out:
+        bad.append("did not name the drift unit trap")
+    if "does not improve gradually" not in out:
+        bad.append("did not say how to tell a unit error from a tight window")
+    return bad
+
+
+def case_the_cross_check_band_is_reported_not_enforced(tmp):
+    d = tmp / "band"
+    apex, search = plant(d)
+    rc, out = run_tool("--apex", apex, "--search", search)
+    bad = []
+    if "cross-check" not in out:
+        bad.append("the independent precursor count is not used as a cross-check")
+    if "26-42" not in out:
+        bad.append("did not quote the cross-check band")
+    # the fixture plants 12 peptides, so every run falls outside the band and
+    # must still be used -- a cross-check is not a filter
+    if "LOAD RESPONSE" not in out or "median I(" not in out:
+        bad.append("runs outside the cross-check band were excluded; it is a"
+                   " cross-check, not a gate")
+    return bad
+
+
+def case_the_owner_facing_ranking_is_printed(tmp):
+    d = tmp / "verdict"
+    apex, search = plant(d)
+    rc, out = run_tool("--apex", apex, "--search", search)
+    bad = []
+    if "WHAT TO TRUST IN THIS COHORT" not in out:
+        bad.append("no owner-facing ranking of the outputs")
+    tail = out.split("WHAT TO TRUST IN THIS COHORT", 1)[1]
+    if "MOST: the constant-load series" not in tail:
+        bad.append("did not name the constant-load series as the most trustworthy")
+    if "LEAST: the load ratio" not in tail:
+        bad.append("did not name the load ratio as the least trustworthy")
+    if "opposite of how the work was framed" not in tail:
+        bad.append("did not flag that this inverts the brief")
+    if "partial-loop" not in tail or "0.2 uL" not in tail:
+        bad.append("did not give the reason the load ratio is weakest")
+    if "detector linearity is not" not in tail:
+        bad.append("did not say which conclusion the cohort cannot support")
+    return bad
+
+
 CASES = [case_the_join_recovers_a_planted_load_ratio,
          case_gradients_are_reported_separately,
          case_fragpipe_intensity_is_never_used,
@@ -559,7 +676,11 @@ CASES = [case_the_join_recovers_a_planted_load_ratio,
          case_the_extrapolation_is_declared,
          case_without_a_volume_slope_the_confound_stays_declared,
          case_the_sanitised_inner_folder_is_found,
-         case_the_ratio_carries_a_bootstrap_interval]
+         case_the_ratio_carries_a_bootstrap_interval,
+         case_a_yield_gap_between_levels_is_a_selection_bias,
+         case_a_low_overall_yield_points_at_the_units,
+         case_the_cross_check_band_is_reported_not_enforced,
+         case_the_owner_facing_ranking_is_printed]
 
 
 def main():

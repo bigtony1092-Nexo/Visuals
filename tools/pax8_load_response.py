@@ -154,6 +154,7 @@ def read_psms(path, qcut=QVALUE_CUT):
     would report zeros as measurements.
     """
     psms, dropped, decoys, zero_intensity, total = [], 0, 0, 0, 0
+    precursors = set()
     with open(path, newline="") as fh:
         for row in csv.DictReader(fh, delimiter="\t"):
             total += 1
@@ -187,10 +188,15 @@ def read_psms(path, qcut=QVALUE_CUT):
             except (KeyError, TypeError, ValueError):
                 dropped += 1
                 continue
-            psms.append((int(m.group(1)), str(row.get("Peptide", "")).strip(),
-                         z, calc_mz, q))
+            pep = str(row.get("Peptide", "")).strip()
+            # Same key the ions use, so yield compares like with like. Mods are
+            # not in it, so a modified and an unmodified form of one peptide
+            # collapse together here and in the ion count alike.
+            precursors.add((pep, z))
+            psms.append((int(m.group(1)), pep, z, calc_mz, q))
     return psms, {"total": total, "dropped": dropped, "decoys": decoys,
-                  "zero_intensity": zero_intensity}
+                  "zero_intensity": zero_intensity,
+                  "precursors": len(precursors)}
 
 
 def read_apex_groups(path):
@@ -317,6 +323,7 @@ def join_run(run, apex_dir, search_dir, out, ppm=JOIN_PPM, rt_tol=JOIN_RT_MIN,
             ions[key] = (best[3], bool(best[4]), q)
     info = {"sat": sat_stats, "psm_path": psm_path,
             "inner": inner if sanitised else None,
+            "precursors": stats["precursors"],
             "psm_rows": stats["total"], "psm_kept": len(psms),
             "decoys": stats["decoys"], "zero_intensity": stats["zero_intensity"],
             "apex_rows": apex_rows, "groups": len(groups),
@@ -372,6 +379,75 @@ def name_vs_record(record, out):
     out.append("  concentration and this cohort varied both, so a name can never")
     out.append("  establish load.")
     return len(bad)
+
+
+CROSSCHECK_PRECURSORS = (26, 42)   # what Scott-PC counted, for comparison only
+YIELD_GAP = 10.0                   # percentage points between levels worth naming
+
+
+def yield_table(infos, record, out):
+    """Per run: precursors identified -> matched to a peak group -> usable.
+
+    A low yield overall means the join windows are too tight or carry a unit
+    error, which is exactly where the seconds-against-minutes and
+    bins-against-1/K0 traps would show. The numbers are the tool's own; the
+    26-42 band is an independent count, used only as a cross-check.
+    """
+    out.append("")
+    out.append("JOIN YIELD  (precursors identified -> matched -> usable)")
+    out.append("  %-44s %6s %8s %8s" % ("run", "ident", "matched", "yield"))
+    low, lo_runs = [], []
+    for run in sorted(infos):
+        info = infos[run]
+        ident = info.get("precursors") or 0
+        matched = info.get("ions") or 0
+        pct = 100.0 * matched / ident if ident else 0.0
+        flag = ""
+        if ident and not (CROSSCHECK_PRECURSORS[0] <= ident
+                          <= CROSSCHECK_PRECURSORS[1]):
+            flag = "  <- outside the %d-%d cross-check" % CROSSCHECK_PRECURSORS
+        out.append("  %-44s %6d %8d %7.1f%%%s"
+                   % (run[:44], ident, matched, pct, flag))
+        if ident:
+            low.append(pct)
+        if pct < 50.0 and ident:
+            lo_runs.append(run)
+    if not low:
+        out.append("  no run reported a precursor count.")
+        return 0
+    med = statistics.median(low)
+    out.append("  median yield %.1f%% across %d run(s)." % (med, len(low)))
+    findings = 0
+    if med < 50.0:
+        out.append("  BELOW HALF. The join is losing most identified precursors, which")
+        out.append("  is what a window that is too tight looks like -- or a unit error.")
+        out.append("  The two candidates are psm Retention in SECONDS against")
+        out.append("  plainFP rt_min in MINUTES, and ApexRT Drift in TWIMS BINS against")
+        out.append("  1/K0. Widen --rt-tol and --drift-tol and see whether the yield")
+        out.append("  jumps; a unit error does not improve gradually.")
+        findings += 1
+    elif lo_runs:
+        out.append("  %d run(s) below 50%%: %s" % (len(lo_runs),
+                                                   ", ".join(r[:28] for r in lo_runs[:3])))
+    return findings
+
+
+def level_yield(infos, record, out):
+    """Matched ions over identified precursors, pooled per load level.
+
+    A yield that DIFFERS by load level is a selection bias, not just a smaller
+    n: if fewer ions match at the low load, the ones that do are the strongest,
+    so the low side's intensities are inflated and the ratio is depressed.
+    """
+    pooled = defaultdict(lambda: [0, 0])
+    for run, info in infos.items():
+        rec = record.get(run)
+        if not rec:
+            continue
+        key = (rec["gradient"], rec["load_ng"])
+        pooled[key][0] += info.get("precursors") or 0
+        pooled[key][1] += info.get("ions") or 0
+    return pooled
 
 
 def bootstrap_median(values, n=BOOTSTRAP, seed=20261017):
@@ -431,7 +507,8 @@ def volume_confound(record, out):
     return decades, conc
 
 
-def load_response(ions, record, out, volume_slope=None, const_volumes=()):
+def load_response(ions, record, out, volume_slope=None, const_volumes=(),
+                  pooled_yield=None):
     """I(500)/I(100) per ion, per gradient. A ratio, not a fit."""
     out.append("")
     out.append("LOAD RESPONSE  (two points, per gradient)")
@@ -494,6 +571,47 @@ def load_response(ions, record, out, volume_slope=None, const_volumes=()):
                    % (len(ratios), hi_ng, lo_ng, med))
         out.append("    quartiles %.3f to %.3f.  expected %.3f if the response is"
                    " proportional" % (q[0], q[2], expected))
+        if pooled_yield:
+            a = pooled_yield.get((grad, lo_ng))
+            b = pooled_yield.get((grad, hi_ng))
+            if a and b and a[0] and b[0]:
+                ya = 100.0 * a[1] / a[0]
+                yb = 100.0 * b[1] / b[0]
+                out.append("    join yield %g ng %.1f%% (%d of %d), %g ng %.1f%%"
+                           " (%d of %d)" % (lo_ng, ya, a[1], a[0], hi_ng, yb,
+                                            b[1], b[0]))
+                if abs(ya - yb) > YIELD_GAP:
+                    thin = lo_ng if ya < yb else hi_ng
+                    out.append("    THOSE YIELDS DIFFER BY %.0f POINTS, which is a"
+                               " SELECTION BIAS" % abs(ya - yb))
+                    out.append("    and not merely a smaller n. The %g ng side keeps a"
+                               " smaller share of" % thin)
+                    out.append("    its identified precursors, so the ones it keeps are")
+                    out.append("    its strongest, and the ratio above is measured over")
+                    out.append("    THOSE ions rather than over the cohort.")
+                    # The direction is not a priori. This ratio is PAIRED --
+                    # I(hi)/I(lo) within one ion -- so a missing low-load
+                    # detection drops the ion entirely rather than inflating a
+                    # surviving denominator. Measured on this tool's own
+                    # fixtures: a yield gap of 58 points moved the paired median
+                    # from 5.07 to 4.94, which is nothing. The direction only
+                    # appears where response varies with brightness.
+                    out.append("    The DIRECTION is not knowable from the gap alone.")
+                    out.append("    This ratio is paired -- I(%g)/I(%g) within one ion --"
+                               % (hi_ng, lo_ng))
+                    out.append("    so a missing low-load detection drops that ion rather")
+                    out.append("    than inflating a surviving one's denominator. On this")
+                    out.append("    tool's fixtures a 58-point gap moved the paired median")
+                    out.append("    from 5.07 to 4.94, which is nothing. A pooled ratio")
+                    out.append("    would be depressed; this one is re-aimed.")
+                    out.append("    So read it as the BRIGHTEST ions' ratio. Whether that")
+                    out.append("    differs from the cohort's depends on response varying")
+                    out.append("    with brightness, and the saturation section above is")
+                    out.append("    what says whether it does.")
+                else:
+                    out.append("    those yields agree to within %.0f point(s), so the"
+                               " ratio is not" % abs(ya - yb))
+                    out.append("    carrying a selection bias between the levels.")
         lo_ci, hi_ci = bootstrap_median(ratios)
         if lo_ci is not None:
             out.append("    bootstrap 95%% interval on the median: %.3f to %.3f"
@@ -946,11 +1064,38 @@ def main(argv=None):
     slope_out = []
     const_lines = []
     findings += constant_load(ions, record, const_lines, slope_out)
+    findings += yield_table(infos, record, out)
+    pooled = level_yield(infos, record, out)
     findings += load_response(ions, record, out,
                               slope_out[0][0] if slope_out else None,
-                              slope_out[0][1] if slope_out else ())
+                              slope_out[0][1] if slope_out else (),
+                              pooled)
     out.extend(const_lines)
     findings += recheck_published(ions, record, out)
+
+    out.append("")
+    out.append("WHAT TO TRUST IN THIS COHORT")
+    out.append("  This ranking is the opposite of how the work was framed, and it comes")
+    out.append("  from the design rather than from the numbers.")
+    out.append("")
+    out.append("  MOST: the constant-load series. Three volumes, two vials and three")
+    out.append("  replicates each, at a load that does not move. Its scatter is")
+    out.append("  measurable and its verdict is checked against that scatter.")
+    out.append("")
+    out.append("  THEN: the saturation flag. A direct per-detection measurement rather")
+    out.append("  than an inference, though it is the instrument's flag and nothing")
+    out.append("  here verifies it.")
+    out.append("")
+    out.append("  LEAST: the load ratio. It rests on ONE unreplicated run per gradient,")
+    out.append("  at 0.2 uL in a 10 uL loop under partial-loop injection -- below the")
+    out.append("  range that loop is good at. Load and injection volume are the same")
+    out.append("  variable in this design, so the ratio only separates them by")
+    out.append("  subtracting a slope extrapolated from volumes it was not measured at.")
+    out.append("  Pickup error at 0.2 uL is probably larger than everything else here")
+    out.append("  and nothing in the cohort measures it.")
+    out.append("")
+    out.append("  So: a conclusion about injection volume at fixed load is supportable.")
+    out.append("  A conclusion about detector linearity is not, from this cohort.")
     print("\n".join(out))
     return 1 if findings else 0
 
