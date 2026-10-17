@@ -191,3 +191,77 @@ on it, but it does not change the number.
 and exactly one published number moves when it lands.** That is a cheap thing to
 know before the fix, because it means `pattern` does not need revisiting and
 `replication` does.
+
+## The numbers had no confidence interval. Here they are.
+
+Every figure on the replication slide was a point estimate. `tools/ladder_stats.py`
+attaches Wilson intervals to the rates and a log-scale interval to the ratio:
+
+| gate | real found again | reversed found again | ratio (95% CI) |
+|---|---|---|---|
+| 3+ | 922/2190 — 42.1% (40.0–44.2) | 152/1181 — 12.87% (11.08–14.90) | 3.27× (2.8–3.8) |
+| 4+ | 552/1110 — 49.7% (46.8–52.7) | 23/317 — 7.26% (4.88–10.65) | 6.85× (4.6–10.2) |
+| **5+** | 373/643 — 58.0% (54.2–61.8) | **4/93 — 4.30% (1.69–10.54)** | **13.49× (5.2–35.3)** |
+
+And on the derived rates:
+
+| | point | 95% CI |
+|---|---|---|
+| run 1 alone | 93/643 = 14.46% | **12.0–17.4%** |
+| both runs | 4/373 = 1.07% | **0.42–2.72%** |
+| reduction | 13.5× | **5.0–36.4×** |
+
+**The headline is 13.5× with a plausible range from 5× to 36×.** Four reversed
+events cannot carry three significant figures. The slide quotes 1.07% and 13.5×
+with no interval, which reads far more precise than the data is — and the
+interval is the honest answer whichever way a skeptic pushes, because it is wide
+in both directions.
+
+Note this is *separate from* the ladder handicap. The intervals are the sampling
+uncertainty on the counts as they stand; the 6.5% trim makes those counts a floor
+on top of that. Both apply.
+
+## The ladder fix, specified and testable
+
+The generator is not in this repository, so what is here is the check and the
+specification rather than the patch.
+
+**The defect:** the reversed ladder has reversed b(L−1) and exact coincidences
+removed; the real ladder is never trimmed. About 6.5% shorter.
+
+**Why it matters more than 6.5%:** the gate is "5+ fragments", an absolute count.
+Trimming shifts every peptide down the count axis and the loss lands exactly at
+the gate — ions sitting one or two fragments above it fall below. A proportional
+trim costs disproportionately at a threshold, which is why 6.5% of ladder costs
+15–25% of surviving decoys.
+
+**The fix:** build both ladders by the same rule. Apply every trim to both, or
+none to either. Partial trimming of one side is the only option that cannot be
+defended, because it hands the decoy a handicap and then reports the margin as
+evidence.
+
+**The check:** `python3 tools/ladder_stats.py counts.json --check-symmetry` over
+records carrying `real_ladder` and `rev_ladder` lengths per ion. It exits 1 while
+the ladders differ, names the direction and magnitude, and says whether the rates
+are floors or ceilings. Two tests pin it: a planted 6.5% trim must fail with the
+fix named, and equal ladders must pass and say the rates become estimates.
+
+## A candidate variable, tested and not scored
+
+`--covariate NAME` runs a paired t-test between each real ion and **its own**
+reversed counterpart, reporting the mean difference, its 95% interval, t, df and
+Cohen's d_z. Nothing in the tool thresholds it, sums it into a score, or uses it
+to include or exclude an ion — and the refusal is code rather than a comment:
+`score_with_covariate()` raises `NotImplementedError`, so a later caller that
+tries to score with it fails loudly instead of quietly acquiring a term.
+
+The reporting is deliberately asymmetric. An interval that includes zero gets
+"this has not earned a place in scoring". An interval that excludes zero gets
+"necessary and not sufficient", with a pointer to the four flipped badges in
+`docs/verification-run.md` — because this session has now produced four separate
+examples of a real-looking separation that came from the comparison rather than
+from the data, and a fifth would be careless rather than unlucky.
+
+Input shape per ion: `{"uid": ..., "real_ladder": n, "rev_ladder": n,
+"real": {"<name>": value}, "rev": {"<name>": value}}`. A covariate absent from
+the data is skipped by name rather than silently ignored.

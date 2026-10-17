@@ -142,6 +142,10 @@ tools/test_probe_consensus.py     proves the probe recovers planted answers
 tools/fragment_chemistry.py       asks whether fragment patterns carry chemistry
                                   at all, before a comparison is read
 tools/test_fragment_chemistry.py  proves it tells a real pattern from a flat one
+tools/ladder_stats.py             intervals on the real-vs-reversed rates, and
+                                  t-tests a candidate variable without scoring it
+tools/test_ladder_stats.py        checks the intervals by hand and proves the
+                                  covariate path cannot score
 viewer/aria-ion-panels.html       the viewer — conventional and bridge panels
 ion-flight-atlas.html             the 3-D flight map, standalone and synthetic
 ```
