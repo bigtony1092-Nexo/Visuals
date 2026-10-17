@@ -1096,3 +1096,99 @@ now comes from the mzML peak, the intensity should be that peak's height, not
 MSFragger's sqrt-scaled value — otherwise one column is a measurement and the
 other is a transform of one, and every downstream comparison inherits the
 mismatch silently.
+
+## ROOT CAUSE: the archive's PAX8 rows are unfiltered PSMs
+
+Both of the previous explanations are retracted — mine ("thin data") and the
+low-resolution one. The split that was asked for refuted the latter: 292
+PAX8-bearing Thermo samples labelled by MS2 analyzer from mzML filter strings or
+PRIDE protocol text give **Orbitrap 1.28×, ion trap 1.36×**. Ion trap is not
+flatter. Resolution is not the cause.
+
+**The old writer applied no FDR filter at all.** `msfragger_tsv_to_ia_spec` kept
+every PSM MSFragger reported, and MSFragger wrote no decoys, so nothing
+downstream could have filtered them either. On one file: 13,498 PSMs, **57% with
+expect > 1**.
+
+Chemistry against confidence, using MSFragger's own fragment lists:
+
+| expect | proline | n |
+|---|---|---|
+| ≤ 1e-6 | **2.45×** | 567 |
+| 1e-6 – 1e-3 | 2.27× | |
+| 1e-3 – 0.01 | 1.87× | |
+| 0.01 – 0.1 | 1.69× | |
+| 0.1 – 1 | 1.24× | |
+| **> 1** | **1.11×** | 7,727 |
+
+A monotone collapse from 2.45× to 1.11× as confidence falls. And the fragment
+lists themselves are faithful: on the best 600 PSMs, MSFragger's list gives 4.07×
+against 3.71× for mzML peaks annotated on the same ladder.
+
+Apply a cut and everything passes. At `pep_score ≥ 2` (expect ≤ 0.01), squared:
+**Orbitrap 2.38×, ion trap 2.75×, unknown 2.18×**, y-shares 0.67–0.69. At
+`pep_score ≥ 4`: 2.41–2.86×. That is the same range as FragPipe on Waters
+(3.0–3.3×). **The data was never the problem. The filter was missing.**
+
+### Why PAX8 specifically is the worst case
+
+583 PAX8 spectra across 292 samples:
+
+| | |
+|---|---|
+| expect > 1 | **52.5%** |
+| expect > 0.01 | **92.3%** |
+| expect ≤ 1e-4 | **none** |
+| PAX8 peptides ever reaching expect ≤ 0.01 | **4 of 57** |
+
+The archive's PAX8 "reference" is mostly chance matches to a protein most of these
+cell lines probably do not express. A random identification carries no chemistry,
+so 1.01× is not an anomaly — it is the expected value. The squaring-invariance
+result was the right signature; the mechanism was a different kind of
+coincidence than either of us proposed.
+
+### This reaches further than section 3
+
+Every archive-derived figure on the page rests on unfiltered PSMs, not just the
+fragment panel:
+
+| figure | what it actually counts |
+|---|---|
+| 174 "PAX8-positive" Thermo samples | samples where MSFragger *reported* PAX8 |
+| per-ion detection frequency, Wilson CI | how often the ion was *named* |
+| 338 archive precursors, 43 ions (§1 like-for-like) | mostly chance matches |
+| Atlas mean charge 2.99 (§2) | charges of unfiltered PSMs |
+
+The serious one is the **like-for-like finding, which carried a `pass` badge**.
+Its margin was always thin — Spearman 0.529 against a shuffled 95th percentile of
+0.454, a gap of 0.075 at p = 0.021 on **15 shared ions** — and its archive side is
+mostly chance. A correlation between Colorado response and chance-match frequency
+is not the claim the badge made. It is now **`limit`, held pending an FDR cut**,
+with the re-run condition stated on the page.
+
+**That is the third verdict on this page to flip, all for one family of reason:**
+a badge asserting more than its comparison could support. A `pass` on a check that
+could not fail, a `fail` read off a control that could not lose, and now a `pass`
+read off inputs that were never filtered.
+
+### What needs doing, and what does not
+
+**Nothing in the headline results changes.** The audit holds: 2 of 12 claims
+touch the archive, and both are now marked. The 33 picks, the load response, the
+six-run MARCH chemistry, the 968-of-1,035 pattern agreement, replication, drift
+and mass identity are all FragPipe-route or MARCH-annotation figures.
+
+**New data is already safe.** The loop has used the DIA-NN route for Thermo since
+2026-09-16 — q ≤ 0.01, one row per precursor. The 905 older MSFragger-route
+samples are the affected set.
+
+**The archive is recoverable, not written off.** A score cut restores the
+chemistry in every analyzer class. What it cannot restore is PAX8: at expect ≤
+0.01 there are 4 peptides, too few to build a reference from. So PAX8 section 3
+stays unusable while the rest of the archive becomes usable behind a filter.
+
+**The fix worth making** is a score floor on read, not a re-write: any consumer
+reading the store for a reference should require `pep_score ≥ 2` and say so.
+Export contract section 14 already requires the chemistry gate; a store that
+fails it behind no filter and passes behind one is exactly the case that rule
+exists for.
