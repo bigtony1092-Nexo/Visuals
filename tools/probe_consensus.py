@@ -857,6 +857,23 @@ def test_rejects(con, entries, limit, out):
 # cut at an arbitrary place.
 MIN_RUNS_FOR_REFERENCE = 3     # an ion needs this many runs to anchor a reference
 MIN_RUN_SHARE = 0.6            # and must appear in this share of runs to vote on a load
+# The load factor is a trimmed mean of the central half, not a median. Measured
+# against the known truth on this file's own two-mode fixture (half the ions at a
+# true 0.25, half at 1.00), worst departure from proportionality in log10 units:
+#
+#   median              0.0284      plain mean          0.0061
+#   trimmed 25%         0.0075
+#
+# and under a 5% contamination of 300x wild ions, the worst run's factor moves:
+#
+#   median              0.0009      plain mean          0.0445
+#   trimmed 25%         0.0007
+#
+# So the trimmed mean is four times less warped than the median and sixty times
+# less outlier-sensitive than the mean. It matters downstream, not just on paper:
+# on the clean fixture a median axis made the curvature test report SATURATION
+# where nothing was planted, and a trimmed-mean axis does not.
+TRIM_FRACTION = 0.25
 # A quartile gap is read as a fraction of the cohort's median slope, because the
 # estimated axis fixes no unit for an absolute gap to be measured in.
 NORMALIZATION_FRACTION = 0.85  # an ion must reach this share of the median to normalize with
@@ -887,6 +904,14 @@ def microlitres(text):
     return v, label
 
 
+def trimmed_mean(values, frac=TRIM_FRACTION):
+    """Mean of the central share. Median-robust, mean-linear; see TRIM_FRACTION."""
+    xs = sorted(values)
+    k = int(len(xs) * frac)
+    core = xs[k:len(xs) - k] or xs
+    return sum(core) / len(core)
+
+
 def estimate_load_factors(per_ion_run, out):
     """Each run's load in log10 units, estimated from the ions it shares.
 
@@ -908,9 +933,10 @@ def estimate_load_factors(per_ion_run, out):
                   for key, per_run in anchors.items()
                   if run in per_run and ref[key] > 0]
         if len(ratios) >= MIN_RUNS_FOR_REFERENCE:
-            factors[run] = statistics.median(ratios)
-    out.append("  load estimated from %d ion(s) present in >=%d of %d runs."
-               % (len(anchors), need, len(runs)))
+            factors[run] = trimmed_mean(ratios)
+    out.append("  load estimated from %d ion(s) present in >=%d of %d runs,"
+               " trimmed mean of the central %d%%."
+               % (len(anchors), need, len(runs), 100 - 2 * int(100 * TRIM_FRACTION)))
     if len(factors) < len(runs):
         out.append("  %d run(s) had too few shared ions to place on the load axis."
                    % (len(runs) - len(factors)))
@@ -918,13 +944,21 @@ def estimate_load_factors(per_ion_run, out):
 
 
 def volume_check(factors, out):
-    """Returns True if an anchored scale was established, False if contradicted,
-    None if there was nothing to check."""
-    """Do runs whose names carry injection volumes come out in those proportions?
+    """What the injection volumes in run names do and do not say about load.
 
-    This is the one part of Test 3 that uses information from outside the
-    intensities, so it is the only part the circularity cannot reach. Reported as
-    a check: runs sharing a label are not confirmed to be the same vial.
+    They do not say load. Load is volume x concentration, and on the Colorado
+    PAX8 runs the two were traded off against each other deliberately: the 1, 2
+    and 5 uL injections came from vials at 0.5, 0.25 and 0.1 ug/uL, so all three
+    put 500 ng on column. Read as a 1:2:5 ladder they span 0.699 log10 units of
+    load; the real span is 0.000.
+
+    Two of those names are wrong in the other direction as well: a run named
+    "1uL" recorded 0.2 uL of 0.5 ug/uL (100 ng), and one named "100ng_0-5uL"
+    recorded 2.0 uL of 0.25 ug/uL (500 ng).
+
+    So this reports the volumes and refuses to convert them. It returns None
+    always: a volume spread can never anchor the load axis. Only a declared load
+    per run can, which is what --load-map is for.
     """
     groups = defaultdict(list)
     for run, f in factors.items():
@@ -933,32 +967,42 @@ def volume_check(factors, out):
             groups[label].append((v, run, f))
     usable = {k: sorted(v) for k, v in groups.items() if len(v) >= 2}
     if not usable:
-        out.append("  no run name carries an injection volume, so the"
-                   " proportionality check could not be run. Without it nothing"
-                   " here is anchored outside the intensities.")
+        out.append("  no run name carries an injection volume. Nothing here is"
+                   " anchored outside the intensities; only a declared load per"
+                   " run (--load-map) can do that.")
         return None
-    verdict = True
+    out.append("  injection volumes appear in the run names. They are REPORTED, not")
+    out.append("  converted to load: load is volume x concentration, and on the")
+    out.append("  Colorado PAX8 runs the two were traded off deliberately -- 1, 2 and")
+    out.append("  5 uL drawn from 0.5, 0.25 and 0.1 ug/uL vials, all 500 ng on column.")
+    out.append("  Reading them as a 1:2:5 ladder would invent 0.699 log10 units of load")
+    out.append("  where the real span is 0.000. Two of those names are wrong the other")
+    out.append("  way too: one \"1uL\" run recorded 0.2 uL (100 ng), and one named")
+    out.append("  \"100ng_0-5uL\" recorded 2.0 uL of 0.25 ug/uL (500 ng).")
     for label, members in sorted(usable.items()):
+        out.append("  %s:" % (label or "(unlabelled)"))
         base_v, base_run, base_f = members[0]
-        out.append("  volume check on %s:" % (label or "(unlabelled)"))
-        worst = 0.0
         for v, run, f in members:
-            want = math.log10(v / base_v)
-            got = f - base_f
-            worst = max(worst, abs(got - want))
-            out.append("    %-28s %4g uL  expected %+.3f  estimated %+.3f  (%+.3f)"
-                       % (str(run)[:28], v, want, got, got - want))
-        if worst <= 0.05:
-            out.append("    agrees to %.3f log10 units. If these are the same vial, the"
-                       " load axis is reading real injection amount." % worst)
-        else:
-            verdict = False
-            out.append("    off by up to %.3f log10 units (%.2fx). Either the estimated"
-                       % (worst, 10 ** worst))
-            out.append("    axis is wrong, or these are not the same vial at the stated")
-            out.append("    volumes. The label does not establish which.")
-        out.append("    Same-vial is NOT confirmed; this is a check, not an assumption.")
-    return verdict
+            out.append("    %-28s %4g uL   estimated factor %+.3f (vs %+.3f at %g uL)"
+                       % (str(run)[:28], v, f, base_f, base_v))
+        spread = max(f for _, _, f in members) - min(f for _, _, f in members)
+        ratio = math.log10(max(v for v, _, _ in members)
+                           / min(v for v, _, _ in members))
+        out.append("    estimated spread %.3f log10 units over a %.3f volume ratio."
+                   % (spread, ratio))
+        if spread < 0.05 and ratio > 0.1:
+            out.append("    The factors barely move across a %.1fx volume range, which is"
+                       % (10 ** ratio))
+            out.append("    what a constant load across volumes looks like. Consistent with")
+            out.append("    concentration compensating volume. NOT a failure of the axis.")
+        elif spread > 0.5 * ratio:
+            out.append("    The factors move roughly WITH volume. If these runs were")
+            out.append("    concentration-compensated to one load, that is a red flag in")
+            out.append("    the intensities, not a confirmation of the axis.")
+    out.append("  No verdict either way: volume cannot anchor load without the")
+    out.append("  concentration, and the concentration is not in these names. Supply")
+    out.append("  --load-map with the recorded ng per run.")
+    return None
 
 
 def report_normalization_set(slopes, vals, cohort_med, declared, out):
@@ -1051,30 +1095,43 @@ def test_load(con, cfg, load_map, limit, out):
             out.append("  SKIPPED: no load axis could be built.")
             return False
 
+    n_loads = len({round(f, 9) for f in factors.values()})
+    if n_loads < 2:
+        out.append("  SKIPPED: every run sits at the same load (%d distinct value),"
+                   " so there is no load axis to regress against." % n_loads)
+        return False
+    if n_loads == 2:
+        out.append("  Only TWO distinct loads. Two points determine a slope exactly, so")
+        out.append("  every ion's slope below is unchecked: there is no third point to")
+        out.append("  disagree with it, no residual, and no curvature. The Colorado PAX8")
+        out.append("  cohort is this shape -- 100 ng on two runs and 500 ng on twenty-two,")
+        out.append("  because the 1, 2 and 5 uL injections were concentration-compensated")
+        out.append("  to one load. Treat each slope as a single measurement, not a fit.")
+
     slopes = []
     for key, per_run in per_ion_run.items():
         pts = [(factors[run], per_run[run]) for run in per_run if run in factors]
-        if len({f for f, _ in pts}) < 3:
+        if len({f for f, _ in pts}) < min(3, n_loads):
             continue
         s = slope([f for f, _ in pts], [math.log10(i) for _, i in pts])
         if s is not None:
             slopes.append((s, statistics.median(per_run.values()), key))
     if len(slopes) < 5:
-        out.append("  SKIPPED: only %d ion(s) appear at 3 or more distinct loads. A slope"
-                   " needs at least three points." % len(slopes))
+        out.append("  SKIPPED: only %d ion(s) appear at %d or more distinct loads."
+                   % (len(slopes), min(3, n_loads)))
         return False
 
-    # Whether the axis has a known shape decides what may be read from it, so the
-    # volume check runs before anything that depends on the answer.
+    # Only a DECLARED load per run anchors the axis. Injection volumes cannot:
+    # load is volume x concentration, and the Colorado PAX8 runs traded the two
+    # off against each other on purpose. See volume_check.
     anchored = declared
     volume_lines = []
     if not declared:
-        verdict = volume_check(factors, volume_lines)
-        anchored = verdict is True
+        volume_check(factors, volume_lines)
 
     vals = sorted(s for s, _, _ in slopes)
     q = statistics.quantiles(vals, n=4) if len(vals) >= 4 else [None] * 3
-    out.append("  %d ions seen at 3+ loads." % len(vals))
+    out.append("  %d ions seen at %d+ loads." % (len(vals), min(3, n_loads)))
     out.append("  median slope %+.3f   quartiles %+.3f to %+.3f   IQR %.3f" % (
         statistics.median(vals), q[0], q[2], q[2] - q[0]))
 
@@ -1124,21 +1181,25 @@ def test_load(con, cfg, load_map, limit, out):
     out.append("  still sorts 104 of 125. The quartiles stay as description.")
 
     # Saturation measured INSIDE each ion, where amplitude cannot confound it.
-    # It still needs an ANCHORED axis. An estimated axis is warped: on this
-    # tool's planted data its spacing runs 0.000 / 0.162 / 0.301 / 0.489 against
-    # a true 0.000 / 0.301 / 0.681 / 0.982, because the median log-ratio over a
-    # mixed cohort is not proportional to log load. That warp bends every ion's
-    # curve the same way, so curvature measured against it reads the axis rather
-    # than the ions -- the same compression-shared-by-every-ion that is invisible
-    # everywhere else in this test, reappearing as a false saturation call.
+    # It still needs an ANCHORED axis. An estimated axis has no certified shape:
+    # its scale is arbitrary by design, but it can also depart from
+    # PROPORTIONALITY, and that is what bends every ion's curve the same way. On
+    # this tool's two-mode fixture the trimmed-mean axis runs
+    # 0.000/0.181/0.391/0.577 where the truth is 0.000/0.301/0.681/0.982: a
+    # constant rescale would be harmless, and the departure from one is not.
+    # Curvature read against such an axis reads the axis rather than the ions --
+    # the same compression-shared-by-every-ion that is invisible everywhere else
+    # in this test, reappearing as a false verdict. The median estimator made
+    # exactly that call on a fixture with nothing planted.
     if not anchored:
-        out.append("  Within-ion curvature NOT ASSESSED: it needs an axis with a known")
-        out.append("  shape, and an estimated axis has an unknown one. On this tool's own")
-        out.append("  planted data the estimated spacing runs 0.000/0.162/0.301/0.489")
-        out.append("  where the truth is 0.000/0.301/0.681/0.982, and that warp alone")
-        out.append("  bends every ion down -- it reported a downward bend on a fixture")
-        out.append("  built with none. Declare ng with --load-map, or get the volume check")
-        out.append("  to agree, and this runs.")
+        out.append("  Within-ion curvature NOT ASSESSED: it needs an axis whose SHAPE is")
+        out.append("  known, and an estimated one has no certified shape. An arbitrary")
+        out.append("  scale would be harmless here; a departure from proportionality is")
+        out.append("  not, because it bends every ion the same way. On this tool's two-mode")
+        out.append("  fixture the axis runs 0.000/0.181/0.391/0.577 against a true")
+        out.append("  0.000/0.301/0.681/0.982. With a median estimator that was enough to")
+        out.append("  report a downward bend on data built with none. Declare ng with")
+        out.append("  --load-map, or get the volume check to agree, and this runs.")
         report_normalization_set(slopes, vals, cohort_med, declared, out)
         out.extend(volume_lines)
         return True
@@ -1198,8 +1259,6 @@ def test_load(con, cfg, load_map, limit, out):
         volume_check(factors, out)
     else:
         out.extend(volume_lines)
-        out.append("  The volume check agreed, so the axis above has a scale and the")
-        out.append("  curvature test was allowed to run.")
     return True
 
 

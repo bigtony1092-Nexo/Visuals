@@ -26,6 +26,7 @@ import os
 import random
 import re
 import sqlite3
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -228,7 +229,8 @@ def recovers_planted_load_slopes(_db, out):
 
 
 
-def plant_volumes(path, volumes=(1.0, 2.0, 5.0), beta=1.0, break_last=None):
+def plant_volumes(path, volumes=(1.0, 2.0, 5.0), beta=1.0, break_last=None,
+                  loads=None):
     """Same vial at several injection volumes, with a known response."""
     rng = random.Random(7)
     con = sqlite3.connect(path)
@@ -248,6 +250,14 @@ def plant_volumes(path, volumes=(1.0, 2.0, 5.0), beta=1.0, break_last=None):
         mass = WATER + sum(RESIDUE[c] for c in seq)
         calc = mass / z + pc.PROTON
         amp = 10 ** rng.uniform(3.5, 6.0)
+        if loads is not None:
+            # a plain ng-named cohort, for the "one load is no axis" case
+            for ng in loads:
+                rid += 1
+                con.execute("INSERT INTO observations VALUES (?,?,?,?,?,?,?,?)",
+                            (rid, seq, z, "HeLa_%dng" % int(ng), calc, calc, mass,
+                             amp * ng * math.exp(rng.gauss(0, 0.04))))
+            continue
         for v in volumes:
             rid += 1
             inten = amp * (v ** beta) * math.exp(rng.gauss(0, 0.04))
@@ -315,47 +325,8 @@ def the_normalization_cut_is_relative_not_absolute(db, tmp):
 
 
 
-def the_volume_check_anchors_the_axis(db, tmp):
-    """1, 2 and 5 uL from one vial should come out in those proportions."""
-    good = tmp / "vol_true.db"
-    plant_volumes(str(good))
-    rc, out = run("--db", str(good))
-    sec = section(out, "TEST 3")
-    bad = []
-    if "volume check" not in sec:
-        return ["no volume check on runs whose names carry microlitres"]
-    if "agrees to" not in sec:
-        bad.append("a true 1:2:5 was not reported as agreeing: %r"
-                   % [l for l in sec.splitlines() if "uL" in l])
-    if "NOT confirmed" not in sec:
-        bad.append("did not state that same-vial is unconfirmed")
-    if "check, not an assumption" not in sec:
-        bad.append("presented the check as an assumption")
-    for want in ("+0.301", "+0.699"):
-        if want not in sec:
-            bad.append("expected log10 ratio %s missing from the check" % want)
-    return bad
 
 
-def the_volume_check_catches_a_wrong_label(db, tmp):
-    """Halve the 5 uL signal: the check must refuse, and name both readings."""
-    bad_db = tmp / "vol_false.db"
-    plant_volumes(str(bad_db), break_last=2.0)
-    rc, out = run("--db", str(bad_db))
-    sec = section(out, "TEST 3")
-    bad = []
-    if "agrees to" in sec:
-        bad.append("a 5 uL injection carrying 2.5x the signal was called agreement")
-    if "off by up to" not in sec:
-        bad.append("did not report the disagreement")
-    if "not the same vial" not in sec:
-        bad.append("did not offer the wrong-vial reading")
-    if "does not establish which" not in sec:
-        bad.append("picked between the two readings instead of leaving it open")
-    m = re.search(r"off by up to (\d+\.\d+) log10", sec)
-    if m and abs(float(m.group(1)) - 0.301) > 0.02:
-        bad.append("reported a %s log10 gap; halving 5 uL is 0.301" % m.group(1))
-    return bad
 
 
 def a_run_with_no_volume_label_says_the_axis_is_unanchored(db, tmp):
@@ -507,10 +478,13 @@ def curvature_needs_an_axis_with_a_known_shape(db, tmp):
     bad = []
     if "NOT ASSESSED" not in sec:
         bad.append("ran a curvature test against an unanchored estimated axis")
-    if "unknown one" not in sec:
-        bad.append("did not say the estimated axis has an unknown shape")
-    if "0.000/0.162/0.301/0.489" not in sec:
-        bad.append("does not quote the measured warp")
+    if "no certified shape" not in sec:
+        bad.append("did not say the estimated axis has no certified shape")
+    if "0.000/0.181/0.391/0.577" not in sec:
+        bad.append("does not quote the measured departure from proportionality")
+    if "arbitrary" not in sec or "proportionality" not in sec:
+        bad.append("does not separate an arbitrary scale, which is harmless, from a"
+                   " departure from proportionality, which is not")
     for banned in ("A DOWNWARD BEND", "AN UPWARD BEND"):
         if banned in sec:
             bad.append("a curvature verdict was printed on an unanchored axis: %r"
@@ -622,6 +596,279 @@ def a_half_microlitre_is_not_five(db, tmp):
     b = pc.microlitres("100ng_60_5uL")
     if a[1] == b[1] and a[0] == b[0]:
         bad.append("0-5uL and 5uL are indistinguishable")
+    return bad
+
+
+
+
+def the_trimmed_mean_beats_the_median_on_the_known_truth(db, tmp):
+    """Tony's question, answered against plant()'s known loads.
+
+    The load factor is a trimmed mean of the central half rather than a median.
+    Scored on departure from proportionality (the warp that bends every ion) and
+    on how far the axis moves under contamination.
+    """
+    import sqlite3 as _sq
+    con = _sq.connect(str(db))
+    rows = {}
+    for seq, z, run, i in con.execute(
+            "SELECT PeptideSequence,Charge,RunName,PrecursorIntensity FROM observations"):
+        rows.setdefault((seq, z), {}).setdefault(run, []).append(i)
+    con.close()
+    per = {k: {r: statistics.median(v) for r, v in d.items()} for k, d in rows.items()}
+    runs = sorted({r for d in per.values() for r in d},
+                  key=lambda r: float(r.split("_")[1].rstrip("ng")))
+    truth = {r: math.log10(float(r.split("_")[1].rstrip("ng"))) for r in runs}
+    anch = {k: d for k, d in per.items() if len(d) >= 3}
+    ref = {k: statistics.median(d.values()) for k, d in anch.items()}
+
+    def warp(fn):
+        fac = {r: fn([math.log10(d[r] / ref[k]) for k, d in anch.items()
+                      if r in d and ref[k] > 0]) for r in runs}
+        xs = [truth[r] - truth[runs[0]] for r in runs]
+        ys = [fac[r] - fac[runs[0]] for r in runs]
+        scale = sum(x * y for x, y in zip(xs, ys)) / sum(x * x for x in xs)
+        return max(abs(y - scale * x) for x, y in zip(xs, ys))
+
+    w_med = warp(statistics.median)
+    w_trim = warp(pc.trimmed_mean)
+    bad = []
+    if w_trim >= w_med:
+        bad.append("the trimmed mean warps %.4f against the median's %.4f, so the"
+                   " estimator change is not justified" % (w_trim, w_med))
+    if w_trim > 0.015:
+        bad.append("the trimmed-mean axis still departs %.4f from proportionality;"
+                   " the quoted figures are stale" % w_trim)
+    # robustness: contaminate 5% of ions and see how far the axis moves
+    import random as _rnd
+    rng = _rnd.Random(3)
+    keys = list(per)
+    rng.shuffle(keys)
+    dirty = {k: dict(d) for k, d in per.items()}
+    for k in keys[:int(0.05 * len(keys))]:
+        for r in dirty[k]:
+            dirty[k][r] *= 10 ** rng.choice([-2.5, 2.5])
+    anch2 = {k: d for k, d in dirty.items() if len(d) >= 3}
+    ref2 = {k: statistics.median(d.values()) for k, d in anch2.items()}
+
+    def axis(src, refs, fn):
+        return {r: fn([math.log10(d[r] / refs[k]) for k, d in src.items()
+                       if r in d and refs[k] > 0]) for r in runs}
+
+    for name, fn in (("trimmed mean", pc.trimmed_mean),
+                     ("plain mean", lambda xs: sum(xs) / len(xs))):
+        a = axis(anch, ref, fn)
+        b = axis(anch2, ref2, fn)
+        shift = max(abs(b[r] - a[r]) for r in runs)
+        if name == "trimmed mean" and shift > 0.005:
+            bad.append("the trimmed mean moved %.4f under 5%% contamination, which is"
+                       " not robust" % shift)
+        if name == "plain mean" and shift < 0.01:
+            bad.append("the plain mean moved only %.4f under contamination, so this"
+                       " fixture does not test robustness" % shift)
+    return bad
+
+
+def a_median_axis_would_have_false_positived(db, tmp):
+    """Why the estimator change matters downstream, not just on paper."""
+    import sqlite3 as _sq
+    con = _sq.connect(str(db))
+    rows = {}
+    for seq, z, run, i in con.execute(
+            "SELECT PeptideSequence,Charge,RunName,PrecursorIntensity FROM observations"):
+        rows.setdefault((seq, z), {}).setdefault(run, []).append(i)
+    con.close()
+    per = {k: {r: statistics.median(v) for r, v in d.items()} for k, d in rows.items()}
+    runs = sorted({r for d in per.values() for r in d})
+    anch = {k: d for k, d in per.items() if len(d) >= 3}
+    ref = {k: statistics.median(d.values()) for k, d in anch.items()}
+
+    def bend_share(fn):
+        fac = {r: fn([math.log10(d[r] / ref[k]) for k, d in anch.items()
+                      if r in d and ref[k] > 0]) for r in runs}
+        bends = []
+        for k, d in per.items():
+            pts = sorted((fac[r], math.log10(d[r])) for r in d if r in fac)
+            if len({f for f, _ in pts}) < 4:
+                continue
+            h = (len(pts) + 1) // 2
+            lo = pc.slope([f for f, _ in pts[:h]], [y for _, y in pts[:h]])
+            hi = pc.slope([f for f, _ in pts[-h:]], [y for _, y in pts[-h:]])
+            w = pc.slope([f for f, _ in pts], [y for _, y in pts])
+            if lo is None or hi is None or not w:
+                continue
+            bends.append((hi - lo) / abs(w))
+        down = sum(1 for b in bends if b <= -0.25)
+        up = sum(1 for b in bends if b >= 0.25)
+        fired = down >= 0.25 * len(bends) and down > 2 * up
+        return fired, statistics.median(bends)
+
+    med_fired, med_bend = bend_share(statistics.median)
+    trim_fired, trim_bend = bend_share(pc.trimmed_mean)
+    bad = []
+    if not med_fired:
+        bad.append("a median axis no longer false-positives on plant(), so the"
+                   " reason given for the change is stale")
+    if trim_fired:
+        bad.append("the trimmed-mean axis still reports a bend on a fixture with"
+                   " nothing planted (median bend %+.3f)" % trim_bend)
+    if abs(trim_bend) >= abs(med_bend):
+        bad.append("trimmed-mean bend %+.3f is no smaller than the median's %+.3f"
+                   % (trim_bend, med_bend))
+    return bad
+
+
+
+
+def plant_pax8_shape(path):
+    """The real Colorado PAX8 cohort shape, from a read-only check of the 24 .raw
+    folders: one sample, 22 runs at 500 ng and 2 at 100 ng.
+
+    The 1, 2 and 5 uL injections came from vials at 0.5, 0.25 and 0.1 ug/uL, so
+    all three put 500 ng on column -- the volumes were traded against
+    concentration to hold load CONSTANT. Two names also contradict their own
+    records: a run named 1uL recorded 0.2 uL (100 ng), and one named
+    100ng_0-5uL recorded 2.0 uL of 0.25 ug/uL (500 ng).
+    """
+    runs = ([("JP210_500ng_60_1uL_%d" % i, 500.0) for i in range(1, 9)]
+            + [("JP210_500ng_60_2uL_%d" % i, 500.0) for i in range(1, 8)]
+            + [("JP210_500ng_60_5uL_%d" % i, 500.0) for i in range(1, 8)]
+            + [("JP210_100ng_60_1uL_4", 100.0), ("JP210_100ng_120_1uL_4", 100.0)])
+    rng = random.Random(5)
+    con = sqlite3.connect(path)
+    con.execute("""CREATE TABLE observations (
+        id INTEGER PRIMARY KEY, PeptideSequence TEXT, Charge INTEGER,
+        RunName TEXT, PrecMz REAL, CalcMz REAL, CalcMass REAL,
+        PrecursorIntensity REAL)""")
+    rid, seen = 0, set()
+    for _ in range(200):
+        while True:
+            seq = "".join(rng.choice("GASPVTLINDQEMHFYW")
+                          for _ in range(rng.randint(7, 15))) + "K"
+            z = rng.choice([2, 3])
+            if (seq, z) not in seen:
+                seen.add((seq, z))
+                break
+        mass = WATER + sum(RESIDUE[c] for c in seq)
+        calc = mass / z + pc.PROTON
+        amp = 10 ** rng.uniform(3.5, 6.0)
+        for run, ng in runs:
+            rid += 1
+            con.execute("INSERT INTO observations VALUES (?,?,?,?,?,?,?,?)",
+                        (rid, seq, z, run, calc, calc, mass,
+                         amp * ng * math.exp(rng.gauss(0, 0.08))))
+    con.commit()
+    con.close()
+    return runs
+
+
+def volume_is_never_converted_to_load(db, tmp):
+    """Load is volume x concentration, and PAX8 traded one against the other.
+
+    1 uL of 0.5 ug/uL, 2 uL of 0.25 and 5 uL of 0.1 are all 500 ng. Read as a
+    1:2:5 ladder they span 0.699 log10 units of load; the real span is 0.000.
+    """
+    p = tmp / "vol.db"
+    plant_volumes(str(p))
+    rc, out = run("--db", str(p))
+    sec = section(out, "TEST 3")
+    bad = []
+    if "REPORTED, not" not in sec:
+        bad.append("did not say the volumes are reported rather than converted")
+    if "volume x concentration" not in sec:
+        bad.append("did not state that load is volume times concentration")
+    if "all 500 ng on column" not in sec:
+        bad.append("did not give the PAX8 counter-example")
+    if "No verdict either way" not in sec:
+        bad.append("still draws a verdict from the volumes")
+    for banned in ("agrees to", "load axis is reading real injection amount",
+                   "Same-vial is NOT confirmed"):
+        if banned in sec:
+            bad.append("the retired proportionality verdict is still printed: %r"
+                       % banned)
+    # and it must not anchor the curvature test
+    if "NOT ASSESSED" not in sec:
+        bad.append("a volume spread anchored the curvature test, which it cannot do")
+    return bad
+
+
+def volumes_moving_with_intensity_are_flagged_not_credited(db, tmp):
+    """On concentration-compensated runs, a 1:2:5 intensity ladder is the red flag."""
+    p = tmp / "vol2.db"
+    plant_volumes(str(p))
+    rc, out = run("--db", str(p))
+    sec = section(out, "TEST 3")
+    bad = []
+    if "move roughly WITH volume" not in sec:
+        bad.append("did not notice the factors tracking volume")
+    if "red flag" not in sec:
+        bad.append("did not call a volume-tracking ladder a red flag")
+    if "confirmation of the axis" in sec and "not a confirmation" not in sec:
+        bad.append("read a volume-tracking ladder as confirmation")
+    return bad
+
+
+def a_constant_load_across_volumes_is_recognised(db, tmp):
+    """The PAX8 case: factors barely move across a 5x volume range."""
+    p = tmp / "vol3.db"
+    # same vial concentration-compensated: every volume puts the same load on
+    plant_volumes(str(p), beta=0.0)
+    rc, out = run("--db", str(p))
+    sec = section(out, "TEST 3")
+    bad = []
+    if "constant load across volumes looks like" not in sec:
+        bad.append("did not recognise constant load across a volume range")
+    if "NOT a failure of the axis" not in sec:
+        bad.append("read constant load across volumes as an axis failure")
+    return bad
+
+
+def the_real_pax8_axis_is_two_points_and_says_so(db, tmp):
+    p = tmp / "pax8.db"
+    runs = plant_pax8_shape(str(p))
+    import json as _json
+    lm = tmp / "pax8loads.json"
+    lm.write_text(_json.dumps({r: ng for r, ng in runs}))
+    rc, out = run("--db", str(p), "--load-map", str(lm))
+    sec = section(out, "TEST 3")
+    bad = []
+    if "Only TWO distinct loads" not in sec:
+        bad.append("did not say the axis has only two points")
+    if "unchecked" not in sec:
+        bad.append("did not say a two-point slope is unchecked")
+    if "no residual" not in sec or "no curvature" not in sec:
+        bad.append("did not say what two points cannot support")
+    if "concentration-compensated" not in sec:
+        bad.append("did not explain why the cohort is this shape")
+    if "seen at 3+ loads" in sec:
+        bad.append("still claims 3+ loads on a two-load axis")
+    # the planted response is exactly linear, so a declared axis must recover 1.0
+    line = [l for l in sec.splitlines() if "median slope" in l and "quartiles" in l]
+    if line:
+        m = float(re.search(r"median slope ([-+]\d+\.\d+)", line[0]).group(1))
+        if abs(m - 1.0) > 0.05:
+            bad.append("median slope %+.3f on a planted linear response at two"
+                       " declared loads" % m)
+    # curvature needs four loads, so it must not run here
+    for banned in ("A DOWNWARD BEND", "AN UPWARD BEND"):
+        if banned in sec:
+            bad.append("%r fired on a two-point axis" % banned)
+    return bad
+
+
+def one_load_is_no_axis(db, tmp):
+    p = tmp / "oneload.db"
+    plant_volumes(str(p), loads=(500.0,))
+    import json as _json
+    lm = tmp / "oneload.json"
+    lm.write_text(_json.dumps({"HeLa_500ng": 500}))
+    rc, out = run("--db", str(p), "--load-map", str(lm))
+    sec = section(out, "TEST 3")
+    bad = []
+    if "SKIPPED" not in sec:
+        bad.append("did not skip when every run sits at one load")
+    if "no load axis to regress against" not in sec:
+        bad.append("did not say why one load is not an axis")
     return bad
 
 
@@ -1292,9 +1539,14 @@ STANDALONE = (refuses_a_published_shaped_table, refuses_a_file_that_is_not_a_dat
               a_baseline_subtraction_is_not_called_saturation,
               curvature_needs_four_loads,
               a_half_microlitre_is_not_five,
+              the_trimmed_mean_beats_the_median_on_the_known_truth,
+              a_median_axis_would_have_false_positived,
               the_normalization_cut_is_relative_not_absolute,
-              the_volume_check_anchors_the_axis,
-              the_volume_check_catches_a_wrong_label,
+              volume_is_never_converted_to_load,
+              volumes_moving_with_intensity_are_flagged_not_credited,
+              a_constant_load_across_volumes_is_recognised,
+              the_real_pax8_axis_is_two_points_and_says_so,
+              one_load_is_no_axis,
               a_run_with_no_volume_label_says_the_axis_is_unanchored,
               a_declared_load_map_is_still_not_circular,
               the_median_per_ion_run_is_used_not_the_max,
