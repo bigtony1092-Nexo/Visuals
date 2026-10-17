@@ -1178,9 +1178,11 @@ touch the archive, and both are now marked. The 33 picks, the load response, the
 six-run MARCH chemistry, the 968-of-1,035 pattern agreement, replication, drift
 and mass identity are all FragPipe-route or MARCH-annotation figures.
 
-**New data is already safe.** The loop has used the DIA-NN route for Thermo since
-2026-09-16 — q ≤ 0.01, one row per precursor. The 905 older MSFragger-route
-samples are the affected set.
+**~~New data is already safe.~~ WITHDRAWN — it is not, and the problem is live.**
+See "the gate that cannot fail is in production" below. The perpetual loop calls
+`run_thermo_pipeline.py` **without** `--force-diann`, so MSFragger is still the
+primary route with no score cut. The docstring claiming the DIA-NN route was
+stale, and I relayed it twice before it was checked.
 
 **The archive is recoverable, not written off.** A score cut restores the
 chemistry in every analyzer class. What it cannot restore is PAX8: at expect ≤
@@ -1266,3 +1268,66 @@ were green. The common root is that each badge was computed from a number withou
 anyone asking what else could have produced that number. `tools/fragment_chemistry.py`
 and export contract section 14 address one instance of that; the pattern is wider
 than the tool.
+
+## The gate that cannot fail is in production
+
+**Correction, and it reverses the most reassuring thing in this document.** I
+reported twice that new Thermo data was safe because the loop had moved to the
+DIA-NN route at q ≤ 0.01. It has not. The perpetual loop calls
+`run_thermo_pipeline.py` **without `--force-diann`**, so MSFragger remains the
+primary route and no score cut is applied. The docstring that said otherwise was
+stale; I passed it on without it being checked.
+
+Thermo store, 2026-10-16:
+
+| | |
+|---|---|
+| samples | 1,022 |
+| rows | 221.6M |
+| samples with computed m/z | **912 — 89% of samples** |
+| rows from them | **173.8M — 78% of rows** |
+| ingested | 2026-09-16 to 2026-10-10 |
+| rows with `pep_score < 2` | **122.7M — 55.4% of all Thermo rows** |
+
+So the majority of the store sits below the threshold that restores
+fragmentation chemistry, and this is current ingest rather than legacy.
+
+### The part that matters most
+
+Of those computed-m/z samples, **225 — 66.4M rows, 30% of the whole store —
+arrived *after* the ingest gate went live on 2026-10-06.** They passed it. The
+gate **could not have failed them**: its check is that the reported precursor
+sits within 10 ppm of the calculated one, and on these rows the reported value
+*is* the calculated one. The comparison is tautological, so the gate returned
+"pass" on 66.4M rows while being structurally incapable of rejecting any of them.
+
+That is the **fifth** instance of one failure mode in this session:
+
+| | where | the check that could not fail |
+|---|---|---|
+| 1 | `validate_export.py` | controls required to be *reported*, not to *fail* |
+| 2 | probe test 1 | zero isotope picks from a table that cannot hold one |
+| 3 | probe test 2 | calibration fitted to rows whose reported m/z *was* the calculation |
+| 4 | PAX8 page | a `pass` badge on an explanation every PSM was forced into |
+| 5 | **the ingest gate** | **66.4M rows admitted by a 10 ppm check on computed m/z** |
+
+The first four were in analysis and are fixed. **The fifth is in production and
+is admitting data now.** It is also the one with the cleanest fix, because the
+condition is already computable: a gate comparing a reported value against a
+calculated one should refuse to pass a row where the two are *identical*, since
+that is the signature of a value that was never measured. One guard —
+`abs(reported - calculated) < 1e-9 → reject, do not pass` — converts it from
+decoration into a check. `probe_consensus.py` already uses exactly that test to
+refuse a vacuous result; it belongs in the gate too.
+
+### What this changes and does not
+
+**No result in this document moves.** Everything load-bearing is FragPipe-route
+or MARCH-annotation: the 33 picks, the load response, the six-run MARCH
+chemistry, the 968-of-1,035 pattern agreement, replication, drift, mass identity.
+The audit stands at 2 of 12 claims touching the archive, both marked.
+
+**What changes is the forward risk.** This is not a historical cleanup with a
+known boundary. Until the loop passes `--force-diann` or the writer applies a
+score cut, every new Thermo sample adds rows that are 55% below the useful
+threshold and that the gate will wave through. The fix is with the owner.
