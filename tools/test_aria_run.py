@@ -724,6 +724,120 @@ def case_targets_and_atlas_together_are_refused(tmp):
     return bad
 
 
+
+
+def case_an_undetermined_charge_is_tracked_not_invented(tmp):
+    """Real case, from the HeLa wash landmark at m/z 352.340.
+
+    An MS1 detection whose isotope envelope was not resolved has no determined
+    charge. The contract tracks unassigned ions on purpose, so refusing the
+    measurement is wrong -- and writing a guessed charge to get it in is worse.
+    """
+    raw = waters(tmp, "nz.raw")
+    out_dir = Path(tmp) / "out_nz"
+    rows = [{"mz": 352.340, "rt": 50.047, "intensity": 68782.0, "n_scans": 154},
+            {"mz": 352.340, "rt": 50.528, "intensity": 61077.0, "n_scans": 164,
+             "score_kind": "q_value", "q_value": 0.001}]
+    peaks = jsonl(Path(tmp) / "pk_nz.jsonl", rows)
+    rc, out = run("--raw", raw, "--peaks", peaks, "--out", out_dir,
+                  "--sample-id", "HeLa_60_r1",
+                  "--targets", jsonl(Path(tmp) / "t_nz.jsonl", [TARGET]))
+    bad = []
+    if rc != 0:
+        bad.append("exit %d: a real detection with no determined charge was"
+                   " refused rather than tracked" % rc)
+    if not (out_dir / "ions.jsonl").exists():
+        return bad + ["no ion list written"]
+    ions = [json.loads(l) for l in (out_dir / "ions.jsonl").read_text().splitlines()]
+    if len(ions) != 2:
+        bad.append("%d ion(s) written from 2 chargeless peaks" % len(ions))
+    for i in ions:
+        if i["coord"]["charge"] is not None:
+            bad.append("charge came out as %r; nothing measured it"
+                       % i["coord"]["charge"])
+        if i["annotation"] is not None:
+            bad.append("annotated an ion whose charge is unknown: m/z cannot be"
+                       " turned into a peptide mass without z")
+        if i["confidence"]["tier"] != "bare_proximity":
+            bad.append("tier %r on an ion with no charge; a decoy-controlled score"
+                       " certifies an identification and there is none without z"
+                       % i["confidence"]["tier"])
+    # the second peak carried a q-value under the cut and must NOT be promoted
+    scored = [i for i in ions if i["confidence"]["score_kind"]
+              and "q_value" in i["confidence"]["score_kind"]]
+    if scored and scored[0]["confidence"]["decoy_controlled"]:
+        bad.append("a chargeless ion claims decoy control")
+    if "no determined charge" not in out:
+        bad.append("said nothing about the missing charge")
+    if "never be identified" not in out:
+        bad.append("did not say what the missing charge costs")
+    # distinct uids despite identical m/z, so the null charge is in the address
+    if len({i["ion_uid"] for i in ions}) != 2:
+        bad.append("the two detections collapsed to one uid")
+    if aria_run.ion_uid("S", "f", 352.34, 50.047, None, None) == \
+            aria_run.ion_uid("S", "f", 352.34, 50.047, None, 1):
+        bad.append("a null charge and charge 1 give the same address; null is not 1")
+    return bad
+
+
+def case_the_extraction_window_is_never_the_matching_window(tmp):
+    """--precursor-ppm is what the run matched in, not what the trace came through."""
+    raw = waters(tmp, "tw.raw")
+    out_dir = Path(tmp) / "out_tw"
+    rows = [{"mz": 650.3123, "rt": 20.0, "charge": 2, "intensity": 1e6,
+             "n_scans": 7, "points": [[19.9, 3.0], [20.0, 9.0], [20.1, 4.0]]}]
+    peaks = jsonl(Path(tmp) / "pk_tw.jsonl", rows)
+    rc, out = run("--raw", raw, "--peaks", peaks, "--out", out_dir,
+                  "--precursor-ppm", "10",
+                  "--targets", jsonl(Path(tmp) / "t_tw.jsonl", [TARGET]))
+    bad = []
+    if not (out_dir / "traces.jsonl").exists():
+        return ["no trace written from a peak carrying elution points"]
+    t = json.loads((out_dir / "traces.jsonl").read_text().splitlines()[0])
+    if t.get("extraction_window_ppm") is not None:
+        bad.append("wrote extraction_window_ppm %r, which no input stated"
+                   % t["extraction_window_ppm"])
+    if len(t["points"]) != 3:
+        bad.append("%d point(s) carried through" % len(t["points"]))
+    if t.get("apex_rt_min") != 20.0:
+        bad.append("apex came out at %r, not the most intense point"
+                   % t.get("apex_rt_min"))
+    man = json.loads((out_dir / "manifest.json").read_text())
+    if not man["tables"]["traces"]:
+        bad.append("wrote traces.jsonl but tables.traces is false")
+    if "not the window the extractor" not in out:
+        bad.append("did not distinguish the matching window from the extraction one")
+    # and a stated window IS carried
+    rows[0]["extraction_window_ppm"] = 7.1
+    peaks = jsonl(Path(tmp) / "pk_tw2.jsonl", rows)
+    rc2, out2 = run("--raw", raw, "--peaks", peaks, "--out", Path(tmp) / "out_tw2",
+                    "--targets", jsonl(Path(tmp) / "t_tw.jsonl", [TARGET]))
+    t2 = json.loads((Path(tmp) / "out_tw2" / "traces.jsonl").read_text().splitlines()[0])
+    if t2.get("extraction_window_ppm") != 7.1:
+        bad.append("a stated extraction window was not carried: %r"
+                   % t2.get("extraction_window_ppm"))
+    return bad
+
+
+def case_a_one_point_trace_is_not_written(tmp):
+    raw = waters(tmp, "op.raw")
+    out_dir = Path(tmp) / "out_op"
+    peaks = jsonl(Path(tmp) / "pk_op.jsonl", [
+        {"mz": 650.3123, "rt": 20.0, "charge": 2, "intensity": 1e6, "n_scans": 7,
+         "points": [[20.0, 9.0]]}])
+    rc, out = run("--raw", raw, "--peaks", peaks, "--out", out_dir,
+                  "--targets", jsonl(Path(tmp) / "t_op.jsonl", [TARGET]))
+    bad = []
+    if (out_dir / "traces.jsonl").exists():
+        bad.append("wrote a trace from a single point")
+    if "One point is not a peak" not in out:
+        bad.append("did not say why the trace was not written")
+    man = json.loads((out_dir / "manifest.json").read_text())
+    if man["tables"]["traces"]:
+        bad.append("declared traces with no traces.jsonl")
+    return bad
+
+
 CASES = [case_no_extractor_refuses, case_unknown_drift_kind_is_a_gate,
          case_declared_drift_kind_proceeds_and_is_recorded,
          case_extractor_exit_zero_with_no_output, case_extractor_failure_stops_the_run,
@@ -744,7 +858,10 @@ CASES = [case_no_extractor_refuses, case_unknown_drift_kind_is_a_gate,
          case_tier_definitions_cannot_be_loosened_by_flag,
          case_an_unknown_vendor_is_not_laundered_by_a_declaration,
          case_nothing_matching_stops_the_run_without_crashing,
-         case_targets_and_atlas_together_are_refused]
+         case_targets_and_atlas_together_are_refused,
+         case_an_undetermined_charge_is_tracked_not_invented,
+         case_the_extraction_window_is_never_the_matching_window,
+         case_a_one_point_trace_is_not_written]
 
 
 def main():

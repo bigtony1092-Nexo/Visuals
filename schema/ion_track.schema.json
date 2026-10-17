@@ -43,9 +43,13 @@
           "minimum": 0
         },
         "charge": {
-          "type": "integer",
+          "type": [
+            "integer",
+            "null"
+          ],
           "minimum": 1,
-          "maximum": 8
+          "maximum": 8,
+          "description": "Null means the charge was NOT DETERMINED -- an MS1 detection whose isotope envelope was not resolved. Null is not 1. A null charge forbids two things, because both need the charge to be true: an annotation (m/z cannot be converted to a peptide mass without z) and any tier above bare_proximity (a decoy-controlled score is a score for an identification). Writing a guessed charge to get past this is the failure the field exists to prevent."
         },
         "drift": {
           "type": [

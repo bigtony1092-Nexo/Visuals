@@ -240,8 +240,31 @@ def isotopes_repeat_k_with_one_missing(manifest, tables):
             return
 
 
+
+
+def a_chargeless_ion_claims_an_identity(manifest, tables):
+    """Section 2: null charge means not determined, and m/z without z is not a mass."""
+    tables["ions"][0]["coord"]["charge"] = None
+
+
+def a_chargeless_ion_claims_a_tier(manifest, tables):
+    tables["ions"][0]["coord"]["charge"] = None
+    tables["ions"][0]["annotation"] = None
+
+
+def a_chargeless_ion_carries_an_envelope(manifest, tables):
+    tables["ions"][0]["coord"]["charge"] = None
+    tables["ions"][0]["annotation"] = None
+    tables["ions"][0]["confidence"]["tier"] = "bare_proximity"
+    tables["ions"][0]["confidence"]["decoy_controlled"] = False
+
+
 CASES = [
     (a_sample_with_no_id, "has no sample_id", 1),
+    # A null charge is "not determined". It must not buy an identity or a tier.
+    (a_chargeless_ion_claims_an_identity, "rests on a charge nobody measured", 1),
+    (a_chargeless_ion_claims_a_tier, "no identification without z", 1),
+    (a_chargeless_ion_carries_an_envelope, "spacing IS the charge measurement", 1),
     (isotopes_repeat_k_with_one_missing, "isotopes[] repeats k", 1),
     (quad_window_carries_mobility, "quad_window but one_over_k0 is set", 1),
     (bare_proximity_claims_decoy_control, "bare_proximity with decoy_controlled=true", 1),

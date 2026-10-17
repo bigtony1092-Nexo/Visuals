@@ -259,13 +259,66 @@ it is not fed, the run says so and the step reports `skipped`, not `passed`.
 0 when every stage that had inputs ran and passed. 1 when a gate failed or a
 stage reported findings. 2 when a stage could not be run at all.
 
+## Merging runs into a cohort
+
+`tools/merge_exports.py` puts single-run exports side by side, which every
+cross-sample panel needs and `atlas_consensus` requires outright — one run cannot
+observe agreement across runs.
+
+    python3 tools/merge_exports.py export_a/ export_b/ export_c/ -o cohort/
+
+It will not assign `atlas_consensus`. Agreement across samples is a decision with
+a rule behind it — how many samples, how close — and the merge has no such rule.
+It reports which identities recur and leaves the tier alone. It also will not
+merge one `sample_id` that two exports describe differently (a different vendor,
+method or `drift_kind` is a different sample), will not average anything across
+runs that are not normalised to each other, and treats a repeated `ion_uid` as
+the hash collision it is rather than as one ion seen twice.
+
+## A charge that was not determined
+
+An MS1 detection whose isotope envelope was not resolved has no charge. The
+contract already tracks unassigned ions on purpose — `annotation` is nullable and
+the schema says so — but `coord.charge` was required, so the only way in was to
+invent one. `coord.charge` is now nullable, and null means **not determined,
+which is not 1**. Two things then become unsupportable rather than merely
+unverified, and `validate_export` rejects both:
+
+- **An annotation.** m/z cannot be converted to a peptide mass without z, so an
+  identity would rest on a charge nobody measured.
+- **Any tier above `bare_proximity`.** A decoy-controlled score is a score for an
+  identification, and there is no identification without z. The spine keeps such
+  a score on the record and does not let it buy the tier.
+
+An isotope envelope of two or more peaks alongside a null charge is an error, not
+a warning: the envelope's spacing *is* the charge measurement, so either the
+charge is determinable and null is wrong, or the envelope is not that ion's. A
+single-peak envelope has no spacing and is consistent.
+
+When no peak in a run carries a charge, the target list is never consulted, and
+the run says that instead of reporting a failed match — nothing was testable, so
+"the targets are wrong or the window is" would be the wrong diagnosis.
+
+## Traces
+
+A peak record that carries its elution `points` gets a trace in `traces.jsonl`,
+which is what makes the XIC panel reachable from the spine. Two points is the
+floor; one point is not a peak.
+
+`extraction_window_ppm` is written only when the input states it.
+`--precursor-ppm` is the window the run *matched* in, not the window the
+extractor pulled the trace through, and substituting one for the other would put
+a number on the panel that nothing measured.
+
 ## What is still outside the spine
 
 - **Spectra, traces, proteins and fragment hits.** The renderer draws all of
   them; `aria_run` does not yet emit them, so a run through the spine blanks
   those panels. Given an export that has them — `examples/` does — ten panels
   draw, the MS/MS mirror among them.
-- **The cross-sample merge** that `atlas_consensus` requires.
+- **The rule** `atlas_consensus` needs. `merge_exports.py` puts the runs side by
+  side and reports recurrence; how many samples and how close is still a decision
+  nobody has written down.
 - **`one_over_k0`.** On a mobility run with no 1/K0 in the peak list, every
   mobility panel plots an empty axis. The extractor has the number; it is not
   reaching the peak list yet, and the run warns about exactly that.

@@ -227,11 +227,17 @@ def drift_label(kind, mixed):
     return base + (" - other drift kinds excluded" if mixed else "")
 
 
+def charge_str(coord):
+    """Null charge is "z?" on a label, never 1+. The two are not the same claim."""
+    z = coord.get("charge")
+    return "z?" if z is None else "%d+" % z
+
+
 def label_of(ion):
     ann = ion.get("annotation") or {}
     pep = ann.get("peptide_sequence") or "unassigned"
-    return "%s  %s %d+  rt %.2f  %s" % (
-        ion["ion_uid"], pep, ion["coord"]["charge"], ion["coord"]["rt_min"],
+    return "%s  %s %s  rt %.2f  %s" % (
+        ion["ion_uid"], pep, charge_str(ion["coord"]), ion["coord"]["rt_min"],
         ion["confidence"]["tier"])
 
 
@@ -611,8 +617,8 @@ def panel_msms_mirror(ions, ctx):
                       "m/z", "relative intensity (base peak = 100)", mirrored=True)
     m = e.get("match") or {}
     ann = ion["annotation"] or {}
-    notes = ["%s %d+  %s  %s" % (ann.get("peptide_sequence") or "unassigned",
-                                 ion["coord"]["charge"],
+    notes = ["%s %s  %s  %s" % (ann.get("peptide_sequence") or "unassigned",
+                                charge_str(ion["coord"]),
                                  ann.get("prot_accession") or "",
                                  ion["confidence"]["tier"])]
     if m.get("dot_product") is not None:
@@ -667,6 +673,11 @@ def panel_isotope_envelope(ions, ctx):
         return None, ["isotope data present but attributable to no ion in ions.jsonl"]
     uid = ion["ion_uid"]
     z = ion["coord"]["charge"]
+    if z is None:
+        return None, ["this ion's charge was not determined, and the expected"
+                      " spacing is 1.00335/z. Without z there is no spacing to"
+                      " check the envelope against -- and if the envelope were"
+                      " resolved, its spacing would have given the charge."]
     env = ion.get("isotopes") or []
     if not env and uid in iso:
         env = [{"k": pk.get("idx", n), "mz": pk["mz"], "rel": pk["intensity"],
@@ -746,15 +757,22 @@ def panel_xic(ions, ctx):
     svg, _ = line_plot(curves, "retention time (min)",
                        "intensity - %s" % ctx["quant_words"], marks)
     ann = ion["annotation"] or {}
-    notes.insert(0, "%s %d+ at m/z %.4f, %s"
+    notes.insert(0, "%s %s at m/z %.4f, %s"
                  % (ann.get("peptide_sequence") or "unassigned",
-                    ion["coord"]["charge"], ion["coord"]["mz"],
+                    charge_str(ion["coord"]), ion["coord"]["mz"],
                     ion["confidence"]["tier"]))
     windows = {t.get("extraction_window_ppm") for t in rows[:4]}
-    notes.append("extraction window%s %s ppm -- a wider window admits more"
-                 " interference, so the window is part of the peak's shape"
-                 % ("s" if len(windows) > 1 else "",
-                    ", ".join(str(w) for w in sorted(w for w in windows if w))))
+    stated = sorted(w for w in windows if isinstance(w, (int, float)) and w > 0)
+    if stated:
+        notes.append("extraction window%s %s ppm -- a wider window admits more"
+                     " interference, so the window is part of the peak's shape"
+                     % ("s" if len(stated) > 1 else "",
+                        ", ".join("%g" % w for w in stated)))
+    if len(stated) < len(windows):
+        notes.append("%d trace(s) state no extraction window (or state zero, which"
+                     " is not a window). Without it there is no telling how much"
+                     " of this peak is the ion and how much is whatever else fell"
+                     " inside the extraction" % (len(windows) - len(stated)))
     shapes = {}
     for t in rows[:4]:
         if t.get("fwhm_min") is not None:
@@ -1045,7 +1063,13 @@ def build(manifest, method, ions, catalog, selected, tables=None):
                       % (dec["strategy"], f"{dec['kept']:,}", f"{dec['of']:,}",
                          100.0 * dec["kept"] / dec["of"]))
     for w in manifest.get("warnings", []):
-        alerts.append(esc(w))
+        # Skip a manifest warning the page has already made in its own words.
+        # Two sources for one fact reads as two problems.
+        if any(mark in w and any(mark in a for a in alerts)
+               for mark in ("33-70%", "RELATIVE abundance", "quadrupole")):
+            continue
+        if w not in alerts:
+            alerts.append(esc(w))
     if alerts:
         head.append('<div class=banner><b>Read before the charts</b><ul>%s</ul></div>'
                     % "".join("<li>%s</li>" % a for a in alerts))

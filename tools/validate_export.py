@@ -305,6 +305,46 @@ def check_ion(report, where, line, ion, samples, seen_uids):
     drift = coord.get("drift")
     k0 = coord.get("one_over_k0")
 
+    # A null charge means it was not determined, and two claims then become
+    # unsupportable rather than merely unverified: an identity needs z to turn
+    # m/z into a peptide mass, and a tier above bare_proximity is a score for an
+    # identification. Allowing either would make "charge not determined" a free
+    # pass instead of a statement.
+    if "charge" in coord and coord.get("charge") is None:
+        ann = ion.get("annotation")
+        if isinstance(ann, dict) and ann.get("peptide_sequence"):
+            report.error(
+                where,
+                f"{at}: coord.charge is null (not determined) but the ion is"
+                f" annotated as {ann['peptide_sequence']}. m/z cannot be converted"
+                " to a peptide mass without the charge, so this identity rests on"
+                " a charge nobody measured",
+            )
+        tier = (ion.get("confidence") or {}).get("tier")
+        if tier and tier != "bare_proximity":
+            report.error(
+                where,
+                f"{at}: coord.charge is null (not determined) but the tier is"
+                f" {tier!r}. A decoy-controlled score is a score for an"
+                " identification, and there is no identification without z",
+            )
+        env = ion.get("isotopes") or []
+        if len(env) >= 2:
+            report.error(
+                where,
+                f"{at}: coord.charge is null but a {len(env)}-peak isotope envelope"
+                " is present. The envelope's spacing IS the charge measurement"
+                " (1.00335/z), so either the charge is determinable from it and"
+                " null is wrong, or the envelope is not this ion's",
+            )
+        elif len(env) == 1:
+            report.note(
+                where,
+                f"{at}: coord.charge is null and the envelope holds one peak. One"
+                " peak has no spacing, so it cannot give the charge -- consistent,"
+                " but it also means nothing confirms the monoisotope",
+            )
+
     # Section 3. The whole reason drift_kind is a required field.
     if sample is not None and kind is not None and sample.get("drift_kind") != kind:
         report.error(

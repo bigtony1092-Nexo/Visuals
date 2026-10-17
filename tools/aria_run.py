@@ -112,7 +112,8 @@ def ion_uid(sample_id, source_file, mz, rt, drift, charge):
     must not drift: a change to it silently orphans every earlier ion list.
     """
     parts = [str(sample_id), str(source_file), "%.4f" % float(mz), "%.3f" % float(rt),
-             "null" if drift is None else "%.4f" % float(drift), str(int(charge))]
+             "null" if drift is None else "%.4f" % float(drift),
+             "null" if charge is None else str(int(charge))]
     return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
 
 
@@ -322,6 +323,10 @@ ALIASES = {
     "mods": ("mods", "modifications", "assigned_modifications"),
     "source_file": ("source_file", "file", "raw_file", "spectrum_file"),
     "cluster_rank": ("cluster_rank", "rank"),
+    "points": ("points", "trace", "xic", "elution"),
+    "window_ppm": ("window_ppm", "extraction_window_ppm", "xic_window_ppm"),
+    "apex_rt": ("apex_rt", "apex_rt_min"),
+    "fwhm": ("fwhm", "fwhm_min"),
 }
 
 
@@ -376,18 +381,32 @@ def stage_extract(run, raw, peaks_path, extract_cmd, workdir):
                  "%s holds no peak records. An empty extraction is a result, but it"
                  " is not one anything downstream can be read from." % peaks_path)
         return None, False
-    missing = []
+    missing, chargeless = [], 0
     for i, row in enumerate(rows, 1):
-        for need in ("mz", "rt", "charge"):
+        for need in ("mz", "rt"):
             if field(row, need) is None:
                 missing.append("record %d has no %s" % (i, need))
+        if field(row, "charge") is None:
+            chargeless += 1
     if missing:
         for line in missing[:5]:
             print("  %s" % line)
         run.cannot("2 EXTRACT   vendor peaks",
-                   "%d record(s) lack mz, rt or charge. A peak without a coordinate"
-                   " cannot be given an identity." % len(missing))
+                   "%d record(s) lack an m/z or a retention time. A peak without a"
+                   " coordinate is not a detection." % len(missing))
         return None, False
+    if chargeless:
+        # Not a refusal. An MS1 detection whose envelope was not resolved has no
+        # determined charge, and the contract tracks unassigned ions on purpose.
+        # What it cannot do is carry an identity or a tier, and that is enforced
+        # downstream rather than by discarding the measurement here.
+        print("  %d record(s) carry no charge: recorded as not determined, which"
+              " bars them from an annotation and from any tier above"
+              " bare_proximity" % chargeless)
+        run.warn("%d peak(s) have no determined charge. They are tracked with"
+                 " coord.charge null and can never be identified from this run:"
+                 " m/z cannot be turned into a peptide mass without z."
+                 % chargeless)
     print("  read %d peak record(s) from %s" % (len(rows), peaks_path))
     print()
     run.ok("2 EXTRACT   vendor peaks", "%d peaks from %s" % (len(rows), Path(peaks_path).name))
@@ -529,12 +548,21 @@ def stage_annotate(run, peaks, targets, vendor_rec, args):
 
     assigned = unassigned = 0
     ambiguous = 0
+    no_charge = 0
     for row in peaks:
         mz = float(field(row, "mz"))
-        z = int(field(row, "charge"))
+        zf = field(row, "charge")
+        z = None if zf is None else int(zf)
         rt = float(field(row, "rt"))
         dr = field(row, "drift")
         dr = None if dr is None else float(dr)
+        if z is None:
+            # Without z there is no mass, so a target match would rest on m/z
+            # coincidence alone. Left unassigned, which is a tracked state.
+            row["_match"] = None
+            no_charge += 1
+            unassigned += 1
+            continue
         hits = []
         for t in targets:
             if t["charge"] and t["charge"] != z:
@@ -561,6 +589,9 @@ def stage_annotate(run, peaks, targets, vendor_rec, args):
 
     print("  %d assigned, %d unassigned, %d had more than one candidate"
           % (assigned, unassigned, ambiguous))
+    if no_charge:
+        print("  %d of the unassigned have no determined charge, so no target could"
+              " be tested against them" % no_charge)
     print()
     if ambiguous:
         run.warn("%d peak(s) matched more than one target inside the window and were"
@@ -568,9 +599,21 @@ def stage_annotate(run, peaks, targets, vendor_rec, args):
                  " evidence: see docs/resolvability.md for what the window can and"
                  " cannot separate." % ambiguous)
     if assigned == 0:
+        if no_charge == len(peaks):
+            print("  no peak had a determined charge, so no target could be tested"
+                  " against any of them. This is not a failed match.")
+            run.skip("3 ANNOTATE  match to targets",
+                     "no peak carried a charge, so nothing was testable")
+            run.warn("the target list was never consulted: every peak lacks a"
+                     " determined charge, so there was nothing to test against."
+                     " The ions below are tracked and unassigned, which is a state,"
+                     " not a result.")
+            return True
         run.findings("3 ANNOTATE  match to targets",
-                     "no peak matched any target. Either the targets are wrong for"
-                     " this run or the window is.", stop=True)
+                     "no peak matched any target. Of %d peak(s), %d were testable"
+                     " and none matched, so either the targets are wrong for this"
+                     " run or the window is."
+                     % (len(peaks), len(peaks) - no_charge), stop=True)
         return False
     run.ok("3 ANNOTATE  match to targets",
            "%d/%d assigned" % (assigned, len(peaks)))
@@ -617,14 +660,15 @@ def stage_ionlist(run, peaks, vendor_rec, args, out_dir):
                       "drift_kind_declared": bool(vendor_rec.get("drift_kind_declared")),
                       "targets": str(args.targets or args.atlas or "none")})
     stamp = now()
-    kept, rejected, conflicts = [], [], []
+    kept, kept_rows, rejected, conflicts = [], [], [], []
     tiers = {"bare_proximity": 0, "pass2_confirmed": 0, "atlas_consensus": 0}
     seen = {}
     dup = 0
 
     for row in peaks:
         mz = float(field(row, "mz"))
-        z = int(field(row, "charge"))
+        zf = field(row, "charge")
+        z = None if zf is None else int(zf)
         rt = float(field(row, "rt"))
         dr = field(row, "drift")
         dr = None if dr is None else float(dr)
@@ -676,6 +720,15 @@ def stage_ionlist(run, peaks, vendor_rec, args, out_dir):
 
         match = row.get("_match")
         tier, decoy, score, kind = tier_of(row, args.q_cut)
+        if z is None and tier != "bare_proximity":
+            # A decoy-controlled score is a score for an identification, and
+            # there is no identification without z. The score is kept on the
+            # record; the tier it would buy is not.
+            run.warn("an ion with no determined charge carried a %s score; it is"
+                     " recorded but the tier stays bare_proximity, because a score"
+                     " certifies an identification and there is none without z."
+                     % kind)
+            tier, decoy = "bare_proximity", False
         if tier is None:
             reject("rejected", "decoy-controlled %s = %s is above the %g cut"
                    % (kind, score, args.q_cut))
@@ -757,6 +810,7 @@ def stage_ionlist(run, peaks, vendor_rec, args, out_dir):
         seen[uid] = True
         tiers[tier] += 1
         kept.append(rec)
+        kept_rows.append(row)
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -782,6 +836,51 @@ def stage_ionlist(run, peaks, vendor_rec, args, out_dir):
                         "uid": "%s_%d" % (ann["peptide_sequence"], rec["coord"]["charge"]),
                         "mz": rec["coord"]["mz"], "z": rec["coord"]["charge"],
                         "drift": rec["coord"]["drift"], "rt": rec["coord"]["rt_min"]})
+    # Traces, where the extractor supplied the elution points. Two points is the
+    # floor: one point is not a peak, and the XIC panel refuses it anyway.
+    traces, short, no_window = [], 0, 0
+    for rec, row in zip(kept, kept_rows):
+        pts = field(row, "points")
+        if not isinstance(pts, list) or not pts:
+            continue
+        clean = [[float(q[0]), float(q[1])] for q in pts
+                 if isinstance(q, (list, tuple)) and len(q) >= 2]
+        if len(clean) < 2:
+            short += 1
+            continue
+        t = {"ion_uid": rec["ion_uid"], "sample_id": rec["sample_id"], "kind": "xic",
+             "points": clean}
+        w = field(row, "window_ppm")
+        if w is not None and float(w) > 0:
+            t["extraction_window_ppm"] = float(w)
+        else:
+            # --precursor-ppm is the window this run MATCHED in. The window the
+            # extractor pulled the trace through is a different number, and
+            # substituting one for the other would put a figure on the panel
+            # that nothing measured.
+            no_window += 1
+        a = field(row, "apex_rt")
+        t["apex_rt_min"] = float(a) if a is not None else \
+            max(clean, key=lambda q: q[1])[0]
+        f = field(row, "fwhm")
+        if f is not None:
+            t["fwhm_min"] = float(f)
+        traces.append(t)
+    if traces:
+        with (Path(out_dir) / "traces.jsonl").open("w") as fh:
+            for t in traces:
+                fh.write(json.dumps(t) + "\n")
+        print("  wrote %d trace(s) to %s"
+              % (len(traces), Path(out_dir) / "traces.jsonl"))
+    if no_window:
+        run.warn("%d trace(s) state no extraction window. --precursor-ppm is the"
+                 " window this run matched in, not the window the extractor pulled"
+                 " the trace through, so none was written. Without it there is no"
+                 " telling how much of the peak is the ion." % no_window)
+    if short:
+        run.warn("%d peak(s) carried fewer than 2 elution points, so no trace was"
+                 " written for them. One point is not a peak." % short)
+
     resolve_path = Path(out_dir) / "resolve_ions.json"
     with resolve_path.open("w") as fh:
         for r in resolve:
@@ -828,6 +927,10 @@ def stage_ionlist(run, peaks, vendor_rec, args, out_dir):
                  % args.min_scans)
     run.ok("4 IONLIST   annotated ions", "%d ions, %d rejected" % (len(kept), len(rejected)))
     return kept, tiers, True
+
+
+def wrote_traces(out_dir):
+    return (Path(out_dir) / "traces.jsonl").exists()
 
 
 def resolve_is_usable(path, args):
@@ -896,7 +999,8 @@ def stage_export(run, ions, tiers, vendor_rec, args, out_dir, peaks_n):
         # Declared from what was written, not from what was hoped for. A table
         # claimed but absent is the contract violation validate_export looks for.
         "tables": {"ions": True, "proteins": False, "spectra": False,
-                   "traces": False, "spectrum_kinds": [], "fragment_hits": False},
+                   "traces": wrote_traces(out_dir), "spectrum_kinds": [],
+                   "fragment_hits": False},
         "counts": {"ions_total": peaks_n, "ions_exported": len(ions),
                    "by_tier": dict(tiers)},
         "decimation": {"strategy": "none", "kept": len(ions), "of": peaks_n, "seed": 0},
