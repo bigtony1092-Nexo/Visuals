@@ -100,6 +100,38 @@ def read_features(path):
     return feats
 
 
+def rt_units(psms, feats, out, forced="auto"):
+    """Search engines and feature finders disagree about retention units.
+
+    FragPipe's psm.tsv reports seconds; an ApexRT table reports minutes. The
+    two differ by a factor of 60, which is far enough from 1 to detect without
+    guessing -- and worth detecting, because comparing the two directly joins
+    nothing and then reports that the files describe different runs, which is
+    both wrong and the most misleading thing it could say.
+    """
+    if forced == "min":
+        return 1.0
+    if forced == "sec":
+        out("retention  psm.tsv read as SECONDS (told to)")
+        return 1.0 / 60.0
+    frt = [f["rt"] for f in feats if f["rt"] is not None]
+    if not frt:
+        return 1.0
+    pm, fm = med([p["rt"] for p in psms]), med(frt)
+    if fm <= 0 or pm <= 0:
+        return 1.0
+    ratio = pm / fm
+    if 20 <= ratio <= 200:
+        out("retention  psm.tsv is in SECONDS (median %.0f against the feature "
+            "table's %.2f min); converting" % (pm, fm))
+        return 1.0 / 60.0
+    if 0.005 <= ratio <= 0.05:
+        out("retention  psm.tsv is in HOURS (median %.3f against the feature "
+            "table's %.2f min); converting" % (pm, fm))
+        return 60.0
+    return 1.0
+
+
 def join(psms, feats, out):
     """Identity from the search, coordinate from the feature table."""
     feats = sorted(feats, key=lambda f: f["mz"])
@@ -131,11 +163,19 @@ def join(psms, feats, out):
     out("joined %d of %d PSM(s) to a feature (%.0f%%) -> %d distinct ion(s)"
         % (hits, len(psms), 100 * share, len(by)))
     if share < MIN_JOIN_SHARE:
+        near = sum(1 for p in psms
+                   if any(abs(f["mz"] - p["mz"]) <= p["mz"] * JOIN_PPM / 1e6
+                          for f in feats))
+        extra = ""
+        if near > hits:
+            extra = (". %d PSM(s) DID match on m/z and were rejected on "
+                     "retention alone, so check the units: --psm-rt-units "
+                     "sec or min" % near)
         raise Unusable(
             "only %.0f%% of PSMs found a feature within %g ppm and %g min. The "
-            "two files probably do not describe the same run, and a target list "
-            "built from them would point the extraction at coordinates nothing "
-            "was measured at" % (100 * share, JOIN_PPM, JOIN_RT_MIN))
+            "two files may not describe the same run, and a target list built "
+            "from them would point the extraction at coordinates nothing was "
+            "measured at%s" % (100 * share, JOIN_PPM, JOIN_RT_MIN, extra))
     return list(by.values())
 
 
@@ -169,6 +209,8 @@ def main(argv=None):
     p.add_argument("--bins", type=int, default=10)
     p.add_argument("--per-bin", type=int, default=50)
     p.add_argument("--q-cut", type=float, default=0.01)
+    p.add_argument("--psm-rt-units", choices=("auto", "min", "sec"), default="auto",
+                   help="retention units in the PSM table (default: detect)")
     p.add_argument("--stratify", choices=("mz", "intensity"), default="mz",
                    help="what to spread the set across. mz is orthogonal to "
                         "everything being measured; intensity needs --from-run")
@@ -202,6 +244,10 @@ def main(argv=None):
         out("PSMs      %d at q <= %g from %s" % (len(psms), args.q_cut, args.psm))
         feats = read_features(args.apex)
         out("features  %d from %s" % (len(feats), args.apex))
+        scale = rt_units(psms, feats, out, args.psm_rt_units)
+        if scale != 1.0:
+            for p_ in psms:
+                p_["rt"] *= scale
         ions = join(psms, feats, out)
 
         for i in ions:

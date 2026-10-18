@@ -149,6 +149,74 @@ def accepts_intensity_from_a_different_run(tmp):
     return bad
 
 
+def seconds_and_minutes_are_reconciled(tmp):
+    """The bug this guards, found on a real-shaped file pair.
+
+    FragPipe writes retention in seconds; an ApexRT table writes minutes. Left
+    alone the join matched nothing and the tool then said the two files
+    described different runs -- wrong, and the most misleading thing it could
+    have said, since the m/z values agreed to 0 ppm.
+    """
+    psm, apex, _ = make_run(tmp, "sec", seed=13)
+    secs = os.path.join(tmp, "sec_seconds_psm.tsv")
+    with open(psm, newline="") as fh:
+        rows = list(csv.reader(fh, delimiter="\t"))
+    hdr, body = rows[0], rows[1:]
+    rt = hdr.index("Retention")
+    with open(secs, "w", newline="") as fh:
+        w = csv.writer(fh, delimiter="\t")
+        w.writerow(hdr)
+        for r in body:
+            r = list(r)
+            r[rt] = "%.1f" % (float(r[rt]) * 60.0)     # minutes -> seconds
+            w.writerow(r)
+    out_csv = os.path.join(tmp, "t_sec.csv")
+    rc, out = run("--psm", secs, "--apex", apex, "--out", out_csv,
+                  "--bins", "6", "--per-bin", "20")
+    bad = []
+    if "SECONDS" not in out:
+        bad.append("did not detect that the PSM table was in seconds")
+    if rc != 0:
+        bad.append("exit %d on a seconds/minutes pair that describes one run" % rc)
+    else:
+        n = len(read_targets(out_csv))
+        if n < 20:
+            bad.append("only %d target(s) after unit conversion" % n)
+    # and the override has to work too
+    rc2, out2 = run("--psm", secs, "--apex", apex, "--out",
+                    os.path.join(tmp, "t_sec2.csv"), "--psm-rt-units", "sec",
+                    "--bins", "6", "--per-bin", "20")
+    if rc2 != 0:
+        bad.append("exit %d with --psm-rt-units sec given explicitly" % rc2)
+    return bad
+
+
+def a_real_unit_mismatch_still_names_units(tmp):
+    """When m/z agrees and retention does not, say so rather than blaming the
+    files for being different runs."""
+    psm, apex, _ = make_run(tmp, "mm", seed=21)
+    bad_rt = os.path.join(tmp, "mm_badrt_psm.tsv")
+    with open(psm, newline="") as fh:
+        rows = list(csv.reader(fh, delimiter="\t"))
+    hdr, body = rows[0], rows[1:]
+    rt = hdr.index("Retention")
+    with open(bad_rt, "w", newline="") as fh:
+        w = csv.writer(fh, delimiter="\t")
+        w.writerow(hdr)
+        for r in body:
+            r = list(r)
+            r[rt] = "%.3f" % (float(r[rt]) * 7.0)   # not 60: no clean unit story
+            w.writerow(r)
+    rc, out = run("--psm", bad_rt, "--apex", apex, "--out",
+                  os.path.join(tmp, "t_mm.csv"))
+    bad = []
+    if rc != 2:
+        bad.append("exit %d on a retention mismatch, expected 2" % rc)
+    if "check the units" not in out:
+        bad.append("did not point at units when m/z matched and retention did not")
+    return bad
+
+
 def refuses_mismatched_files(tmp):
     """A search and a feature table from different runs would point the
     extraction at coordinates nothing was measured at."""
@@ -158,7 +226,7 @@ def refuses_mismatched_files(tmp):
     bad = []
     if rc != 2:
         bad.append("exit %d on a search and features from different runs" % rc)
-    if "do not describe the same run" not in out:
+    if "may not describe the same run" not in out:
         bad.append("did not say the two files disagree")
     return bad
 
@@ -218,6 +286,8 @@ CASES = [builds_a_list_stratified_by_mz,
          refuses_intensity_stratification_without_another_run,
          refuses_selecting_from_the_run_being_extracted,
          accepts_intensity_from_a_different_run,
+         seconds_and_minutes_are_reconciled,
+         a_real_unit_mismatch_still_names_units,
          refuses_mismatched_files,
          reports_a_narrow_intensity_span,
          the_output_feeds_the_extractor]
