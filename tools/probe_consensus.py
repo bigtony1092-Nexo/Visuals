@@ -923,11 +923,24 @@ def microlitres(text):
 
 
 def trimmed_mean(values, frac=TRIM_FRACTION):
-    """Mean of the central share. Median-robust, mean-linear; see TRIM_FRACTION."""
+    """Mean of the central share. Median-robust, mean-linear; see TRIM_FRACTION.
+
+    int(n * frac) trims nothing at n = 3 and one from each end at n = 5, which
+    keeps 100% and 60% where the name says 50%. The share actually kept is
+    returned alongside so a caller can print what happened rather than the
+    nominal fraction.
+    """
     xs = sorted(values)
     k = int(len(xs) * frac)
     core = xs[k:len(xs) - k] or xs
     return sum(core) / len(core)
+
+
+def trimmed_kept(n, frac=TRIM_FRACTION):
+    """The share of n values trimmed_mean actually averages."""
+    k = int(n * frac)
+    kept = n - 2 * k
+    return (kept if kept > 0 else n) / float(n)
 
 
 def estimate_load_factors(per_ion_run, out):
@@ -1079,7 +1092,7 @@ def constant_load_check(per_ion_run, factors, out):
         base = meds[0][1]
         for v, m, n in meds:
             out.append("      %4g uL  n=%d  median log10 intensity %+.3f  (%+.3f)%s"
-                       % (v, m and n, m, m - base,
+                       % (v, (n if m else 0), m, m - base,
                           "   <- single run, not judgeable" if n < 2 else ""))
         # Judge the trend on the REPLICATED volumes only. A singleton column has
         # no scatter of its own, and letting it suppress the verdict loses the
@@ -1139,129 +1152,20 @@ def report_normalization_set(slopes, vals, cohort_med, declared, out):
         out.append("  are what an estimated axis keeps.")
 
 
-def test_load(con, cfg, load_map, limit, out):
-    """Test 3: does precursor intensity track how much was loaded?"""
-    out.append("")
-    out.append("TEST 3 - LOAD RESPONSE")
-    r = cfg["roles"]
-    if not r["intensity"]:
-        out.append("  SKIPPED: no intensity column in %s. Pass --table/--intensity if one exists"
-                   " elsewhere." % cfg["table"])
-        return False
-    if not r["run"]:
-        out.append("  SKIPPED: no run column, so intensities cannot be tied to a load.")
-        return False
+def load_analysis(per_ion_run, factors, declared, out, label=""):
+    """The slope, quartile, curvature and normalization analysis for ONE set
+    of runs.
 
-    # load_map is None when --load-map was not given, which is the usual case now.
-    given = load_map or {}
-    notes = {k: v for k, v in given.items() if str(k).startswith("_")}
-    runs_map = {k: v for k, v in given.items() if not str(k).startswith("_")}
-    disputed = notes.get("_disputed") or {}
-
-    def ng_for(run):
-        run = str(run)
-        if run in runs_map:
-            return runs_map[run]
-        for frag, ng in runs_map.items():
-            if frag in run:
-                return ng
-        return None
-
-    sql = 'SELECT "%s", "%s", "%s", "%s" FROM "%s" WHERE "%s" > 0' % (
-        r["seq"], r["charge"], r["run"], r["intensity"], cfg["table"], r["intensity"])
-    if limit:
-        sql += " LIMIT %d" % limit
-    # Median per (ion, run), not max: taking the brightest replicate inflated the
-    # published load ratio to 5.89x where the median gives 5.37x (top3-estimator.md).
-    rows = defaultdict(lambda: defaultdict(list))
-    for seq, z, run, inten in con.execute(sql):
-        try:
-            z, inten = int(z), float(inten)
-        except (TypeError, ValueError):
-            continue
-        if inten <= 0:
-            continue
-        rows[(seq, z)][str(run)].append(inten)
-    per_ion_run = {key: {run: statistics.median(v) for run, v in per_run.items()}
-                   for key, per_run in rows.items()}
-    if not per_ion_run:
-        out.append("  SKIPPED: no usable intensity rows.")
-        return False
-
-    declared = bool(runs_map)
-    if given and not runs_map:
-        out.append("  the load map holds only comment keys (leading underscore) and no"
-                   " run entries, so the axis is estimated, not declared.")
-    if declared:
-        factors, unmatched = {}, Counter()
-        for run in {run for per_run in per_ion_run.values() for run in per_run}:
-            ng = ng_for(run)
-            if ng is None:
-                unmatched[run] += 1
-            else:
-                try:
-                    if float(ng) > 0:
-                        factors[run] = math.log10(float(ng))
-                except (TypeError, ValueError):
-                    unmatched[run] += 1
-        if unmatched:
-            out.append("  %d run(s) matched no load-map entry and are excluded: %s"
-                       % (len(unmatched), ", ".join(list(unmatched)[:4])))
-        out.append("  load axis is DECLARED ng from --load-map, so the regression below"
-                   " is not circular.")
-        anchors = None
-    else:
-        out.append("  no --load-map given, so the load axis is ESTIMATED from the ions.")
-        factors, anchors = estimate_load_factors(per_ion_run, out)
-        if not factors:
-            out.append("  SKIPPED: no load axis could be built.")
-            return False
-
-    # 60 min and 120 min are different LC methods. A load slope pooled across them
-    # mixes method with load, and on the Colorado cohort each method holds exactly
-    # one 100 ng run, so pooling is also the only way to make the low end look
-    # replicated when it is not.
-    grads = {}
-    for run in factors:
-        grads.setdefault(gradient_of(run), []).append(run)
-    if len(grads) > 1 and None not in grads:
-        out.append("  %d gradient length(s) in this cohort: %s. These are different LC"
-                   % (len(grads), ", ".join("%s min (%d run%s)"
-                                            % (g, len(r), "" if len(r) == 1 else "s")
-                                            for g, r in sorted(grads.items()))))
-        out.append("  methods, so a pooled load slope would mix method with load. Each is")
-        out.append("  reported separately below; none is combined.")
-        for g, runs_in in sorted(grads.items()):
-            by_load = {}
-            for run in runs_in:
-                by_load.setdefault(round(factors[run], 9), []).append(run)
-            desc = ", ".join("%d run%s" % (len(v), "" if len(v) == 1 else "s")
-                             for _, v in sorted(by_load.items()))
-            out.append("    %s min: %d load level(s), %s"
-                       % (g, len(by_load), desc))
-            single = [k for k, v in by_load.items() if len(v) == 1]
-            if single and len(by_load) >= 2:
-                out.append("      %d level(s) rest on a SINGLE run, so the slope at this"
-                           % len(single))
-                out.append("      gradient is anchored by one unreplicated point. Its"
-                           " scatter is")
-                out.append("      not measurable and nothing checks it.")
-    elif len(grads) > 1:
-        out.append("  some run names carry a gradient length and some do not, so the runs")
-        out.append("  were NOT split by method. If this cohort mixes gradients, the slope")
-        out.append("  below mixes method with load.")
-
-    if declared and disputed:
-        for run, info in disputed.items():
-            hit = [r for r in factors if str(run) in str(r) or str(r) in str(run)]
-            out.append("  DISPUTED LOAD on %s: the map says %s ng, the alternative"
-                       " reading is %s ng." % (str(run)[:44], info.get("recorded"),
-                                               info.get("alternative")))
-            out.append("    %s" % info.get("why", "no reason recorded"))
-            out.append("    %s this cohort. Every number below that uses it inherits the"
-                       % ("IN" if hit else "NOT in"))
-            out.append("    dispute; re-run with the other value to see what moves.")
-
+    It is a function because it must be applied per gradient. 60 min and 120
+    min are different LC methods, and a pooled slope mixes method with load --
+    which the output above says plainly. For a while it said that while the
+    slope loop, the quartiles and the normalization set all ran over every run
+    at once, so the sentence was true of the printed breakdown and false of
+    every number under it. Scaling one gradient's intensities by 0.2, which
+    cannot change either gradient's own slope, moved the reported median from
+    +1.004 to +1.368.
+    """
+    pre = ("  [%s] " % label) if label else "  "
     n_loads = len({round(f, 9) for f in factors.values()})
     if n_loads < 2:
         out.append("  SKIPPED: every run sits at the same load (%d distinct value),"
@@ -1422,11 +1326,157 @@ def test_load(con, cfg, load_map, limit, out):
 
     report_normalization_set(slopes, vals, cohort_med, declared, out)
 
+
+def test_load(con, cfg, load_map, limit, out):
+    """Test 3: does precursor intensity track how much was loaded?"""
+    out.append("")
+    out.append("TEST 3 - LOAD RESPONSE")
+    r = cfg["roles"]
+    if not r["intensity"]:
+        out.append("  SKIPPED: no intensity column in %s. Pass --table/--intensity if one exists"
+                   " elsewhere." % cfg["table"])
+        return False
+    if not r["run"]:
+        out.append("  SKIPPED: no run column, so intensities cannot be tied to a load.")
+        return False
+
+    # load_map is None when --load-map was not given, which is the usual case now.
+    given = load_map or {}
+    notes = {k: v for k, v in given.items() if str(k).startswith("_")}
+    runs_map = {k: v for k, v in given.items() if not str(k).startswith("_")}
+    disputed = notes.get("_disputed") or {}
+
+    def ng_for(run):
+        run = str(run)
+        if run in runs_map:
+            return runs_map[run]
+        for frag, ng in runs_map.items():
+            if frag in run:
+                return ng
+        return None
+
+    sql = 'SELECT "%s", "%s", "%s", "%s" FROM "%s" WHERE "%s" > 0' % (
+        r["seq"], r["charge"], r["run"], r["intensity"], cfg["table"], r["intensity"])
+    if limit:
+        sql += " LIMIT %d" % limit
+    # Median per (ion, run), not max: taking the brightest replicate inflated the
+    # published load ratio to 5.89x where the median gives 5.37x (top3-estimator.md).
+    rows = defaultdict(lambda: defaultdict(list))
+    for seq, z, run, inten in con.execute(sql):
+        try:
+            z, inten = int(z), float(inten)
+        except (TypeError, ValueError):
+            continue
+        if inten <= 0:
+            continue
+        rows[(seq, z)][str(run)].append(inten)
+    per_ion_run = {key: {run: statistics.median(v) for run, v in per_run.items()}
+                   for key, per_run in rows.items()}
+    if not per_ion_run:
+        out.append("  SKIPPED: no usable intensity rows.")
+        return False
+
+    declared = bool(runs_map)
+    if given and not runs_map:
+        out.append("  the load map holds only comment keys (leading underscore) and no"
+                   " run entries, so the axis is estimated, not declared.")
+    if declared:
+        factors, unmatched = {}, Counter()
+        for run in {run for per_run in per_ion_run.values() for run in per_run}:
+            ng = ng_for(run)
+            if ng is None:
+                unmatched[run] += 1
+            else:
+                try:
+                    if float(ng) > 0:
+                        factors[run] = math.log10(float(ng))
+                except (TypeError, ValueError):
+                    unmatched[run] += 1
+        if unmatched:
+            out.append("  %d run(s) matched no load-map entry and are excluded: %s"
+                       % (len(unmatched), ", ".join(list(unmatched)[:4])))
+        out.append("  load axis is DECLARED ng from --load-map, so the regression below"
+                   " is not circular.")
+        anchors = None
+    else:
+        out.append("  no --load-map given, so the load axis is ESTIMATED from the ions.")
+        factors, anchors = estimate_load_factors(per_ion_run, out)
+        if not factors:
+            out.append("  SKIPPED: no load axis could be built.")
+            return False
+
+    # 60 min and 120 min are different LC methods. A load slope pooled across them
+    # mixes method with load, and on the Colorado cohort each method holds exactly
+    # one 100 ng run, so pooling is also the only way to make the low end look
+    # replicated when it is not.
+    grads = {}
+    for run in factors:
+        grads.setdefault(gradient_of(run), []).append(run)
+    if len(grads) > 1 and None not in grads:
+        out.append("  %d gradient length(s) in this cohort: %s. These are different LC"
+                   % (len(grads), ", ".join("%s min (%d run%s)"
+                                            % (g, len(r), "" if len(r) == 1 else "s")
+                                            for g, r in sorted(grads.items()))))
+        out.append("  methods, so a pooled load slope would mix method with load. Each is")
+        out.append("  reported separately below; none is combined.")
+        for g, runs_in in sorted(grads.items()):
+            by_load = {}
+            for run in runs_in:
+                by_load.setdefault(round(factors[run], 9), []).append(run)
+            desc = ", ".join("%d run%s" % (len(v), "" if len(v) == 1 else "s")
+                             for _, v in sorted(by_load.items()))
+            out.append("    %s min: %d load level(s), %s"
+                       % (g, len(by_load), desc))
+            single = [k for k, v in by_load.items() if len(v) == 1]
+            if single and len(by_load) >= 2:
+                out.append("      %d level(s) rest on a SINGLE run, so the slope at this"
+                           % len(single))
+                out.append("      gradient is anchored by one unreplicated point. Its"
+                           " scatter is")
+                out.append("      not measurable and nothing checks it.")
+    elif len(grads) > 1:
+        out.append("  some run names carry a gradient length and some do not, so the runs")
+        out.append("  were NOT split by method. If this cohort mixes gradients, the slope")
+        out.append("  below mixes method with load.")
+
+    if declared and disputed:
+        for run, info in disputed.items():
+            hit = [r for r in factors if str(run) in str(r) or str(r) in str(run)]
+            out.append("  DISPUTED LOAD on %s: the map says %s ng, the alternative"
+                       " reading is %s ng." % (str(run)[:44], info.get("recorded"),
+                                               info.get("alternative")))
+            out.append("    %s" % info.get("why", "no reason recorded"))
+            out.append("    %s this cohort. Every number below that uses it inherits the"
+                       % ("IN" if hit else "NOT in"))
+            out.append("    dispute; re-run with the other value to see what moves.")
+
+    # Per gradient, never pooled. The breakdown printed above says these are
+    # different LC methods; running one analysis over both would contradict it.
+    if len(grads) > 1 and None not in grads:
+        any_ok = False
+        for g, runs_in in sorted(grads.items()):
+            sub_f = {k: v for k, v in factors.items() if k in set(runs_in)}
+            sub_p = {}
+            for key, per_run in per_ion_run.items():
+                kept = {rn: iv for rn, iv in per_run.items() if rn in sub_f}
+                if kept:
+                    sub_p[key] = kept
+            out.append("")
+            out.append("  GRADIENT %s min - %d run(s), analysed alone"
+                       % (g, len(runs_in)))
+            if load_analysis(sub_p, sub_f, declared, out, label="%s min" % g):
+                any_ok = True
+        if declared:
+            constant_load_check(per_ion_run, factors, out)
+            volume_check(factors, out)
+        return any_ok
+
+    ok = load_analysis(per_ion_run, factors, declared, out)
+    if not ok:
+        return False
     if declared:
         constant_load_check(per_ion_run, factors, out)
         volume_check(factors, out)
-    else:
-        out.extend(volume_lines)
     return True
 
 

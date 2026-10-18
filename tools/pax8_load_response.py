@@ -33,7 +33,9 @@ a column of zeros as abundance.
 UNITS, BOTH OF WHICH ARE EASY TO GET WRONG
 
   psm.tsv Retention is in SECONDS. plainFP_table rt_min is in MINUTES. The join
-  uses (2), and cross-checks Retention/60 against it rather than trusting either.
+  uses (2). Retention in (1) is in seconds and is NOT read: nothing here
+  cross-checks it against rt_min, so do not take the join as verified
+  on two independent clocks.
 
   ApexRT Drift is in TWIMS BINS on this Waters instrument, not 1/K0 and not
   milliseconds. Every drift tolerance here is in bins and is labelled as such.
@@ -294,8 +296,15 @@ def join_run(run, apex_dir, search_dir, out, ppm=JOIN_PPM, rt_tol=JOIN_RT_MIN,
         return None, "could not read peak groups from %s (%s)" % (summary, gerr)
 
     mzs = [g[0] for g in groups]
-    ions, unmatched, saturated, rt_mismatch = {}, 0, 0, 0
-    for idx, pep, z, calc_mz, q in psms:
+    ions, unmatched, saturated = {}, 0, 0
+
+    # Every PSM's candidate groups, as a NORMALIZED distance in the box rather
+    # than the group's intensity. Taking the brightest group inside the window
+    # chose by the quantity the whole study measures: where two groups both fit,
+    # the brighter one won on being bright. Nothing stopped two different ions
+    # claiming the same group either, so one feature could be counted twice.
+    cands = []
+    for n, (idx, pep, z, calc_mz, q) in enumerate(psms):
         meta = spectra.get(idx)
         if meta is None:
             unmatched += 1
@@ -304,15 +313,34 @@ def join_run(run, apex_dir, search_dir, out, ppm=JOIN_PPM, rt_tol=JOIN_RT_MIN,
         tol = calc_mz * ppm / 1e6
         lo = bisect.bisect_left(mzs, calc_mz - tol)
         hi = bisect.bisect_right(mzs, calc_mz + tol)
-        best = None
-        for g in groups[lo:hi]:
+        found = False
+        for gi in range(lo, hi):
+            g = groups[gi]
             if abs(g[1] - rt) > rt_tol or abs(g[2] - drift) > drift_tol:
                 continue
-            if best is None or g[3] > best[3]:
-                best = g
-        if best is None:
+            d = math.sqrt((abs(g[0] - calc_mz) / tol) ** 2 +
+                          (abs(g[1] - rt) / rt_tol) ** 2 +
+                          (abs(g[2] - drift) / drift_tol) ** 2) if tol else 0.0
+            cands.append((d, n, gi))
+            found = True
+        if not found:
             unmatched += 1
+
+    # Nearest first, each group to one PSM only. Greedy on distance, which is
+    # not the globally optimal assignment but is stable and reports what it
+    # had to resolve.
+    cands.sort()
+    taken_g, taken_p, conflicts = set(), set(), 0
+    for d, n, gi in cands:
+        if n in taken_p:
             continue
+        if gi in taken_g:
+            conflicts += 1
+            continue
+        taken_g.add(gi)
+        taken_p.add(n)
+        best = groups[gi]
+        idx, pep, z, calc_mz, q = psms[n]
         if best[4]:
             saturated += 1
         key = (pep, z)
@@ -321,6 +349,9 @@ def join_run(run, apex_dir, search_dir, out, ppm=JOIN_PPM, rt_tol=JOIN_RT_MIN,
         # that this is a per-ion summary rather than a per-spectrum one.
         if prev is None or best[3] > prev[0]:
             ions[key] = (best[3], bool(best[4]), q)
+    unmatched += sum(1 for n in range(len(psms))
+                     if n not in taken_p and
+                     any(c[1] == n for c in cands))
     info = {"sat": sat_stats, "psm_path": psm_path,
             "inner": inner if sanitised else None,
             "precursors": stats["precursors"],
@@ -328,7 +359,8 @@ def join_run(run, apex_dir, search_dir, out, ppm=JOIN_PPM, rt_tol=JOIN_RT_MIN,
             "decoys": stats["decoys"], "zero_intensity": stats["zero_intensity"],
             "apex_rows": apex_rows, "groups": len(groups),
             "spectra": len(spectra), "table": table_name,
-            "ions": len(ions), "unmatched": unmatched, "saturated": saturated}
+            "ions": len(ions), "unmatched": unmatched, "saturated": saturated,
+            "match_conflicts": conflicts}
     return (ions, info), None
 
 
@@ -450,6 +482,24 @@ def level_yield(infos, record, out):
     return pooled
 
 
+def yield_over(infos, runs):
+    """Join yield across exactly these runs.
+
+    The pooled table above covers every run at a load level, but the ratio
+    restricts its high side to one vial concentration. Judging selection bias
+    on runs the ratio never uses answers about the wrong set: on this cohort
+    the pooled high side was 19 runs where the ratio used six.
+    """
+    pre = ion = 0
+    for run in runs:
+        info = infos.get(run)
+        if not info:
+            continue
+        pre += info.get("precursors") or 0
+        ion += info.get("ions") or 0
+    return [pre, ion]
+
+
 def bootstrap_median(values, n=BOOTSTRAP, seed=20261017):
     """A percentile interval on the median, because ~30 ions is thin.
 
@@ -472,7 +522,8 @@ def volume_confound(record, out):
     """Is the load contrast also a volume contrast, and by how much?
 
     On this cohort it is exactly that. The 100 ng runs are 0.2 uL of the 0.5
-    ug/uL vial and the matched 500 ng runs are 1.0 uL of the SAME vial, so the
+    ug/uL vial and the matched 500 ng runs are 1.0 uL at the SAME
+    CONCENTRATION -- not always the same vial, JP211 among them -- so the
     5x in load is delivered entirely as 5x in volume. The constant-load series
     spans the same 5x in volume at a fixed 500 ng, which is what makes the two
     separable at all: whatever that series shows per decade of volume can be
@@ -497,7 +548,7 @@ def volume_confound(record, out):
     decades = math.log10(v_hi / v_lo)
     out.append("  THE LOAD CONTRAST IS A VOLUME CONTRAST. %g ng is %g uL and %g ng is"
                % (lo, v_lo, hi))
-    out.append("  %g uL, both from the same %g ug/uL vial, so the %.1fx in load is"
+    out.append("  %g uL, both at the same %g ug/uL concentration, so the %.1fx in"
                % (v_hi, conc, hi / lo))
     out.append("  delivered entirely as %.1fx in volume. Load and injection volume are"
                % (v_hi / v_lo))
@@ -507,8 +558,8 @@ def volume_confound(record, out):
     return decades, conc
 
 
-def load_response(ions, record, out, volume_slope=None, const_volumes=(),
-                  pooled_yield=None, flag_share=None):
+def load_response(ions, record, out, volume_slopes=None, const_volumes=(),
+                  pooled_yield=None, flag_share=None, infos=None):
     """I(500)/I(100) per ion, per gradient. A ratio, not a fit."""
     out.append("")
     out.append("LOAD RESPONSE  (two points, per gradient)")
@@ -517,8 +568,18 @@ def load_response(ions, record, out, volume_slope=None, const_volumes=(),
         by_grad[r["gradient"]][r["load_ng"]].append(stem)
     decades, conc = volume_confound(record, out)
     findings = 0
+    volume_slopes = volume_slopes or {}
     for grad in sorted(by_grad):
         levels = by_grad[grad]
+        # Only this gradient's own constant-load series may correct it.
+        have = volume_slopes.get(grad)
+        volume_slope = have[0] if have else None
+        const_volumes = have[1] if have else ()
+        if volume_slope is None:
+            out.append("    %s min has no constant-load volume series of its own, so"
+                       " the injection is NOT subtracted here and the volume"
+                       % grad)
+            out.append("    confound stays undeclared in this gradient's ratio.")
         out.append("  %s min: %s" % (grad, ", ".join(
             "%g ng x%d" % (ng, len(v)) for ng, v in sorted(levels.items()))))
         if len(levels) < 2:
@@ -571,9 +632,14 @@ def load_response(ions, record, out, volume_slope=None, const_volumes=(),
                    % (len(ratios), hi_ng, lo_ng, med))
         out.append("    quartiles %.3f to %.3f.  expected %.3f if the response is"
                    " proportional" % (q[0], q[2], expected))
-        if pooled_yield:
-            a = pooled_yield.get((grad, lo_ng))
-            b = pooled_yield.get((grad, hi_ng))
+        if pooled_yield or infos:
+            # Over the runs THIS contrast uses, not every run at the level.
+            if infos:
+                a = yield_over(infos, lo_runs)
+                b = yield_over(infos, hi_runs)
+            else:
+                a = pooled_yield.get((grad, lo_ng))
+                b = pooled_yield.get((grad, hi_ng))
             if a and b and a[0] and b[0]:
                 ya = 100.0 * a[1] / a[0]
                 yb = 100.0 * b[1] / b[0]
@@ -700,8 +766,12 @@ def load_response(ions, record, out, volume_slope=None, const_volumes=(),
 def constant_load(ions, record, out, slope_out=None):
     """At a fixed load, does intensity track injection volume?
 
-    slope_out, when given a list, receives the median per-ion slope so the load
-    response can subtract the injection's share of its own ratio.
+    slope_out, when given a dict, receives {gradient: (slope, volumes)} so the
+    load response can subtract the injection's share of its OWN gradient's
+    ratio. It used to be a list and the caller took slope_out[0] for every
+    gradient, so a volume slope measured over the 60 min runs was subtracted
+    from the 120 min ratio -- where there is no volume series at all, and
+    nothing to subtract.
     """
     out.append("")
     out.append("CONSTANT-LOAD SERIES  (one load, several volumes)")
@@ -759,13 +829,20 @@ def constant_load(ions, record, out, slope_out=None):
             continue
         slopes.sort()
         med = statistics.median(slopes)
-        q = statistics.quantiles(slopes, n=4) if len(slopes) >= 4 else [None] * 3
         out.append("    per-ion slope of log I against log volume, over %d ion(s):"
                    % len(slopes))
-        out.append("      median %+.3f   quartiles %+.3f to %+.3f" % (med, q[0], q[2]))
+        if len(slopes) >= 4:
+            q = statistics.quantiles(slopes, n=4)
+            out.append("      median %+.3f   quartiles %+.3f to %+.3f"
+                       % (med, q[0], q[2]))
+        else:
+            # Fewer than four ions has no quartiles. Formatting None with %f
+            # raised TypeError and took the whole run down.
+            out.append("      median %+.3f   no quartiles: %d ion(s) is too few"
+                       % (med, len(slopes)))
         if slope_out is not None and ng == max(
                 r["load_ng"] for r in record.values()):
-            slope_out.append((med, sorted(rep)))
+            slope_out[grad] = (med, sorted(rep))
         out.append("      expected 0.000, because the load does not change across these")
         out.append("      volumes. A non-zero slope is the injection, not the load.")
         # vial-to-vial spread at one volume is the replicate noise this must clear
@@ -821,8 +898,21 @@ def recheck_published(ions, record, out, published=PUBLISHED_RATIO):
         return 0
     lo = [s for s, r in sixty.items() if r["load_ng"] == min(
         r2["load_ng"] for r2 in sixty.values())]
-    hi = [s for s, r in sixty.items() if r["load_ng"] == max(
-        r2["load_ng"] for r2 in sixty.values())]
+    hi_ng = max(r2["load_ng"] for r2 in sixty.values())
+    hi = [s for s, r in sixty.items()
+          if r["load_ng"] == hi_ng and s not in suspect]
+    # The suspect run is what the mis-grouping would move onto the LOW side, so
+    # leaving it in the high group puts it on both sides of the same ratio.
+    # Restrict the high side the way load_response does, to the vial
+    # concentration the low side uses, or the contrast mixes volume in.
+    lo_concs = {sixty[s]["conc_ug_per_uL"] for s in lo} if lo else set()
+    matched = [s for s in hi if sixty[s]["conc_ug_per_uL"] in lo_concs]
+    if matched and len(matched) < len(hi):
+        out.append("  the high side is restricted to the %s ug/uL vial(s), %d of %d"
+                   " run(s), as the load ratio does."
+                   % ("/".join("%g" % c for c in sorted(lo_concs)),
+                      len(matched), len(hi)))
+        hi = matched
     out.append("  %d run(s) named 100ng at 60 min record a different load: %s"
                % (len(suspect), ", ".join(suspect)))
     out.append("  By the record the 60 min low group is %d run(s) and the high group"
@@ -932,22 +1022,35 @@ def saturation_report(flags, infos, record, out, share_out=None):
     for (grad, ng), (n, sat) in sorted(by_level.items()):
         out.append("    %s min, %g ng: %d of %d ion(s) flagged (%.1f%%)"
                    % (grad, ng, sat, n, 100.0 * sat / n if n else 0.0))
-    levels = sorted(by_level)
-    if len(levels) >= 2:
-        lo, hi = by_level[levels[0]], by_level[levels[-1]]
-        lo_share = lo[1] / lo[0] if lo[0] else 0.0
-        hi_share = hi[1] / hi[0] if hi[0] else 0.0
+    # Within one gradient, never across. sorted() on (gradient, ng) orders by
+    # gradient first, so the old levels[0] and levels[-1] were (60, 100) and
+    # (120, 500): the lowest load at one LC method against the highest at
+    # another, which reports a load effect when only the method differs.
+    per_grad = {}
+    for grad in sorted({g for g, _ in by_level}):
+        here = sorted(ng for g, ng in by_level if g == grad)
+        if len(here) < 2:
+            continue
+        lo, hi = by_level[(grad, here[0])], by_level[(grad, here[-1])]
+        per_grad[grad] = (here[0], here[-1],
+                          lo[1] / lo[0] if lo[0] else 0.0,
+                          hi[1] / hi[0] if hi[0] else 0.0)
+    if not per_grad:
+        out.append("  no gradient holds two load levels, so the flagged share cannot")
+        out.append("  be compared across load at all. Not assessed.")
+    for grad, (lo_ng, hi_ng, lo_share, hi_share) in sorted(per_grad.items()):
         if hi_share > lo_share + 0.02:
-            out.append("  The higher load flags more (%.1f%% against %.1f%%)."
-                       % (100 * hi_share, 100 * lo_share))
-            out.append("  Any load ratio over flagged ions is a FLOOR on the true ratio,")
-            out.append("  because the high end was clipped. The ratio test below splits")
-            out.append("  on the flag for exactly this reason.")
+            out.append("  %s min: the higher load flags more (%.1f%% at %g ng against"
+                       " %.1f%% at %g ng). Any load ratio over flagged ions is a"
+                       % (grad, 100 * hi_share, hi_ng, 100 * lo_share, lo_ng))
+            out.append("  FLOOR on the true ratio there, because the high end was"
+                       " clipped.")
             findings += 1
         else:
-            out.append("  The flagged share does not rise with load (%.1f%% against"
-                       " %.1f%%)," % (100 * hi_share, 100 * lo_share))
-            out.append("  so clipping is not depressing the high end of the ratio.")
+            out.append("  %s min: the flagged share does not rise with load (%.1f%% at"
+                       " %g ng against %.1f%% at %g ng), so clipping is not"
+                       % (grad, 100 * hi_share, hi_ng, 100 * lo_share, lo_ng))
+            out.append("  depressing the high end of the ratio there.")
     out.append("  Flagged ions must stay OUT of any within-run normalization set"
                " (item 5):")
     out.append("  an ion whose high end was clipped cannot be used to cancel load.")
@@ -1088,15 +1191,13 @@ def main(argv=None):
     # The constant-load series runs first: its slope is what lets the load ratio
     # be split into load and injection, and the two contrasts are confounded
     # without it.
-    slope_out = []
+    slope_out = {}
     const_lines = []
     findings += constant_load(ions, record, const_lines, slope_out)
     findings += yield_table(infos, record, out)
     pooled = level_yield(infos, record, out)
-    findings += load_response(ions, record, out,
-                              slope_out[0][0] if slope_out else None,
-                              slope_out[0][1] if slope_out else (),
-                              pooled, flag_share)
+    findings += load_response(ions, record, out, slope_out, (),
+                              pooled, flag_share, infos)
     out.extend(const_lines)
     findings += recheck_published(ions, record, out)
 

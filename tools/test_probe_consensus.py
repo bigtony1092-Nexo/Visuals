@@ -877,11 +877,16 @@ def one_load_is_no_axis(db, tmp):
 PAX8_LOADS = ROOT / "examples" / "pax8-colorado-loads.json"
 
 
-def plant_colorado(path, vol_effect=0.0):
+def plant_colorado(path, vol_effect=0.0, grad_scale=None):
     """The real 24-run Colorado cohort: names and loads from the instrument record.
 
     vol_effect adds a genuine trap/dilution trend per decade of injection volume,
     at CONSTANT load, which is the one thing this design can measure well.
+
+    grad_scale multiplies every intensity at one gradient length by a constant.
+    A constant factor shifts log intensity by a constant, so it cannot change
+    that gradient's own load slope and must not change the other gradient's at
+    all. Anything that moves under it has pooled the two.
     """
     import json as _json
     lm = {k: v for k, v in _json.loads(PAX8_LOADS.read_text()).items()
@@ -907,10 +912,13 @@ def plant_colorado(path, vol_effect=0.0):
         for run, ng in lm.items():
             v, _ = pc.microlitres(run)
             trend = 1.0 + vol_effect * math.log10(v / 1.0)
+            gs = 1.0
+            if grad_scale:
+                gs = grad_scale.get(pc.gradient_of(run), 1.0)
             rid += 1
             con.execute("INSERT INTO observations VALUES (?,?,?,?,?,?,?,?)",
                         (rid, seq, z, run, calc, calc, mass,
-                         amp * ng * trend * math.exp(rng.gauss(0, 0.07))))
+                         amp * ng * trend * gs * math.exp(rng.gauss(0, 0.07))))
     con.commit()
     con.close()
     return lm
@@ -932,6 +940,54 @@ def gradients_are_never_pooled(db, tmp):
         bad.append("did not state that the gradients are not combined")
     if "mix method with load" not in sec:
         bad.append("did not say what pooling would cost")
+    return bad
+
+
+def rescaling_one_gradient_leaves_the_other_alone(db, tmp):
+    """The behaviour behind "none is combined".
+
+    gradients_are_never_pooled above asserts the output SAYS the gradients are
+    not combined. It never checked that they are not, which is why it passed
+    while the slope loop, the quartiles and the normalization set all ran over
+    every run at once.
+
+    Multiplying one gradient's intensities by a constant cannot change that
+    gradient's own load slope -- a constant factor is a constant shift in log
+    intensity -- and cannot touch the other gradient at all. So every number
+    reported for 60 min must be identical with and without the 120 min runs
+    rescaled. Pooled, they move.
+    """
+    a, b = tmp / "gsplit_a.db", tmp / "gsplit_b.db"
+    plant_colorado(str(a))
+    plant_colorado(str(b), grad_scale={120: 0.2})
+    sa = section(run("--db", str(a), "--load-map", str(PAX8_LOADS))[1], "TEST 3")
+    sb = section(run("--db", str(b), "--load-map", str(PAX8_LOADS))[1], "TEST 3")
+
+    def per_gradient_medians(sec):
+        """median slope lines, keyed by the gradient they belong to."""
+        out, cur = {}, None
+        for line in sec.splitlines():
+            m = re.search(r"(\d+) min\b", line)
+            if m and ("min:" in line or "GRADIENT" in line.upper()):
+                cur = m.group(1)
+            m2 = re.search(r"median slope ([-+]\d+\.\d+)", line)
+            if m2 and "Q" not in line.split("median slope")[0][-6:]:
+                out.setdefault(cur, []).append(float(m2.group(1)))
+        return out
+
+    ma, mb = per_gradient_medians(sa), per_gradient_medians(sb)
+    bad = []
+    if None in ma or len(ma) < 2:
+        bad.append("Test 3 reports no per-gradient median slope, so the two "
+                   "gradients are analysed together: %r" % sorted(ma))
+        return bad
+    for g in sorted(set(ma) & set(mb)):
+        if g == "120":
+            continue
+        if ma[g] != mb[g]:
+            bad.append("the %s min median slope moved from %s to %s when only "
+                       "the 120 min runs were rescaled, so the gradients are "
+                       "pooled" % (g, ma[g], mb[g]))
     return bad
 
 
@@ -1727,6 +1783,7 @@ STANDALONE = (refuses_a_published_shaped_table, refuses_a_file_that_is_not_a_dat
               the_real_pax8_axis_is_two_points_and_says_so,
               one_load_is_no_axis,
               gradients_are_never_pooled,
+         rescaling_one_gradient_leaves_the_other_alone,
               a_load_level_on_one_run_is_named_unreplicated,
               a_disputed_load_is_declared_not_trusted,
               the_constant_load_series_is_its_own_test,

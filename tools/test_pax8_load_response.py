@@ -45,12 +45,20 @@ def record():
 
 
 def plant(root, no_psm=(), alt_table=(), load_scale=None, vol_slope=0.0,
-          saturate_above=None, detect_floor=None, seed=4):
+          saturate_above=None, detect_floor=None, seed=4,
+          saturate_grad=None, max_peps=None, decoy_group=False):
     """Write the three real file shapes for every recorded run.
 
     load_scale   intensity multiplier per ng, so the planted load response is known
     vol_slope    log10 intensity change per decade of injection volume at fixed load
     saturate_above  set IsSaturated on detections above this intensity
+    saturate_grad   {gradient: threshold}, so one LC method can flag and the
+                    other not -- which is how a cross-gradient comparison gets
+                    caught
+    max_peps        use only the first N peptides, to starve a series of ions
+    decoy_group     add a BRIGHTER feature further away inside every window, so
+                    a join that takes the brightest instead of the nearest
+                    picks the wrong one
     """
     rng = random.Random(seed)
     doc, rec = record()
@@ -62,7 +70,8 @@ def plant(root, no_psm=(), alt_table=(), load_scale=None, vol_slope=0.0,
         (a / "Summary").mkdir(parents=True, exist_ok=True)
         (a / "idts_out").mkdir(parents=True, exist_ok=True)
         rows, table = [], []
-        for n, (pep, z) in enumerate(PEPS, start=1):
+        peps_here = PEPS[:max_peps] if max_peps else PEPS
+        for n, (pep, z) in enumerate(peps_here, start=1):
             mz = mz_of(pep, z)
             rt = 5.0 + 3.1 * n
             drift = 40.0 + 2.5 * n
@@ -74,11 +83,27 @@ def plant(root, no_psm=(), alt_table=(), load_scale=None, vol_slope=0.0,
                 # table, which is how a low-load run loses its weakest ions
                 continue
             sat = 1 if (saturate_above and inten > saturate_above) else 0
+            if saturate_grad:
+                thr = saturate_grad.get(r["gradient"])
+                if thr is not None and inten > thr:
+                    sat = 1
             # three detections in one peak group, as the real tables carry
             for k in range(3):
                 rows.append([1, 100 + n * 10 + k, round(rt + 0.01 * k, 6),
                              round(mz + 0.0001 * k, 6), 0.0329, round(drift, 6),
                              3.19, 0.0, 119, int(inten / 3), sat, n, 3])
+            if decoy_group:
+                # brighter, and further from the PSM inside the same window:
+                # a join that ranks by intensity takes this one
+                # FLAT in load, so a join that takes it reports a ratio near 1
+                # instead of the planted 5. A decoy that merely scaled with load
+                # would cancel in the ratio and catch nothing.
+                flat = amps[(pep, z)] * 400.0
+                for k in range(3):
+                    rows.append([1, 100 + n * 10 + k, round(rt + 0.09 + 0.01 * k, 6),
+                                 round(mz + 0.0000045 * mz, 6), 0.0329,
+                                 round(drift + 1.6, 6), 3.19, 0.0, 119,
+                                 int(flat / 3), sat, 500 + n, 3])
             table.append([n, "CPPIS: %d PseudoID: Z%dMZ" % (n, n),
                           round(rt, 3), round(drift, 3), round(mz * z - z * PROTON, 4),
                           "%d+" % z, 42])
@@ -103,7 +128,8 @@ def plant(root, no_psm=(), alt_table=(), load_scale=None, vol_slope=0.0,
                 "Intensity", "Is Decoy", "Protein"]
         with (d / "psm.tsv").open("w") as fh:
             fh.write("\t".join(cols) + "\n")
-            for n, (pep, z) in enumerate(PEPS, start=1):
+            peps_here = PEPS[:max_peps] if max_peps else PEPS
+            for n, (pep, z) in enumerate(peps_here, start=1):
                 rt = 5.0 + 3.1 * n
                 fh.write("\t".join(str(v) for v in [
                     "%s_plainFP.%05d.%05d.%d" % (run, n, n, z), run + ".mgf",
@@ -701,6 +727,170 @@ def case_a_gap_plus_a_rising_flag_is_the_case_to_watch(tmp):
     return bad
 
 
+def case_a_volume_slope_corrects_only_its_own_gradient(tmp):
+    """The 60 min constant-load slope must not reach the 120 min ratio.
+
+    slope_out was a list and the caller took slope_out[0] for every gradient,
+    so a slope measured over the 60 min volume series was subtracted from the
+    120 min ratio -- where every run is 1 uL and there is no volume series to
+    measure anything from.
+    """
+    d = tmp / "gradslope"
+    apex, search = plant(d, vol_slope=0.25)
+    rc, out = run_tool("--apex", apex, "--search", search)
+    bad = []
+    n = out.count("constant-load series gives")
+    if n != 1:
+        bad.append("a volume correction was applied %d time(s); only the 60 min"
+                   " gradient has a volume series, so it must be applied once" % n)
+    if "no constant-load volume series of its own" not in out:
+        bad.append("the gradient without a volume series is not told that its"
+                   " injection was never subtracted")
+    sec = out.split("LOAD RESPONSE", 1)[1]
+    after = sec.split("120 min: 100 ng", 1)
+    if len(after) > 1 and "constant-load series gives" in after[1]:
+        bad.append("the 120 min block quotes a volume correction it has no"
+                   " series for")
+    return bad
+
+
+def case_the_flagged_share_is_compared_within_a_gradient(tmp):
+    """sorted() on (gradient, ng) made levels[0]=(60,100), levels[-1]=(120,500).
+
+    Flagging nothing at either 60 min level and half at both 120 min levels is
+    a pure METHOD difference with no load effect at all. Compared across
+    gradients it reads as "the higher load flags more" and counts a finding.
+    """
+    d = tmp / "satgrad"
+    apex, search = plant(d, saturate_grad={120: 0.0})
+    rc, out = run_tool("--apex", apex, "--search", search)
+    bad = []
+    if "120 min: the flagged share does not rise with load" not in out:
+        bad.append("the 120 min gradient is not compared against itself")
+    if "60 min: the flagged share does not rise with load" not in out:
+        bad.append("the 60 min gradient is not compared against itself")
+    for line in out.splitlines():
+        if "the higher load flags more" in line:
+            bad.append("a rise in flagged share is reported where every rise is"
+                       " between gradients: %r" % line.strip())
+    return bad
+
+
+def case_too_few_volume_ions_do_not_crash(tmp):
+    """q = [None]*3 and then "%+.3f" % None took the whole run down."""
+    d = tmp / "fewions"
+    apex, search = plant(d, max_peps=2, vol_slope=0.2)
+    rc, out = run_tool("--apex", apex, "--search", search)
+    bad = []
+    if "Traceback" in out or "TypeError" in out:
+        bad.append("crashed on a volume series with too few ions: %s"
+                   % [l for l in out.splitlines() if "Error" in l][:2])
+    if rc == 2 and "Traceback" in out:
+        bad.append("exit 2 from an unhandled exception")
+    if "too few" not in out and "no quartiles" not in out:
+        bad.append("did not say why the quartiles are missing")
+    return bad
+
+
+def case_the_yield_covers_the_runs_the_ratio_uses(tmp):
+    """level_yield pooled every run at a load level; the ratio uses six of them.
+
+    The verdict on selection bias was computed over runs the ratio never
+    touches, so it answered about the wrong set.
+    """
+    d = tmp / "yieldset"
+    apex, search = plant(d)
+    rc, out = run_tool("--apex", apex, "--search", search)
+    sec = out.split("LOAD RESPONSE", 1)[1]
+    chunk = sec.split("60 min: 100 ng", 1)[1].split("120 min: 100 ng")[0]
+    bad = []
+    restrict = [l for l in chunk.splitlines() if "restricted to the" in l]
+    yline = [l for l in chunk.splitlines() if "join yield" in l]
+    if not restrict or not yline:
+        return ["could not find the restriction and yield lines"]
+    import re as _re
+    kept = int(_re.search(r"vial\(s\), (\d+) of", restrict[0]).group(1))
+    both = _re.findall(r"\((\d+) of (\d+)\)", yline[0])
+    if len(both) != 2:
+        return ["could not read both yield denominators from %r" % yline[0].strip()]
+    lo_total, hi_total = int(both[0][1]), int(both[1][1])
+    if "SINGLE run" not in chunk:
+        return ["this fixture is meant to have one run on the low side"]
+    # One run on the low side, so its denominator IS the per-run precursor
+    # count. The restricted high side must be exactly that many times the
+    # number of runs the ratio kept -- no more.
+    if hi_total != kept * lo_total:
+        bad.append("the 500 ng yield denominator is %d; the ratio uses %d run(s)"
+                   " of %d precursors, so it should be %d. The yield is being"
+                   " judged over runs the ratio never touches."
+                   % (hi_total, kept, lo_total, kept * lo_total))
+    return bad
+
+
+def case_the_disputed_run_is_not_on_both_sides(tmp):
+    """The recheck put the suspect run in the high group AND moved it to the
+    low group, so it sat on both sides of the same ratio."""
+    d = tmp / "recheck2"
+    apex, search = plant(d)
+    rc, out = run_tool("--apex", apex, "--search", search)
+    if "RECHECK OF THE PUBLISHED" not in out:
+        return ["no recheck section"]
+    sec = out.split("RECHECK OF THE PUBLISHED", 1)[1]
+    bad = []
+    import re as _re
+    m = _re.search(r"low group is (\d+) run\(s\) and the high group (\d+)", sec)
+    if not m:
+        return ["could not read the group sizes"]
+    lo_n, hi_n = int(m.group(1)), int(m.group(2))
+    sus = _re.search(r"(\d+) run\(s\) named 100ng at 60 min record a different",
+                     sec)
+    n_sus = int(sus.group(1)) if sus else 0
+    if "restricted to the" not in sec:
+        bad.append("the high side is not restricted to the low side's vial"
+                   " concentration, so the contrast mixes volume in")
+    if hi_n > 6:
+        bad.append("the high group holds %d run(s); the load ratio uses 6, and a"
+                   " wider group puts other volumes into the comparison" % hi_n)
+    # the suspect must not be inside the high group it is also moved out of
+    if n_sus and hi_n + n_sus <= 6:
+        bad.append("the suspect still appears to be counted in the high group")
+    return bad
+
+
+def case_the_join_takes_the_nearest_not_the_brightest(tmp):
+    """A brighter feature further away in the same window must not win.
+
+    The join kept whichever candidate had the larger intensity, which chooses
+    by the quantity the whole study measures. Nothing stopped two ions claiming
+    one feature either.
+    """
+    clean = tmp / "join_clean"
+    decoy = tmp / "join_decoy"
+    a1, s1 = plant(clean)
+    a2, s2 = plant(decoy, decoy_group=True)
+    _, out1 = run_tool("--apex", a1, "--search", s1)
+    _, out2 = run_tool("--apex", a2, "--search", s2)
+
+    def ratio(o, grad=60):
+        sec = o.split("LOAD RESPONSE", 1)[1]
+        chunk = sec.split("%d min: 100 ng" % grad, 1)[1]
+        line = [l for l in chunk.splitlines() if "median I(" in l]
+        return float(line[0].split("=")[1].strip()) if line else None
+
+    bad = []
+    r1, r2 = ratio(out1), ratio(out2)
+    if r1 is None or r2 is None:
+        return ["could not read the ratio from one of the runs"]
+    # The decoy is 4x brighter at every load, so a brightest-wins join still
+    # reports a ratio -- but it is measuring the decoy. The nearest-wins join
+    # must give the same answer as the cohort without decoys.
+    if abs(r1 - r2) > 0.25:
+        bad.append("adding a brighter, further feature inside the window moved"
+                   " the ratio from %.3f to %.3f, so the join is still taking"
+                   " the brightest" % (r1, r2))
+    return bad
+
+
 CASES = [case_the_join_recovers_a_planted_load_ratio,
          case_gradients_are_reported_separately,
          case_fragpipe_intensity_is_never_used,
@@ -725,7 +915,13 @@ CASES = [case_the_join_recovers_a_planted_load_ratio,
          case_a_low_overall_yield_points_at_the_units,
          case_the_cross_check_band_is_reported_not_enforced,
          case_the_owner_facing_ranking_is_printed,
-         case_a_gap_plus_a_rising_flag_is_the_case_to_watch]
+         case_a_gap_plus_a_rising_flag_is_the_case_to_watch,
+         case_a_volume_slope_corrects_only_its_own_gradient,
+         case_the_flagged_share_is_compared_within_a_gradient,
+         case_too_few_volume_ions_do_not_crash,
+         case_the_yield_covers_the_runs_the_ratio_uses,
+         case_the_disputed_run_is_not_on_both_sides,
+         case_the_join_takes_the_nearest_not_the_brightest]
 
 
 def main():
