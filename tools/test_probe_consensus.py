@@ -991,6 +991,28 @@ def rescaling_one_gradient_leaves_the_other_alone(db, tmp):
     return bad
 
 
+def test_three_reports_itself_as_run(db, tmp):
+    """The verdict, not just the printout.
+
+    load_analysis ended on an expression and returned None, so the whole of
+    Test 3 printed normally and the summary then listed `load response` under
+    NOT RUN. Every assertion in this file reads the printed text, so 62 of them
+    passed over it. The constant-load check and the volume check were dropped
+    on the single-gradient path as well.
+    """
+    p = tmp / "ran.db"
+    plant_colorado(str(p))
+    rc, out = run("--db", str(p), "--load-map", str(PAX8_LOADS))
+    bad = []
+    tail = out.split("NOT RUN:", 1)
+    if len(tail) > 1 and "load response" in tail[1].split("\n")[0]:
+        bad.append("Test 3 printed its whole analysis and was still reported as"
+                   " NOT RUN: %r" % tail[1].split("\n")[0].strip())
+    if "CONSTANT-LOAD CHECK" not in out:
+        bad.append("the constant-load check was dropped")
+    return bad
+
+
 def a_load_level_on_one_run_is_named_unreplicated(db, tmp):
     """Each Colorado gradient holds exactly one 100 ng run."""
     p = tmp / "colorado2.db"
@@ -1784,6 +1806,7 @@ STANDALONE = (refuses_a_published_shaped_table, refuses_a_file_that_is_not_a_dat
               one_load_is_no_axis,
               gradients_are_never_pooled,
          rescaling_one_gradient_leaves_the_other_alone,
+         test_three_reports_itself_as_run,
               a_load_level_on_one_run_is_named_unreplicated,
               a_disputed_load_is_declared_not_trusted,
               the_constant_load_series_is_its_own_test,

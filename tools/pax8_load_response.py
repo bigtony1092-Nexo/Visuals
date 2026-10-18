@@ -318,9 +318,14 @@ def join_run(run, apex_dir, search_dir, out, ppm=JOIN_PPM, rt_tol=JOIN_RT_MIN,
             g = groups[gi]
             if abs(g[1] - rt) > rt_tol or abs(g[2] - drift) > drift_tol:
                 continue
-            d = math.sqrt((abs(g[0] - calc_mz) / tol) ** 2 +
-                          (abs(g[1] - rt) / rt_tol) ** 2 +
-                          (abs(g[2] - drift) / drift_tol) ** 2) if tol else 0.0
+            # Each axis normalized by its own window. A zero window is an
+            # exact-match filter, which the abs() test above has already
+            # applied, so it contributes nothing to the distance rather than
+            # dividing by zero.
+            d = math.sqrt(
+                ((abs(g[0] - calc_mz) / tol) ** 2 if tol else 0.0) +
+                ((abs(g[1] - rt) / rt_tol) ** 2 if rt_tol else 0.0) +
+                ((abs(g[2] - drift) / drift_tol) ** 2 if drift_tol else 0.0))
             cands.append((d, n, gi))
             found = True
         if not found:
@@ -330,14 +335,19 @@ def join_run(run, apex_dir, search_dir, out, ppm=JOIN_PPM, rt_tol=JOIN_RT_MIN,
     # not the globally optimal assignment but is stable and reports what it
     # had to resolve.
     cands.sort()
-    taken_g, taken_p, conflicts = set(), set(), 0
+    taken_g, taken_p, conflicts = {}, set(), 0
     for d, n, gi in cands:
         if n in taken_p:
             continue
-        if gi in taken_g:
+        key_n = (psms[n][1], psms[n][2])
+        owner = taken_g.get(gi)
+        # Contention is between DIFFERENT ions. Several PSMs of one ion
+        # legitimately share a feature -- `ions` collapses them by (peptide,
+        # charge) anyway -- and rejecting them left real matches unjoined.
+        if owner is not None and owner != key_n:
             conflicts += 1
             continue
-        taken_g.add(gi)
+        taken_g[gi] = key_n
         taken_p.add(n)
         best = groups[gi]
         idx, pep, z, calc_mz, q = psms[n]
@@ -349,9 +359,9 @@ def join_run(run, apex_dir, search_dir, out, ppm=JOIN_PPM, rt_tol=JOIN_RT_MIN,
         # that this is a per-ion summary rather than a per-spectrum one.
         if prev is None or best[3] > prev[0]:
             ions[key] = (best[3], bool(best[4]), q)
-    unmatched += sum(1 for n in range(len(psms))
-                     if n not in taken_p and
-                     any(c[1] == n for c in cands))
+    # One pass, not a rescan of every candidate per loser.
+    had_candidate = {c[1] for c in cands}
+    unmatched += sum(1 for n in had_candidate if n not in taken_p)
     info = {"sat": sat_stats, "psm_path": psm_path,
             "inner": inner if sanitised else None,
             "precursors": stats["precursors"],
@@ -360,7 +370,8 @@ def join_run(run, apex_dir, search_dir, out, ppm=JOIN_PPM, rt_tol=JOIN_RT_MIN,
             "apex_rows": apex_rows, "groups": len(groups),
             "spectra": len(spectra), "table": table_name,
             "ions": len(ions), "unmatched": unmatched, "saturated": saturated,
-            "match_conflicts": conflicts}
+            "match_conflicts": conflicts,
+            "contended_groups": len([1 for gi in taken_g])}
     return (ions, info), None
 
 
@@ -548,7 +559,7 @@ def volume_confound(record, out):
     decades = math.log10(v_hi / v_lo)
     out.append("  THE LOAD CONTRAST IS A VOLUME CONTRAST. %g ng is %g uL and %g ng is"
                % (lo, v_lo, hi))
-    out.append("  %g uL, both at the same %g ug/uL concentration, so the %.1fx in"
+    out.append("  %g uL, both at the same %g ug/uL concentration, so the %.1fx in load is"
                % (v_hi, conc, hi / lo))
     out.append("  delivered entirely as %.1fx in volume. Load and injection volume are"
                % (v_hi / v_lo))
@@ -575,16 +586,18 @@ def load_response(ions, record, out, volume_slopes=None, const_volumes=(),
         have = volume_slopes.get(grad)
         volume_slope = have[0] if have else None
         const_volumes = have[1] if have else ()
-        if volume_slope is None:
-            out.append("    %s min has no constant-load volume series of its own, so"
-                       " the injection is NOT subtracted here and the volume"
-                       % grad)
-            out.append("    confound stays undeclared in this gradient's ratio.")
         out.append("  %s min: %s" % (grad, ", ".join(
             "%g ng x%d" % (ng, len(v)) for ng, v in sorted(levels.items()))))
         if len(levels) < 2:
             out.append("    one load level, so there is no response to measure.")
             continue
+        # After this gradient's own header, or the line reads as the last
+        # sentence of the previous gradient's block -- which is the one that
+        # DID get a correction.
+        if volume_slope is None:
+            out.append("    this gradient has no constant-load volume series of its")
+            out.append("    own, so the injection is NOT subtracted below and the")
+            out.append("    volume confound stays undeclared in its ratio.")
         lo_ng, hi_ng = min(levels), max(levels)
         lo_runs, hi_runs = levels[lo_ng], levels[hi_ng]
         # Restrict the high side to the runs that share the low side's vial

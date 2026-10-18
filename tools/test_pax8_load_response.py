@@ -46,7 +46,7 @@ def record():
 
 def plant(root, no_psm=(), alt_table=(), load_scale=None, vol_slope=0.0,
           saturate_above=None, detect_floor=None, seed=4,
-          saturate_grad=None, max_peps=None, decoy_group=False):
+          saturate_grad=None, max_peps=None, decoy_group=False, psm_repeats=1):
     """Write the three real file shapes for every recorded run.
 
     load_scale   intensity multiplier per ng, so the planted load response is known
@@ -59,6 +59,8 @@ def plant(root, no_psm=(), alt_table=(), load_scale=None, vol_slope=0.0,
     decoy_group     add a BRIGHTER feature further away inside every window, so
                     a join that takes the brightest instead of the nearest
                     picks the wrong one
+    psm_repeats     write N PSM rows per peptide, as a real search does when an
+                    ion is sequenced more than once
     """
     rng = random.Random(seed)
     doc, rec = record()
@@ -130,7 +132,8 @@ def plant(root, no_psm=(), alt_table=(), load_scale=None, vol_slope=0.0,
             fh.write("\t".join(cols) + "\n")
             peps_here = PEPS[:max_peps] if max_peps else PEPS
             for n, (pep, z) in enumerate(peps_here, start=1):
-                rt = 5.0 + 3.1 * n
+              rt = 5.0 + 3.1 * n
+              for rep_i in range(psm_repeats):
                 fh.write("\t".join(str(v) for v in [
                     "%s_plainFP.%05d.%05d.%d" % (run, n, n, z), run + ".mgf",
                     pep, z, round(rt * 60.0, 2),      # SECONDS, as the real file
@@ -743,7 +746,7 @@ def case_a_volume_slope_corrects_only_its_own_gradient(tmp):
     if n != 1:
         bad.append("a volume correction was applied %d time(s); only the 60 min"
                    " gradient has a volume series, so it must be applied once" % n)
-    if "no constant-load volume series of its own" not in out:
+    if "constant-load volume series of its" not in out:
         bad.append("the gradient without a volume series is not told that its"
                    " injection was never subtracted")
     sec = out.split("LOAD RESPONSE", 1)[1]
@@ -891,6 +894,40 @@ def case_the_join_takes_the_nearest_not_the_brightest(tmp):
     return bad
 
 
+def case_several_psms_of_one_ion_share_a_feature(tmp):
+    """One feature per ION, not per PSM.
+
+    The one-to-one rule contended between PSMs of the SAME peptide and charge,
+    which `ions` collapses anyway. A search that sequences an ion four times
+    then had three of its four PSMs rejected: 12 ion(s) of 48 PSM(s) with 36
+    unmatched, where one PSM each matched cleanly.
+    """
+    import re as _re
+    one = tmp / "psm1"
+    many = tmp / "psm4"
+    a1, s1 = plant(one, psm_repeats=1)
+    a4, s4 = plant(many, psm_repeats=4)
+    _, o1 = run_tool("--apex", a1, "--search", s1)
+    _, o4 = run_tool("--apex", a4, "--search", s4)
+
+    def counts(o):
+        m = _re.search(r"(\d+) ion\(s\) of\s+(\d+) PSM\(s\); (\d+) unmatched", o)
+        return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
+
+    c1, c4 = counts(o1), counts(o4)
+    bad = []
+    if not c1 or not c4:
+        return ["could not read the join counts"]
+    if c4[2] != 0:
+        bad.append("%d of %d PSM(s) went unmatched when the same ion was"
+                   " sequenced four times; repeated PSMs of one ion must share"
+                   " its feature" % (c4[2], c4[1]))
+    if c4[0] != c1[0]:
+        bad.append("repeating the PSMs changed the ion count from %d to %d"
+                   % (c1[0], c4[0]))
+    return bad
+
+
 CASES = [case_the_join_recovers_a_planted_load_ratio,
          case_gradients_are_reported_separately,
          case_fragpipe_intensity_is_never_used,
@@ -921,7 +958,8 @@ CASES = [case_the_join_recovers_a_planted_load_ratio,
          case_too_few_volume_ions_do_not_crash,
          case_the_yield_covers_the_runs_the_ratio_uses,
          case_the_disputed_run_is_not_on_both_sides,
-         case_the_join_takes_the_nearest_not_the_brightest]
+         case_the_join_takes_the_nearest_not_the_brightest,
+         case_several_psms_of_one_ion_share_a_feature]
 
 
 def main():

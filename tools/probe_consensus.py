@@ -926,8 +926,8 @@ def trimmed_mean(values, frac=TRIM_FRACTION):
     """Mean of the central share. Median-robust, mean-linear; see TRIM_FRACTION.
 
     int(n * frac) trims nothing at n = 3 and one from each end at n = 5, which
-    keeps 100% and 60% where the name says 50%. The share actually kept is
-    returned alongside so a caller can print what happened rather than the
+    keeps 100% and 60% where the name says 50%. trimmed_kept() gives the share
+    actually averaged, so a caller can print what happened rather than the
     nominal fraction.
     """
     xs = sorted(values)
@@ -958,16 +958,27 @@ def estimate_load_factors(per_ion_run, out):
                    " estimated from shared ions." % (need, len(runs)))
         return None, 0
     ref = {key: statistics.median(per_run.values()) for key, per_run in anchors.items()}
-    factors = {}
+    factors, kept = {}, []
     for run in runs:
         ratios = [math.log10(per_run[run] / ref[key])
                   for key, per_run in anchors.items()
                   if run in per_run and ref[key] > 0]
         if len(ratios) >= MIN_RUNS_FOR_REFERENCE:
             factors[run] = trimmed_mean(ratios)
+            kept.append(trimmed_kept(len(ratios)))
+    # What was actually averaged, not the nominal fraction: int(n * frac) trims
+    # nothing below n = 4, so a small ion set gets a plain mean under a name
+    # that says otherwise.
+    if kept and abs(max(kept) - min(kept)) < 0.005:
+        share = "%d%%" % round(100 * kept[0])
+    elif kept:
+        share = "%d-%d%%" % (round(100 * min(kept)), round(100 * max(kept)))
+    else:
+        share = "n/a"
     out.append("  load estimated from %d ion(s) present in >=%d of %d runs,"
-               " trimmed mean of the central %d%%."
-               % (len(anchors), need, len(runs), 100 - 2 * int(100 * TRIM_FRACTION)))
+               " trimmed mean of the central %s (nominal %d%%)."
+               % (len(anchors), need, len(runs), share,
+                  100 - 2 * int(100 * TRIM_FRACTION)))
     if len(factors) < len(runs):
         out.append("  %d run(s) had too few shared ions to place on the load axis."
                    % (len(runs) - len(factors)))
@@ -1092,7 +1103,7 @@ def constant_load_check(per_ion_run, factors, out):
         base = meds[0][1]
         for v, m, n in meds:
             out.append("      %4g uL  n=%d  median log10 intensity %+.3f  (%+.3f)%s"
-                       % (v, (n if m else 0), m, m - base,
+                       % (v, n, m, m - base,
                           "   <- single run, not judgeable" if n < 2 else ""))
         # Judge the trend on the REPLICATED volumes only. A singleton column has
         # no scatter of its own, and letting it suppress the verdict loses the
@@ -1165,11 +1176,11 @@ def load_analysis(per_ion_run, factors, declared, out, label=""):
     cannot change either gradient's own slope, moved the reported median from
     +1.004 to +1.368.
     """
-    pre = ("  [%s] " % label) if label else "  "
+    tag = ("  %s " % label) if label else "  "
     n_loads = len({round(f, 9) for f in factors.values()})
     if n_loads < 2:
-        out.append("  SKIPPED: every run sits at the same load (%d distinct value),"
-                   " so there is no load axis to regress against." % n_loads)
+        out.append("%sSKIPPED: every run sits at the same load (%d distinct value),"
+                   " so there is no load axis to regress against." % (tag, n_loads))
         return False
     if n_loads == 2:
         out.append("  Only TWO distinct loads. Two points determine a slope exactly, so")
@@ -1188,8 +1199,8 @@ def load_analysis(per_ion_run, factors, declared, out, label=""):
         if s is not None:
             slopes.append((s, statistics.median(per_run.values()), key))
     if len(slopes) < 5:
-        out.append("  SKIPPED: only %d ion(s) appear at %d or more distinct loads."
-                   % (len(slopes), min(3, n_loads)))
+        out.append("%sSKIPPED: only %d ion(s) appear at %d or more distinct loads."
+                   % (tag, len(slopes), min(3, n_loads)))
         return False
 
     # Only a DECLARED load per run anchors the axis. Injection volumes cannot:
@@ -1325,6 +1336,7 @@ def load_analysis(per_ion_run, factors, declared, out, label=""):
             out.append("  axis, not in the residual.")
 
     report_normalization_set(slopes, vals, cohort_med, declared, out)
+    return True
 
 
 def test_load(con, cfg, load_map, limit, out):
