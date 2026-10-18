@@ -52,6 +52,14 @@ NULL_TOLERANCE = (0.5, 2.0)
 # Below this many usable scans in a run there is nothing to bin by level.
 MIN_SCANS = 60
 
+# With --pool, a series is one ion's elution rather than a whole run, so it is
+# short by construction. Second differences still have to come from WITHIN one
+# ion -- pooling the scans themselves would difference across a boundary where
+# a jump is not noise -- but the level bins are filled from every series at
+# once, which is what puts a Fano factor on an intensity axis.
+MIN_SCANS_POOLED = 8
+MIN_POOLED_TOTAL = 60
+
 # A channel whose neighbouring values repeat this often has been smoothed or
 # forward-filled, so consecutive scans are not independent draws.
 MAX_REPEAT_SHARE = 0.20
@@ -139,14 +147,38 @@ def series_of(rows, chan):
     out = {}
     for run, pts in by.items():
         pts.sort()
-        out[run] = [v for _, v in pts]
+        # Scan numbers are kept, not discarded. A series can have gaps -- an
+        # extraction with a count floor drops the scans where an ion fell below
+        # it -- and a difference taken across a gap spans a jump in retention
+        # time, where a step is elution rather than noise.
+        out[run] = pts
     return out
 
 
-def refuse_if_unusable(y, chan, run, out):
-    if len(y) < MIN_SCANS:
-        raise Unusable("%s/%s has %d scan(s), below the %d needed to bin by "
-                       "level" % (run, chan, len(y), MIN_SCANS))
+def values(pts):
+    return [v for _, v in pts]
+
+
+def runs_of_consecutive(pts, minlen=3):
+    """Split a series at every gap in the scan index."""
+    out, cur = [], []
+    for s, v in pts:
+        if cur and s != cur[-1][0] + 1:
+            if len(cur) >= minlen:
+                out.append(cur)
+            cur = []
+        cur.append((s, v))
+    if len(cur) >= minlen:
+        out.append(cur)
+    return out
+
+
+def refuse_if_unusable(y, chan, run, out, pooled=False):
+    floor = MIN_SCANS_POOLED if pooled else MIN_SCANS
+    if len(y) < floor:
+        raise Unusable("%s/%s has %d scan(s), below the %d needed%s"
+                       % (run, chan, len(y), floor,
+                          " for a pooled series" if pooled else " to bin by level"))
     if len(set(y)) == 1:
         raise Unusable("%s/%s holds the single value %g in all %d scans, so "
                        "there is no variation to attribute"
@@ -169,15 +201,21 @@ def refuse_if_unusable(y, chan, run, out):
 def second_differences(y):
     """d_i = y_i - 2 y_{i+1} + y_{i+2}. Removes any local linear trend, so no
     scan has to be selected or discarded. For independent noise of variance
-    s^2 the result has variance 6 s^2."""
+    s^2 the result has variance 6 s^2.
+
+    Takes values that are already known to be consecutive; callers with a
+    series that may have gaps pass each contiguous stretch separately."""
     return [(y[i] - 2.0 * y[i + 1] + y[i + 2],
              (y[i] + y[i + 1] + y[i + 2]) / 3.0)
             for i in range(len(y) - 2)]
 
 
 def fano_by_level(y, nbins=NBINS):
-    pairs = [(m, d) for d, m in second_differences(y) if m > 0]
-    pairs.sort()
+    return fano_from_pairs([(m, d) for d, m in second_differences(y) if m > 0], nbins)
+
+
+def fano_from_pairs(pairs, nbins=NBINS):
+    pairs = sorted(pairs)
     out = []
     per = max(25, len(pairs) // nbins)
     for s in range(0, len(pairs), per):
@@ -190,6 +228,57 @@ def fano_by_level(y, nbins=NBINS):
         var = sum((d - md) ** 2 for d in ds) / (len(ds) - 1) / 6.0
         out.append((mm, var / mm if mm > 0 else float("nan"), len(ch)))
     return out
+
+
+def peak_trend(y):
+    """The mean a short elution profile is varying about.
+
+    A moving average is wrong here. Second differences remove a local LINEAR
+    trend but not curvature, and over the 20-40 scans of one peak the curvature
+    is large; smoothing flattens the peak, so a null built from it carries less
+    curvature than the data and every ratio above it comes out inflated. On
+    planted Poisson profiles that read as 7x to 61x counting noise in data that
+    was pure counting noise.
+
+    A Gaussian peak is exactly a parabola in log intensity, so fit that and the
+    null curves the same way the data does. Where the fit is degenerate or not
+    peak-shaped, fall back to the observed values, which match the curvature
+    exactly at the cost of a conservative null.
+    """
+    xs = [float(i) for i in range(len(y))]
+    pos = [(x, v) for x, v in zip(xs, y) if v > 0]
+    if len(pos) >= 5:
+        c0 = sum(x for x, _ in pos) / len(pos)
+        X = [x - c0 for x, _ in pos]
+        Y = [math.log(v) for _, v in pos]
+        n = float(len(X))
+        sx = sum(X); sx2 = sum(x * x for x in X)
+        sx3 = sum(x ** 3 for x in X); sx4 = sum(x ** 4 for x in X)
+        sy = sum(Y); sxy = sum(x * v for x, v in zip(X, Y))
+        sx2y = sum(x * x * v for x, v in zip(X, Y))
+        m = [[n, sx, sx2, sy], [sx, sx2, sx3, sxy], [sx2, sx3, sx4, sx2y]]
+        ok = True
+        for col in range(3):
+            piv = max(range(col, 3), key=lambda r: abs(m[r][col]))
+            if abs(m[piv][col]) < 1e-12:
+                ok = False
+                break
+            m[col], m[piv] = m[piv], m[col]
+            for r in range(3):
+                if r == col:
+                    continue
+                f = m[r][col] / m[col][col]
+                for k in range(col, 4):
+                    m[r][k] -= f * m[col][k]
+        if ok:
+            a, b, c = (m[i][3] / m[i][i] for i in range(3))
+            if c < 0:
+                out = []
+                for x in xs:
+                    t = a + b * (x - c0) + c * (x - c0) ** 2
+                    out.append(math.exp(t) if -700 < t < 700 else 0.0)
+                return out
+    return list(y)
 
 
 def smooth(y, k=TREND_HALFWIDTH):
@@ -265,6 +354,9 @@ def main(argv=None):
     p.add_argument("--part", help="channel contained in --whole, e.g. a base peak")
     p.add_argument("--whole", help="channel containing --part, e.g. a total current")
     p.add_argument("--seed", type=int, default=4)
+    p.add_argument("--pool", action="store_true",
+                   help="treat each series as one ion's profile: difference within "
+                        "each, then bin level across all of them together")
     args = p.parse_args(argv)
 
     paths = []
@@ -294,7 +386,7 @@ def main(argv=None):
         for run in runs:
             for c in chans:
                 if run in series[c]:
-                    refuse_if_unusable(series[c][run], c, run, out)
+                    refuse_if_unusable(values(series[c][run]), c, run, out, args.pool)
 
         # --- A. counting ------------------------------------------------
         out("")
@@ -307,30 +399,59 @@ def main(argv=None):
         out("   %-10s %-6s %12s %10s %9s %9s  %s"
             % ("run", "chan", "mean level", "F_obs", "F_null", "ratio", "rel SD"))
         verdicts = []
-        for run in runs:
+        plan = []
+        if args.pool:
             for c in chans:
-                y = series[c].get(run)
-                if not y:
-                    continue
-                obs = fano_by_level(y)
-                trend = smooth(y)
-                nul = fano_by_level([poisson(t, rng) for t in trend])
-                if not obs or not nul:
-                    continue
-                bad_null = [fn for _, fn, _ in nul
-                            if not (NULL_TOLERANCE[0] <= fn <= NULL_TOLERANCE[1])]
-                for (m, f, n), (_, fn, _) in zip(obs, nul):
-                    ratio = f / fn if fn else float("nan")
-                    out("   %-10s %-6s %12.0f %10.2f %9.2f %9.1f  %6.2f%%"
-                        % (run[:10], c, m, f, fn, ratio,
-                           100.0 * math.sqrt(max(0.0, f * m)) / m))
-                    verdicts.append((run, c, m, ratio))
-                if bad_null:
-                    out("   %-10s %-6s NULL OFF 1.0 in %d of %d bin(s) "
-                        "(%.2f to %.2f): read the ratios with care, the"
-                        % (run[:10], c, len(bad_null), len(nul),
-                           min(bad_null), max(bad_null)))
-                    out("   %-10s %-6s estimator is contributing." % ("", ""))
+                po, pn = [], []
+                used = 0
+                for run in runs:
+                    pts = series[c].get(run)
+                    if not pts or len(pts) < MIN_SCANS_POOLED:
+                        continue
+                    stretches = runs_of_consecutive(pts)
+                    if not stretches:
+                        continue
+                    used += 1
+                    trend = peak_trend(values(pts))
+                    at = {s: t for (s, _), t in zip(pts, trend)}
+                    for st in stretches:
+                        y = values(st)
+                        po += [(m, d) for d, m in second_differences(y) if m > 0]
+                        sy = [poisson(at[s], rng) for s, _ in st]
+                        pn += [(m, d) for d, m in second_differences(sy) if m > 0]
+                if len(po) < MIN_POOLED_TOTAL:
+                    raise Unusable(
+                        "pooling %s over %d series of at least %d scans leaves only "
+                        "%d difference(s), below the %d needed to bin by level"
+                        % (c, used, MIN_SCANS_POOLED, len(po), MIN_POOLED_TOTAL))
+                out("   %s: pooled %d series of >= %d scans into %d difference(s)"
+                    % (c, used, MIN_SCANS_POOLED, len(po)))
+                plan.append(("pooled", c, fano_from_pairs(po), fano_from_pairs(pn)))
+        else:
+            for run in runs:
+                for c in chans:
+                    pts = series[c].get(run)
+                    if pts:
+                        y = values(pts)
+                        plan.append((run, c, fano_by_level(y),
+                                     fano_by_level([poisson(t, rng) for t in smooth(y)])))
+        for run, c, obs, nul in plan:
+            if not obs or not nul:
+                continue
+            bad_null = [fn for _, fn, _ in nul
+                        if not (NULL_TOLERANCE[0] <= fn <= NULL_TOLERANCE[1])]
+            for (m, f, n), (_, fn, _) in zip(obs, nul):
+                ratio = f / fn if fn else float("nan")
+                out("   %-10s %-6s %12.0f %10.2f %9.2f %9.1f  %6.2f%%"
+                    % (run[:10], c, m, f, fn, ratio,
+                       100.0 * math.sqrt(max(0.0, f * m)) / m))
+                verdicts.append((run, c, m, ratio))
+            if bad_null:
+                out("   %-10s %-6s NULL OFF 1.0 in %d of %d bin(s) "
+                    "(%.2f to %.2f): read the ratios with care, the"
+                    % (run[:10], c, len(bad_null), len(nul),
+                       min(bad_null), max(bad_null)))
+                out("   %-10s %-6s estimator is contributing." % ("", ""))
 
         # where does counting stop describing it?
         out("")
@@ -379,7 +500,8 @@ def main(argv=None):
         if args.part and args.whole:
             out("")
             out("B  IS ANY OF IT SHARED, AND WHICH WAY?")
-            pr, wr = series.get(args.part, {}), series.get(args.whole, {})
+            pr = {k: values(v) for k, v in series.get(args.part, {}).items()}
+            wr = {k: values(v) for k, v in series.get(args.whole, {}).items()}
             tot_xs, tot_ys = [], []
             for run in runs:
                 a, b = pr.get(run), wr.get(run)

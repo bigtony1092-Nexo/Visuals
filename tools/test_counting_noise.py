@@ -163,6 +163,76 @@ def the_null_lands_at_one_on_counting(tmp):
     return bad
 
 
+def per_ion_profiles_pool_correctly(tmp):
+    """One ion's elution is 20-40 scans, not a whole run.
+
+    Differencing has to stay inside one ion -- a step between ions is not
+    noise -- while the level bins fill from every ion at once, which is what
+    puts a Fano factor on an intensity axis. Planted Poisson must read as
+    counting noise at every level.
+    """
+    f = os.path.join(tmp, "ions.jsonl")
+    rng = random.Random(17)
+    rows = []
+    for ion in range(40):
+        apex = math.exp(rng.uniform(math.log(40), math.log(9000)))
+        c = 14 + rng.random() * 6
+        for k in range(28):
+            lam = apex * math.exp(-((k - c) ** 2) / (2 * 4.0 ** 2))
+            if lam < 0.5:
+                continue
+            rows.append({"run": "ion%02d" % ion, "scan": 100 + k,
+                         "counts": pois(lam, rng)})
+    write(f, rows)
+    rc, out = run(f, "--pool")
+    bad = []
+    if "pooled" not in out:
+        bad.append("did not report pooling")
+    if "counting describes it at every level" not in out:
+        bad.append("planted Poisson per-ion profiles were not read as counting "
+                   "noise; got: " + " ".join(
+                       l.strip() for l in out.split("\n") if "counting" in l)[:150])
+    if rc != 0:
+        bad.append("exit %d on Poisson per-ion profiles" % rc)
+    return bad
+
+
+def a_gap_is_not_differenced_across(tmp):
+    """The bug this guards.
+
+    An extraction with a count floor drops the scans where an ion fell below
+    it, so a profile arrives with holes. Differencing across one spans a jump
+    in retention time, where a step is elution and not noise. Left in, planted
+    Poisson read as 7x to 260x counting noise.
+    """
+    rng = random.Random(23)
+    def build(path, drop):
+        rows = []
+        for ion in range(40):
+            apex = math.exp(rng.uniform(math.log(200), math.log(9000)))
+            for k in range(30):
+                lam = apex * math.exp(-((k - 15) ** 2) / (2 * 4.5 ** 2))
+                if lam < 0.5:
+                    continue
+                # drop a block from the middle of the rise, as a floor would
+                if drop and 8 <= k <= 11:
+                    continue
+                rows.append({"run": "ion%02d" % ion, "scan": 100 + k,
+                             "counts": pois(lam, rng)})
+        write(path, rows)
+    whole = os.path.join(tmp, "whole.jsonl")
+    holed = os.path.join(tmp, "holed.jsonl")
+    build(whole, False); build(holed, True)
+    _, a = run(whole, "--pool")
+    _, b = run(holed, "--pool")
+    bad = []
+    for lab, o in (("ungapped", a), ("gapped", b)):
+        if "counting describes it at every level" not in o:
+            bad.append("%s Poisson profiles were not read as counting noise -- "
+                       "a gap is being differenced across" % lab)
+    return bad
+
+
 def the_crossover_is_found(tmp):
     f = os.path.join(tmp, "mixed.jsonl")
     mixed_series(f)
@@ -348,6 +418,8 @@ CASES = [pure_counting_reads_as_counting,
          multiplicative_reads_as_flat,
          the_null_lands_at_one_on_counting,
          the_crossover_is_found,
+         per_ion_profiles_pool_correctly,
+         a_gap_is_not_differenced_across,
          common_mode_is_identified,
          competition_is_identified,
          no_shared_term_when_none_planted,
