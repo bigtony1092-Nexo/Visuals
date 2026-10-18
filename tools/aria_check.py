@@ -26,6 +26,11 @@ The chain, and why each step precedes the next:
                  GATE: a shared offset is invisible to every spread-based check
                  and gets more confidently wrong as sample count rises, so a
                  tightening interval above means nothing until this has run.
+  7 COUNTING   counting_noise.py — is scan-to-scan scatter counting noise?
+                 Not a gate: it decides the FORM of any coherence band rather
+                 than whether the steps above can be read. Get it wrong and a
+                 tolerance is wrong at every intensity, in a direction that
+                 depends on where you set it.
 
     python3 tools/aria_check.py --export export/ --panels method.json manifest.json
     python3 tools/aria_check.py --fragments a.jsonl b.jsonl --ions ions.json
@@ -126,6 +131,9 @@ def main(argv=None):
     p.add_argument("--ppm-target", dest="ppm_target", type=float,
                    help="the ppm the Atlas aims for, for offset_check.py")
     p.add_argument("--covariate", action="append", default=[])
+    p.add_argument("--scans", help="per-scan channels for counting_noise.py")
+    p.add_argument("--part", help="channel contained in --whole, for counting_noise.py")
+    p.add_argument("--whole", help="channel containing --part, for counting_noise.py")
     p.add_argument("--all-of", metavar="DIR",
                    help="look in DIR for the conventional filenames and use what is there")
     p.add_argument("-v", "--verbose", action="store_true")
@@ -157,6 +165,21 @@ def main(argv=None):
                     break
         if not args.anchor and (d / "anchor.jsonl").exists():
             args.anchor = str(d / "anchor.jsonl")
+        if not args.scans:
+            found = sorted(str(f) for f in d.glob("*scans*.jsonl"))
+            if found:
+                args.scans = found[0]
+                if args.part is None and args.whole is None:
+                    # The shipped example carries a base peak inside a total
+                    # current; only declare it when the columns are there.
+                    try:
+                        import json as _j
+                        with open(args.scans) as fh:
+                            row = _j.loads(fh.readline())
+                        if "bpi" in row and "tic" in row:
+                            args.part, args.whole = "bpi", "tic"
+                    except (OSError, ValueError):
+                        pass
 
     c = Chain(args.verbose)
 
@@ -226,6 +249,18 @@ def main(argv=None):
                         "coordinate more confidently wrong")
     else:
         c.skip("6 OFFSET    shared shift", "no --ppm given")
+
+    if args.scans:
+        a = [str(TOOLS / "counting_noise.py"), args.scans]
+        if args.part and args.whole:
+            a += ["--part", args.part, "--whole", args.whole]
+        # Not a gate. A multiplicative regime does not make the steps above
+        # unreadable; it makes any 1/sqrt(N) tolerance below wrong. The tool
+        # exits 2 when the input cannot be held against the counting
+        # prediction at all, which the chain treats as COULD NOT RUN.
+        c.step("7 COUNTING  noise form", a)
+    else:
+        c.skip("7 COUNTING  noise form", "no --scans given")
 
     return c.report()
 

@@ -208,6 +208,36 @@ def a_centred_cohort_passes_step_six(tmp):
     return bad
 
 
+def counting_noise_joins_the_chain(tmp):
+    """Step 7 reports, and does not stop the chain.
+
+    The form of the noise does not make the steps above unreadable, so this
+    one is a finding rather than a gate. If it ever starts gating, a cohort
+    whose scatter is merely multiplicative would block every check after it.
+    """
+    f, s = tmp / "goodcnt.jsonl", tmp / "scans.jsonl"
+    good_fragments(f)
+    rng = __import__("random").Random(9)
+    rows = []
+    for i in range(400):
+        lvl = 2000 + 1500 * __import__("math").sin(i / 40.0)
+        rows.append({"run": "r", "scan": i,
+                     "sig": max(1.0, lvl * (1 + rng.gauss(0, 0.25)))})
+    s.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    rc, out = run("--fragments", str(f), "--scans", str(s))
+    bad = []
+    if "7 COUNTING" not in out:
+        bad.append("step 7 did not appear")
+    if "GATE FAILED" in out:
+        bad.append("step 7 gated the chain; the noise form is a finding, not "
+                   "a reason nothing above it can be read")
+    if "NOT REACHED" in out:
+        bad.append("step 7 stopped the chain")
+    if rc != 1:
+        bad.append("exit %d on multiplicative scatter, expected 1 (a finding)" % rc)
+    return bad
+
+
 def step_six_is_skipped_not_assumed(tmp):
     f = tmp / "goodskip.jsonl"
     good_fragments(f)
@@ -221,6 +251,9 @@ def step_six_is_skipped_not_assumed(tmp):
                    % [l.strip() for l in out.splitlines() if "6 OFFSET" in l])
     if "A skipped step has not passed" not in out:
         bad.append("did not distinguish a skipped offset check from a passed one")
+    line = [l for l in out.splitlines() if "7 COUNTING" in l and "skipped" in l]
+    if not line:
+        bad.append("step 7 with no --scans was not marked skipped")
     return bad
 
 
@@ -229,7 +262,8 @@ CASES = [a_flat_reference_stops_the_chain, a_good_reference_lets_the_chain_throu
          the_shipped_examples_run_end_to_end,
          a_shared_offset_stops_the_chain,
          a_centred_cohort_passes_step_six,
-         step_six_is_skipped_not_assumed]
+         step_six_is_skipped_not_assumed,
+         counting_noise_joins_the_chain]
 
 
 def main():
