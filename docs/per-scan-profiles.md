@@ -67,13 +67,22 @@ Both tools refuse rather than report. Worth knowing before the export is run:
 
 One run is enough; both tests are within-run and need no cohort.
 
-- **50-100 ions**, spanning dim to bright. All bright leaves no unsaturated
-  control; all dim leaves nothing saturated.
+- **as many ions as the search gives**, spanning dim to bright. Reading the .raw
+  costs the same for 45 targets or 500, and the earlier tests came in marginal
+  at 45 for want of power. All bright leaves no unsaturated control; all dim
+  leaves nothing saturated.
 - **10-15 scans per ion**, covering the elution rather than the apex alone. The
   estimator needs four scans outside the ones being tested to predict from.
 - the ion set chosen **before** looking at intensity, not as the top N. Selecting
   on brightness selects on the quantity under test, and on planted data that
   alone contributed +1.7% of a false result.
+
+`tools/make_targets.py` builds the list from a search and a feature table:
+identity from the search, coordinate from the features, because a search reports
+a calculated m/z and this needs the observed one. It stratifies by m/z, which is
+orthogonal to everything being measured, and reports the intensity span it got.
+Stratifying by intensity is allowed only from a different run than the one being
+extracted, and refused from the same one.
 
 ## Where it can come from
 
