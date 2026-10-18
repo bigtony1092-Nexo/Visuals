@@ -22,6 +22,10 @@ The chain, and why each step precedes the next:
   5 STATS      ladder_stats.py — intervals on the real-vs-decoy rates.
                  GATE: asymmetric ladders make every rate a floor, so the
                  intervals describe a handicapped comparison.
+  6 OFFSET     offset_check.py — is a shared offset hiding behind the controls?
+                 GATE: a shared offset is invisible to every spread-based check
+                 and gets more confidently wrong as sample count rises, so a
+                 tightening interval above means nothing until this has run.
 
     python3 tools/aria_check.py --export export/ --panels method.json manifest.json
     python3 tools/aria_check.py --fragments a.jsonl b.jsonl --ions ions.json
@@ -117,6 +121,10 @@ def main(argv=None):
     p.add_argument("--sigma-rt", type=float)
     p.add_argument("--rank-rt", action="store_true")
     p.add_argument("--counts", help="gates/ions JSON for ladder_stats.py")
+    p.add_argument("--ppm", help="per-PSM ppm errors for offset_check.py")
+    p.add_argument("--anchor", help="an independent reference's ppm, for offset_check.py")
+    p.add_argument("--ppm-target", dest="ppm_target", type=float,
+                   help="the ppm the Atlas aims for, for offset_check.py")
     p.add_argument("--covariate", action="append", default=[])
     p.add_argument("--all-of", metavar="DIR",
                    help="look in DIR for the conventional filenames and use what is there")
@@ -142,6 +150,13 @@ def main(argv=None):
             args.ions = str(d / "ions.json")
         if not args.counts and (d / "counts.json").exists():
             args.counts = str(d / "counts.json")
+        if not args.ppm:
+            for name in ("ppm.jsonl", "ppm_errors.jsonl"):
+                if (d / name).exists():
+                    args.ppm = str(d / name)
+                    break
+        if not args.anchor and (d / "anchor.jsonl").exists():
+            args.anchor = str(d / "anchor.jsonl")
 
     c = Chain(args.verbose)
 
@@ -195,6 +210,22 @@ def main(argv=None):
                         "and the intervals describe a handicapped comparison")
     else:
         c.skip("5 STATS     intervals", "no --counts given")
+
+    if args.ppm:
+        a = [str(TOOLS / "offset_check.py"), args.ppm]
+        if args.anchor:
+            a += ["--anchor", args.anchor]
+        if args.ppm_target is not None:
+            a += ["--target", str(args.ppm_target)]
+        # A gate, because the controls above cannot see what this looks for: a
+        # tightening interval on the mass dimension means nothing until a shared
+        # offset has been ruled out, and it gets MORE convincing as one persists.
+        c.step("6 OFFSET    shared shift", a, gate=True,
+               why_gate="a shared offset is present, so every spread-based control "
+                        "above reports it as health and more samples make the "
+                        "coordinate more confidently wrong")
+    else:
+        c.skip("6 OFFSET    shared shift", "no --ppm given")
 
     return c.report()
 

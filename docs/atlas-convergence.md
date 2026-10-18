@@ -88,6 +88,49 @@ precisely that its premise is correct: as sample count rises, every
 spread-based control reports improving health whether or not the Atlas is
 converging on the right answer.
 
+## The three checks, in code
+
+`tools/offset_check.py` runs all three on a file of per-PSM ppm errors:
+
+    python3 tools/offset_check.py ppm.jsonl --anchor reference.jsonl --target 0.0
+
+It is step 6 of `tools/aria_check.py`, and it is a **gate** — not because its
+finding is worse than the others, but because of the direction of its error.
+A failing spread control makes the steps after it look bad. A shared offset
+makes them look *good*, so a chain that carried on past it would be reporting
+health computed from the pathology. "Not reached is not passed" is the only
+honest state for anything downstream of an unresolved offset.
+
+Three properties of the tool are worth stating, because each exists to stop a
+specific way this check could have been written and still said nothing:
+
+**It demonstrates the blindness rather than asserting it.** Every run injects
+known offsets (0, 1, 5, 20 ppm) into the same data and reports which controls
+move — not behind a flag, because a demonstration you have to ask for is one
+that gets skipped. On the planted Colorado shape, **five of eight are bit-identical
+at 0 ppm and at 20 ppm** — between-run SD, pooled within-run SD, range of run
+means, IQR of run means, SE of the Atlas mean. Adding a constant to every run
+changes no difference between runs, so this is arithmetic, not an empirical
+finding; printing it as a measured result is what makes the claim checkable
+instead of a sentence in a document.
+
+One control is worse than blind. `spread / |centre|` goes 0.503 → 1.197 →
+0.265 → 0.047 across those four offsets, because the centre crosses zero on
+the way. It is non-monotone — wrong in both directions — and a control that
+argues in the wrong direction is more dangerous than one that says nothing,
+because blindness at least does not argue.
+
+**It refuses circular input.** A ppm column computed from the same calibration
+it is being used to test returns zero by construction. That already happened in
+this project: 0.00 ppm over 1,994,456 rows, which read as a perfect result. The
+tool rejects input that is majority exact-zero, on the grounds that a ppm of
+1 × 10⁻¹² is arithmetic rather than a measurement.
+
+**It separates existence from size.** Checks 1 and 2 can only say an offset is
+there. Without `--anchor` the tool says so and does not report a magnitude —
+the −1.570 ppm here is the size of the shift *relative to the mass computation
+being tested*, which is not the same as the distance from truth.
+
 ## What is not established here
 
 All 24 runs are one instrument on one day, so this separates run-to-run from
