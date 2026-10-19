@@ -180,6 +180,64 @@ never compared, because `rt_lo`/`rt_hi` are not an `rt` — so even with
 be constructed at all — every one of them outside the m/z range the 45 listed
 coordinates span, which is why only 17 were queried.
 
+## Building the list
+
+`tools/make_entrapment.py` derives it from a proteome you supply and records in
+the file's own header what it derived it from — source filename, sha256, protein
+count, peptide counts at each stage, the screen, the sample size and the seed.
+A list of sequences somebody believed were *E. coli* would be the same defect as
+the borrowed 33–70%: a warrant living somewhere else.
+
+    python3 tools/make_entrapment.py ecoli.fasta -o entrapment.txt \
+        --exclude-fasta human.fasta --n 2000
+
+`--exclude-fasta` takes the **sample's** proteome and drops every probe whose
+exact sequence also appears in it. Those are not entrapment at all — a tryptic
+peptide shared residue-for-residue between two organisms really can be in the
+sample, so counting a hit on one as a false positive would be wrong.
+
+It does **not** screen by mass, and that is deliberate. A probe whose mass
+coincides with a real sample peptide is the most informative probe there is: for
+a ppm window, collision-with-a-real-peptide and collision-with-noise are the
+same event and produce the same wrong annotation. Screening those out would
+drive the measured rate toward a floor while looking like rigour.
+
+It refuses a non-FASTA input, a screen that leaves nothing, and a proteome that
+digests to nothing; and it exits 1 rather than 0 on a list below the control's
+own 30-probe floor, because probes are lost again at run time to the acquired
+m/z range and the charges present.
+
+Sizing, measured: a 2,000-peptide list against the end-to-end fixture leaves
+1,951 probes after construction and gives a 95% interval of 0.0–0.2%. At n=20,
+k=0 the upper bound is still about 16%, which is why the floor exists. Note that
+probes from one digest share the mass-defect lattice and several can match the
+same peak, so the trials are not fully independent and the Wilson interval is
+mildly anti-conservative; `distinct_peaks_matched` is recorded beside `k` so
+clustering is visible, and the report says so when `k` exceeds it.
+
+## Scale
+
+Probe-direction matching is O(probes × peaks) written naively: 2,000 probes
+against 50,000 peaks measured 44 seconds **per arm**, and a real export carries
+far more peaks than that. Peaks are therefore bucketed by charge and sorted by
+m/z, and each probe's candidates come from a bisect over that. The same figures
+with the index: 0.03s of query at 50,000 peaks, 0.6s total at 500,000.
+
+This is the one optimisation in the control that could do real damage, because a
+candidate filter that is slightly too tight silently narrows the window being
+measured — and would report the narrowing as a better false-positive rate. The
+bound is exact rather than approximate (`match_one` divides by the target's m/z,
+and in the probe direction the probe *is* the target), `match_one` still makes
+every final decision including charge, retention time and drift, and a test
+compares the indexed path against a brute-force scan over every peak —
+randomised, with probes planted on, just inside and just outside the window
+edge, with several peaks inside one window, and with chargeless probes that must
+search every bucket. Same `k`, same distinct-peak count, same peak chosen for
+every probe.
+
+At 500,000 synthetic peaks, incidentally, 156 of 2,000 probes found one: a 7.8%
+chance-collision rate. On a real dense run this number will not be small.
+
 ## Merging runs
 
 `merge_exports.py` pools the arms across runs — the probes are independent
@@ -200,23 +258,42 @@ any ion's own; `per_run` keeps each run's counts and calibration instead.
 ## What is not established
 
 **The rate has not been measured on real data.** Everything above is the
-machinery and its refusals, exercised against planted fixtures: 17 cases in
-`test_proximity_control.py`, 8 in `test_validate_export.py` and 2 in
-`test_merge_exports.py`, each one shown to fail against a deliberately broken
-implementation before it was kept. Two of
-the first seventeen could not fail when first written — an 8 ppm planted offset
-that still landed inside a 10 ppm window, and a clustering case that excluded
-every probe and passed on zero trials — which is the defect this whole exercise
-is about. The number the control produces on a real run is unknown until it runs
-on one, and
+machinery and its refusals, exercised against planted fixtures: 18 cases in
+`test_proximity_control.py`, 8 in `test_validate_export.py`, 8 in
+`test_make_entrapment.py` and 2 in `test_merge_exports.py` — 280 in the suite
+against a 244 baseline — each one shown to fail against a deliberately broken
+implementation before it was kept, 40 mutations in all.
+
+Four of those cases could not fail as first written, which is the defect this
+whole exercise is about. An 8 ppm planted calibration offset still lands inside
+a 10 ppm window, so the fixture could not tell a tool that applies the
+correction from one that ignores it. A clustering case used a 200000 ppm window,
+which put every probe inside its own paired target's window, excluded them all
+as self-matches, and passed on zero trials against code with no clustering check
+at all. And twice a fixture protein digested to nothing because trypsin does not
+cut before proline: once a peptide the case claimed two proteomes shared was cut
+through in both, once a `K|P` site was the only internal one. All four now assert
+that the fixture produced the condition under test.
+
+The number the control produces on a real run is unknown until it runs on one,
+and
 `atlas-convergence.md` is the standing warning about what a confidently
 reported number is worth when nobody asked what else could produce it.
 
-**No entrapment list ships.** `method.schema.json` has carried the default
-`"ecoli"` since before this work, but a list of sequences claimed to be *E.
-coli* and not verified to be would be the same defect as the borrowed 33–70%.
-The tool digests a FASTA, or reads a sequence list or a table with a peptide
-column, and refuses rather than inventing one.
+**No entrapment list ships, so every existing export fails validation until
+one exists.** `method.schema.json` has carried the default `"ecoli"` since
+before this work. `make_entrapment.py` builds the list, but it needs a proteome
+FASTA, and fetching one here was refused by this environment's network policy
+(`rest.uniprot.org` denied). Nothing was invented to stand in for it. Supply an
+*E. coli* FASTA — UniProt reference proteome UP000000625 — and the list and the
+end-to-end example follow in one command.
+
+**The organism has to suit the sample.** *E. coli* peptides are entrapment for a
+HeLa lysate. They are not entrapment for a sample containing recombinant protein
+expressed in *E. coli*, where that organism really can be present; such a sample
+needs a different one, and `--exclude-fasta` will not save you, because it
+screens sequences against the proteome you name, not against what is actually in
+the tube.
 
 **The `swap` arm is the one to watch.** On the end-to-end fixture it reports 0 of
 35 — target A's m/z at target B's retention time finds nothing — which says rt

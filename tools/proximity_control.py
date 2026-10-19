@@ -75,6 +75,7 @@ discriminate, 0 if it ran and discriminated.
 """
 
 import argparse
+import bisect
 import json
 import os
 import statistics as st
@@ -114,6 +115,11 @@ def load_sequences(path):
     if not seqs:
         for line in text.splitlines():
             s = line.strip().upper()
+            # Two independent guards, which is deliberate: this one skips the
+            # provenance header make_entrapment.py writes, and the mass filter
+            # below independently drops anything that is not a peptide. Either
+            # alone would do it; a header line reaching the probe list would
+            # become a trial that can never match and pad the denominator.
             if s and all(c.isalpha() for c in s):
                 seqs.append(s)
     return [s for s in dict.fromkeys(seqs) if s and peptide_mass(s) is not None]
@@ -195,29 +201,88 @@ def peak_rows(peaks):
     return out
 
 
-def probe_direction(probes, prows, ppm_tol, rt_tol, drift_tol, use_drift, min_scans):
-    """For each probe, the first peak whose window contains it.
+def index_peaks(prows):
+    """Peaks bucketed by charge and sorted by m/z, for candidate lookup."""
+    by_z = {}
+    for pk in prows:
+        by_z.setdefault(pk["z"], []).append(pk)
+    out = {}
+    for z, rows in by_z.items():
+        rows.sort(key=lambda p: p["mz"])
+        out[z] = (rows, [p["mz"] for p in rows])
+    return out
+
+
+def candidates(index, probe, ppm_tol):
+    """Every peak whose m/z could satisfy the window, and no fewer.
+
+    A CANDIDATE filter, not a second window: match_one still decides, including
+    charge, retention time and drift. The bound is exact rather than
+    approximate, which is the only reason this is safe -- match_one's m/z test
+    divides by the TARGET's m/z, and in the probe direction the probe IS the
+    target, so a peak matches only if
+
+        |mz_peak - mz_probe| <= ppm_tol * mz_probe / 1e6
+
+    and every such peak is returned. A loose filter here would silently narrow
+    the window being measured, which is the one thing this control cannot do; a
+    test asserts this path returns exactly what a brute-force scan returns.
+
+    Without it the control is O(probes x peaks): 2,000 probes against 50,000
+    peaks took 44 seconds per arm when measured, and a real export carries far
+    more peaks than that.
+    """
+    z = probe.get("charge")
+    if z:
+        buckets = [index[z]] if z in index else []
+    else:
+        # match_one skips the charge test when the target carries no charge, so
+        # such a probe can match a peak at any charge.
+        buckets = list(index.values())
+    half = ppm_tol * probe["mz"] / 1e6
+    lo, hi = probe["mz"] - half, probe["mz"] + half
+    out = []
+    for rows, mzs in buckets:
+        i = bisect.bisect_left(mzs, lo)
+        while i < len(mzs) and mzs[i] <= hi:
+            out.append(rows[i])
+            i += 1
+    return out
+
+
+def probe_direction(probes, prows, ppm_tol, rt_tol, drift_tol, use_drift,
+                    min_scans, index=None):
+    """For each probe, the peak in its window nearest in ppm.
 
     Calls match_one -- the same function the annotation loop calls -- with the
     probe as a one-element target list. The window is therefore identical by
     construction rather than by inspection.
+
+    Nearest in ppm, not first seen: that is the annotation loop's own tie-break,
+    and it makes the answer independent of the order peaks arrive in. Taking the
+    first made `distinct_peaks_matched` depend on input order once the candidate
+    index reordered them.
     """
+    if index is None:
+        index = index_peaks(prows)
     k = 0
     matched_peaks = set()
     hits = []
     for p in probes:
-        found = None
-        for pk in prows:
+        best = None
+        for pk in candidates(index, p, ppm_tol):
             if pk["n_scans"] is not None and pk["n_scans"] < min_scans:
                 continue          # would have been rejected as a real ion too
-            if match_one(pk["mz"], pk["z"], pk["rt"], pk["drift"], [p],
-                         ppm_tol, rt_tol, drift_tol, use_drift):
-                found = pk
-                break
-        if found is not None:
+            if not match_one(pk["mz"], pk["z"], pk["rt"], pk["drift"], [p],
+                             ppm_tol, rt_tol, drift_tol, use_drift):
+                continue
+            d = ppm(pk["mz"], p["mz"])
+            if best is None or d < best[0]:
+                best = (d, pk)
+        if best is not None:
             k += 1
-            matched_peaks.add(found["i"])
-            hits.append((p, found))
+            matched_peaks.add(best[1]["i"])
+            hits.append((p, best[1]))
     return k, len(matched_peaks), hits
 
 
@@ -452,6 +517,8 @@ def run_control(peaks, targets, seqs, ppm_tol, rt_tol, drift_tol, use_drift, min
                            "spread_ppm": spread},
            "arms": {}}
 
+    index = index_peaks(prows)
+
     def arm(name, probes, excluded, note=None):
         if not probes:
             rep["arms"][name] = {"arm": name, "queried": 0, "matched": 0,
@@ -460,7 +527,7 @@ def run_control(peaks, targets, seqs, ppm_tol, rt_tol, drift_tol, use_drift, min
                                  "no probe survived construction"}
             return
         k, ndist, hits = probe_direction(probes, prows, ppm_tol, rt_tol,
-                                         drift_tol, use_drift, min_scans)
+                                         drift_tol, use_drift, min_scans, index)
         lo, hi = wilson(k, len(probes))
         rep["arms"][name] = {"arm": name, "queried": len(probes), "matched": k,
                              "rate": k / len(probes), "ci": [lo, hi],

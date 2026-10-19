@@ -887,7 +887,97 @@ def case_a_rate_below_chance_is_declared(tmp):
     return bad
 
 
-CASES = [case_a_sparse_table_says_clearing_the_bar_means_little,
+def case_the_candidate_index_changes_no_answer(tmp):
+    """The m/z index is a speed fix, and a speed fix that narrows the window
+    would be the worst possible bug here: the control would report a rate for a
+    window narrower than the one the annotation uses, and it would report it as
+    an improvement.
+
+    So this compares the indexed path against a brute-force scan over every
+    peak, on randomised data with deliberate near-misses straddling the window
+    edge, and requires the same k, the same distinct-peak count and the same
+    peak chosen for every probe.
+    """
+    import random
+    bad = []
+    rnd = random.Random(7)
+    for trial, (ppm_tol, rt_tol, use_drift) in enumerate(
+            [(10.0, None, False), (10.0, 0.3, False), (25.0, 0.3, True),
+             (5.0, None, True)]):
+        prows, probes = [], []
+        for i in range(400):
+            prows.append({"i": i, "mz": 400 + rnd.random() * 700,
+                          "z": rnd.choice([2, 2, 3]), "rt": rnd.random() * 40,
+                          "drift": rnd.random() * 100,
+                          "n_scans": rnd.choice([1, 2, 7])})
+        for j in range(120):
+            pr = {"mz": 400 + rnd.random() * 700, "charge": rnd.choice([2, 3]),
+                  "rt": rnd.random() * 40, "drift": rnd.random() * 100}
+            probes.append(pr)
+        # Clusters of peaks inside ONE window, so a probe has several candidates
+        # and "nearest in ppm" is distinguishable from "first in the bucket".
+        base_i = len(prows)
+        for c in range(25):
+            mz0 = 500 + c * 7.0
+            for d in range(4):
+                prows.append({"i": base_i + c * 4 + d,
+                              "mz": mz0 * (1 + (d - 1.5) * 0.4 * ppm_tol / 1e6),
+                              "z": 2, "rt": 12.0, "drift": 50.0, "n_scans": 7})
+            probes.append({"mz": mz0, "charge": 2, "rt": 12.0, "drift": 50.0})
+
+        # Probes sitting exactly on, just inside and just outside the edge, which
+        # is where an off-by-one in the bisect bound would show.
+        for pk in prows[:40]:
+            for mult in (0.0, 0.5, 0.999, 1.0, 1.001, 1.5):
+                off = mult * ppm_tol * pk["mz"] / 1e6
+                probes.append({"mz": pk["mz"] + off, "charge": pk["z"],
+                               "rt": pk["rt"], "drift": pk["drift"]})
+        # A probe with no charge: match_one skips the charge test for it, so it
+        # can match a peak at ANY charge and the index must search every bucket.
+        for pk in prows[:25]:
+            probes.append({"mz": pk["mz"], "charge": None, "rt": pk["rt"],
+                           "drift": pk["drift"]})
+
+        def brute(p):
+            best = None
+            for pk in prows:
+                if pk["n_scans"] is not None and pk["n_scans"] < 2:
+                    continue
+                if not pc.match_one(pk["mz"], pk["z"], pk["rt"], pk["drift"], [p],
+                                    ppm_tol, rt_tol, 10.0 if use_drift else None,
+                                    use_drift):
+                    continue
+                d = pc.ppm(pk["mz"], p["mz"])
+                if best is None or d < best[0]:
+                    best = (d, pk)
+            return None if best is None else best[1]["i"]
+
+        want = [brute(p) for p in probes]
+        k_want = sum(1 for w in want if w is not None)
+        k, ndist, hits = pc.probe_direction(
+            probes, prows, ppm_tol, rt_tol, 10.0 if use_drift else None,
+            use_drift, 2)
+        got = {id(p): pk["i"] for p, pk in hits}
+        if k != k_want:
+            bad.append("trial %d (ppm=%g rt=%s drift=%s): indexed k=%d,"
+                       " brute force k=%d" % (trial, ppm_tol, rt_tol, use_drift,
+                                              k, k_want))
+        mismatched = sum(1 for p, w in zip(probes, want)
+                         if got.get(id(p)) != w)
+        if mismatched:
+            bad.append("trial %d: %d probe(s) matched a different peak than the"
+                       " brute-force scan" % (trial, mismatched))
+        if ndist != len({w for w in want if w is not None}):
+            bad.append("trial %d: distinct-peak count %d, brute force %d"
+                       % (trial, ndist, len({w for w in want if w is not None})))
+        if k_want == 0:
+            bad.append("trial %d planted no matches at all, so it tests nothing"
+                       % trial)
+    return bad
+
+
+CASES = [case_the_candidate_index_changes_no_answer,
+         case_a_sparse_table_says_clearing_the_bar_means_little,
          case_a_planted_rate_is_recovered,
          case_a_window_that_does_not_discriminate_is_refused,
          case_the_same_window_is_used_as_the_match,
