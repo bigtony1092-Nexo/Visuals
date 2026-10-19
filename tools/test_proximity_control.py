@@ -1091,7 +1091,52 @@ def case_a_list_careless_about_its_modifications_is_declared(tmp):
     return bad
 
 
-CASES = [case_an_unrecorded_modification_is_kept_out_of_the_calibration,
+def case_the_calibration_is_this_run_not_the_consensus(tmp):
+    """The offset must come from the run's own peaks, not the target list.
+
+    Measured from the target list it cannot vary between runs by construction.
+    On 20 real PAX8 runs the first version returned the identical -1.401 ppm
+    twenty times and labelled it as each run's own, while the real per-run means
+    range from -2.307 to -0.537 ppm with a between-run SD of 0.502 -- so a
+    consensus figure mis-centres the probes by up to a ppm in the worst run.
+
+    Here one target list is matched against two peak tables sitting at different
+    offsets. The measured offset must follow the PEAKS.
+    """
+    bad = []
+    tg = targets_file(tmp, "t21.csv")          # targets at 0 ppm
+    seen = {}
+    for label, off in (("low", -8.0), ("high", +8.0)):
+        pk = peaks_file(tmp, "p21_%s.jsonl" % label, peaks_for(HUMAN, ppm_off=off))
+        rep, _ = control(tmp, pk, tg, ppm_tol=20.0, rt_tol=0.2)
+        seen[label] = rep["calibration"]["offset_ppm"]
+        if "matched peaks" not in (rep["calibration"].get("measured_from") or ""):
+            bad.append("%s: the calibration did not come from this run's matches"
+                       % label)
+        if seen[label] is None or abs(seen[label] - off) > 0.5:
+            bad.append("%s: peaks sit at %+.1f ppm, measured %s"
+                       % (label, off, seen[label]))
+    if seen["low"] is not None and seen["high"] is not None:
+        if abs(seen["high"] - seen["low"]) < 10.0:
+            bad.append("two runs 16 ppm apart gave offsets %s and %s: the"
+                       " calibration is not tracking the run"
+                       % (seen["low"], seen["high"]))
+    # With nothing matched there is no per-run estimate, and the report has to
+    # say the figure fell back to the consensus rather than present it as this
+    # run's.
+    far = peaks_file(tmp, "p21_far.jsonl",
+                     [{"mz": 2000.0, "charge": 2, "rt": 1.0, "drift": 1.0,
+                       "intensity": 1e5, "n_scans": 7}])
+    rep2, _ = control(tmp, far, tg, ppm_tol=10.0, rt_tol=0.2)
+    src = rep2["calibration"].get("measured_from") or ""
+    if "consensus" not in src:
+        bad.append("nothing matched and the fallback to the consensus figure was"
+                   " not declared: %r" % src)
+    return bad
+
+
+CASES = [case_the_calibration_is_this_run_not_the_consensus,
+         case_an_unrecorded_modification_is_kept_out_of_the_calibration,
          case_a_difference_that_matches_nothing_is_not_named,
          case_a_list_careless_about_its_modifications_is_declared,
          case_the_candidate_index_changes_no_answer,

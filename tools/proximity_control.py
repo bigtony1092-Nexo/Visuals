@@ -221,6 +221,41 @@ def calibration_offset(targets):
     return st.median(errs), len(errs), spread, excluded
 
 
+def calibration_from_matches(hits):
+    """Observed PEAK m/z minus sequence-calculated, from this run's own matches.
+
+    The quantity that matters is where this run's peaks sit relative to a
+    calculated mass, because that is the gap a calculated probe m/z has to
+    cross. Measuring it from the target list instead gives the offset of the
+    CONSENSUS, which cannot vary between runs -- on 20 real PAX8 runs it
+    returned the identical -1.401 ppm twenty times, labelled as each run's own.
+    The real per-run means range from -2.307 to -0.537 ppm with a between-run SD
+    of 0.502, so a consensus figure mis-centres the probes by up to a ppm in the
+    worst run.
+
+    Returns (offset_ppm, n_used, spread_ppm, excluded) like its fallback.
+    """
+    errs, excluded = [], []
+    for probe, peak in hits:
+        seq = probe.get("peptide")
+        if not seq or not probe.get("charge"):
+            continue
+        seq = str(seq).strip().upper()
+        calc = mz_of(seq, probe["charge"])
+        if calc is None:
+            continue
+        err = (peak["mz"] - calc) / calc * 1e6
+        if abs(err) > MAX_CALIBRATION_PPM:
+            delta = (peak["mz"] - calc) * probe["charge"]
+            excluded.append((seq, probe["charge"], delta, modification_like(delta)))
+            continue
+        errs.append(err)
+    if len(errs) < 3:
+        return None, len(errs), None, excluded
+    spread = st.median([abs(e - st.median(errs)) for e in errs]) * 1.4826
+    return st.median(errs), len(errs), spread, excluded
+
+
 def peak_rows(peaks):
     """Peaks reduced to what the window compares, with the scan count kept.
 
@@ -560,18 +595,11 @@ def run_control(peaks, targets, seqs, ppm_tol, rt_tol, drift_tol, use_drift, min
     mz_hi = max(p["mz"] for p in prows)
     charges = {p["z"] for p in prows}
     axes = axes_participating(targets, rt_tol, drift_tol, use_drift)
-    offset, n_off, spread, mod_excluded = calibration_offset(targets)
 
     rep = {"axes_matched": axes, "n_peaks_queryable": len(prows),
            "mz_range": [mz_lo, mz_hi], "charges_seen": sorted(charges),
            "min_scans": min_scans, "precursor_ppm": ppm_tol,
            "rt_tol": rt_tol, "drift_tol": drift_tol if use_drift else None,
-           "calibration": {"offset_ppm": offset, "n_targets_used": n_off,
-                           "spread_ppm": spread,
-                           "excluded_unrecorded_modification": [
-                               {"peptide": seq, "charge": z, "delta_da": d,
-                                "looks_like": name}
-                               for seq, z, d, name in mod_excluded]},
            "arms": {}}
 
     index = index_peaks(prows)
@@ -590,16 +618,70 @@ def run_control(peaks, targets, seqs, ppm_tol, rt_tol, drift_tol, use_drift, min
                              "rate": k / len(probes), "ci": [lo, hi],
                              "distinct_peaks_matched": ndist,
                              "excluded": excluded, "axes_matched": axes,
-                             "strata": strata(probes, hits), "note": note}
+                             "strata": strata(probes, hits), "note": note,
+                             # Dropped before the report is written; the
+                             # calibration needs the matched pairs.
+                             "_hits": hits}
 
     arm("target", [dict(t) for t in targets if t.get("charge")],
         {"no_charge": sum(1 for t in targets if not t.get("charge"))})
+
+    # The calibration comes from the target arm's own matches, so it is this
+    # run's offset and not the consensus list's. Falling back to the target list
+    # only when nothing matched, which is a state the report names.
+    # Two separate facts, and both are wanted.
+    #
+    # Which targets contradict their own sequence is a property of the LIST, so
+    # it is audited against the list and reported whether or not those targets
+    # matched anything here. Deriving it from the matches instead would hide
+    # every bad target that found no peak -- which it did, until three cases
+    # written for the audit failed.
+    _, _, _, mod_excluded = calibration_offset(targets)
+    # The offset actually applied to the probes is a property of THIS RUN, so it
+    # comes from this run's own matched peaks.
+    t_hits = rep["arms"]["target"].get("_hits") or []
+    offset, n_off, spread, _ = calibration_from_matches(t_hits)
+    cal_source = "this run's matched peaks"
+    if offset is None:
+        offset, n_off, spread, _ = calibration_offset(targets)
+        cal_source = ("the target list's own coordinates, because fewer than 3"
+                      " targets with a sequence matched a peak in this run --"
+                      " a consensus figure, identical for every run")
+    rep["calibration"] = {"offset_ppm": offset, "n_targets_used": n_off,
+                          "spread_ppm": spread, "measured_from": cal_source,
+                          "excluded_unrecorded_modification": [
+                              {"peptide": seq, "charge": z, "delta_da": d,
+                               "looks_like": name}
+                              for seq, z, d, name in mod_excluded]}
+
     ep, eex = build_entrapment(seqs or [], targets, offset, mz_lo, mz_hi, ppm_tol, charges)
     arm("entrapment", ep, eex,
         None if seqs else "no entrapment sequences were supplied")
     cp, cex = build_calc_target(targets, mz_lo, mz_hi, charges,
                                 skip=[(seq, z) for seq, z, _, _ in mod_excluded])
     arm("calc_target", cp, cex)
+    # The same targets on their OBSERVED m/z, so the calculated-coordinate
+    # penalty is a difference over one set of probes. The target arm's own rate
+    # cannot serve: it is computed over every target with a charge, while this
+    # arm drops those with no sequence, outside the range, or contradicting
+    # their own mass -- on 20 real PAX8 runs that was 542 probes against 900,
+    # and comparing the two rates compared different populations.
+    if cp:
+        obs = []
+        for pr in cp:
+            t = next((t for t in targets
+                      if (t.get("peptide") or "").strip().upper() == pr["peptide"]
+                      and t.get("charge") == pr["charge"]), None)
+            if t:
+                obs.append({"mz": t["mz"], "charge": t["charge"], "rt": t.get("rt"),
+                            "drift": t.get("drift"), "peptide": pr["peptide"]})
+        if obs:
+            k_o, _, _ = probe_direction(obs, prows, ppm_tol, rt_tol, drift_tol,
+                                        use_drift, min_scans, index)
+            lo_o, hi_o = wilson(k_o, len(obs))
+            rep["arms"]["calc_target"]["paired_observed"] = {
+                "queried": len(obs), "matched": k_o, "rate": k_o / len(obs),
+                "ci": [lo_o, hi_o]}
     if "rt" in axes or "drift" in axes:
         sp, sex = build_swap(targets, rt_tol, drift_tol, use_drift)
         arm("swap", sp, sex)
@@ -622,6 +704,8 @@ def run_control(peaks, targets, seqs, ppm_tol, rt_tol, drift_tol, use_drift, min
         prows, ent_probes, ppm_tol, rt_tol, axes)
     rep["cohort_false_rate"] = rep["arms"]["entrapment"]["rate"]
     rep["findings"] = findings(rep)
+    for a in rep["arms"].values():
+        a.pop("_hits", None)
     return rep, None
 
 
@@ -662,13 +746,16 @@ def findings(rep):
                    " is an ion whose stated sequence does not match its stated mass."
                    % (len(mx), n_seq,
                       ", ".join(sorted({e["looks_like"] or "unexplained" for e in mx}))))
-    if t.get("queried") and c.get("queried") and t["rate"] and c["rate"] is not None:
-        if c["rate"] < 0.75 * t["rate"]:
-            out.append("The same targets queried on CALCULATED m/z match at %.1f%%"
-                       " against %.1f%% on observed m/z. That gap is the price of a"
+    # Compared against the SAME probes on their observed m/z, never against the
+    # target arm, whose population differs.
+    po = (c or {}).get("paired_observed") or {}
+    if c.get("queried") and po.get("queried") and po.get("rate"):
+        if c["rate"] < 0.75 * po["rate"]:
+            out.append("The same %d target(s) match at %.1f%% on CALCULATED m/z against"
+                       " %.1f%% on their observed m/z. That gap is the price of a"
                        " calculated coordinate, not a property of the window, and the"
                        " entrapment arm pays it too: its %s is a floor."
-                       % (100 * c["rate"], 100 * t["rate"],
+                       % (po["queried"], 100 * c["rate"], 100 * po["rate"],
                           "rate" if e["rate"] is None else "%.1f%%" % (100 * e["rate"])))
     if e.get("queried") and e["queried"] < MIN_CONTROL_PROBES:
         lo, hi = e["ci"]
@@ -744,8 +831,9 @@ def render(rep):
                    % cal["n_targets_used"])
     else:
         out.append("  calibration: observed - calculated = %+.2f ppm (n=%d, spread %.2f),"
-                   " applied to every probe"
+                   " applied to every probe,"
                    % (cal["offset_ppm"], cal["n_targets_used"], cal["spread_ppm"]))
+        out.append("  measured from %s" % cal.get("measured_from", "unstated"))
     out.append("")
     out.append("  %-12s %7s %7s %8s %18s %18s" %
                ("arm", "probes", "hit", "rate", "95% CI", "target:probe"))
