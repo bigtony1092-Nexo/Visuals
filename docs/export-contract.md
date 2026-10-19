@@ -125,11 +125,34 @@ runtime guess. Keyed the same way as `instrument_tolerance.py`'s
 | `pass2_confirmed` | Pass2 targeting, decoy-controlled | yes |
 | `atlas_consensus` | holds across samples in the Atlas | yes |
 
-`bare_proximity` is the `direct_match_results.csv` tier from
-`match_targets_spatial_in_cube()`. The same bare precursor-proximity mechanism passed
-reversed-tryptic decoys at **33–70%** elsewhere in this project. It is useful for ranking
-and for exploration; it is not evidence, and `tier_policy.mix_tiers` defaults to `false`
-so a panel refuses rather than quietly blending it with a validated tier.
+`bare_proximity` is the tier every ion falls to when nothing decoy-controlled scored it,
+so it admits more ions than the other two combined. **Its false-positive rate is measured
+on each run and carried in the export**, not assumed: `tools/proximity_control.py` queries
+peptides that cannot be in the sample through the same `match_one()` the annotation uses,
+and reports what share of them find a peak anyway. `manifest.proximity_control` holds the
+cohort result; every annotated `bare_proximity` ion carries its own m/z stratum's rate in
+`confidence.control`. `validate_export` rejects an export whose annotated
+`bare_proximity` ions carry no control, or whose entrapment interval overlaps the target
+interval — a bar a decoy clears is not a bar.
+
+`decoy_controlled` stays `false` for the tier regardless. Knowing how often the *window*
+is wrong is a property of the window, not of any one ion, and an ion claiming otherwise
+is still an error.
+
+The tier is useful for ranking and for exploration; on its own it is not evidence, and
+`tier_policy.mix_tiers` defaults to `false` so a panel refuses rather than quietly
+blending it with a validated tier.
+
+**What this replaced, and why.** Until now this section said the same bare mechanism
+"passed reversed-tryptic decoys at 33–70% elsewhere in this project". That sentence was
+wrong twice over. It described `match_targets_spatial_in_cube()`, the retired cube pathway
+(see section 11) — not MARCH, which is what runs. And reversed-tryptic decoys cannot
+measure a precursor m/z window at all: reversing a peptide permutes its residues and so
+preserves its monoisotopic mass **exactly**, which makes a reversed decoy match an m/z
+window 100% by construction. Whatever the 33–70% measured, it was not this window. That is
+why the control here uses entrapment — real peptides from an organism that is not in the
+sample, which have different masses on the same peptide lattice. `docs/proximity-control.md`
+is the full account.
 
 ## 5. Quant: Top3avg
 
@@ -338,8 +361,10 @@ Worth asking, and easy to answer wrongly. The defaults enforce the honest versio
   column and loading, score near-perfectly, and tell you nothing about cell line.
 - **`within_stratum_only`** also runs the test inside one vendor+method stratum. If
   accuracy collapses there, the signal was acquisition.
-- **`min_tier: pass2_confirmed`**: a classifier fed a tier that admits decoys at 33–70%
-  learns the noise.
+- **`min_tier: pass2_confirmed`**: a classifier fed a tier whose false-positive rate is
+  whatever `manifest.proximity_control` measured — and which is not decoy-controlled on
+  the individual ion — learns that rate as signal. Read the rate before lowering the
+  floor; do not assume it is small because it came out small on another run.
 - **≥2 batches per class.** `plan_panels.py` blanks the panel otherwise, because the
   question is unanswerable from that design — not because the code failed.
 

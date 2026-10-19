@@ -131,8 +131,24 @@ An ion that fails the scan-count requirement, the q-value cut, `--drop-z1` or
 not sit in `ions.jsonl` under a tier whose evidence it lacks. If nothing
 survives, that is a gate: there is nothing to export, check or draw.
 
-When **every** exported ion is `bare_proximity`, the run says so — that bare
-mechanism passed reversed-tryptic decoys at 33–70% elsewhere in this project.
+When **every** exported ion is `bare_proximity`, the run says so, and says what that
+window's false-positive rate measured **on this run** — or says plainly that it was
+not measured, which is what happens without `--entrapment`. Stage 3b runs the control:
+it queries peptides that cannot be in the sample through the same match function and
+reports the share that find a peak anyway, beside the same rate for the real targets
+computed in the same direction. A probe rate alone is not readable; on a thin peak table
+every rate is zero.
+
+The control corrects for the one bias that would otherwise make it unfalsifiable. A
+target's m/z is **observed** (`make_targets.py` joins a search to a feature table
+precisely to get it), while an entrapment probe's m/z must be **calculated**. This
+project has a documented live offset — 1.570 ppm, 24 of 24 runs below zero
+(`docs/atlas-convergence.md`) — and against a 10 ppm window that offset alone would
+depress the probe rate for a reason having nothing to do with the window. So the offset
+is measured from the targets that carry a sequence, applied to every probe, and
+reported; a second arm then queries the real targets on *calculated* m/z to bound what
+correction is left. `docs/proximity-control.md` has the arms, the refusals, and why
+reversed-tryptic decoys could never have measured this window.
 
 ### ion_uid
 

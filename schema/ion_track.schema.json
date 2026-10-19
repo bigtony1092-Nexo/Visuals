@@ -363,7 +363,7 @@
             "pass2_confirmed",
             "atlas_consensus"
           ],
-          "description": "bare_proximity = ppm window + >=2 consecutive scans, no MS2, no decoy test (the same bare mechanism that passed reversed-tryptic decoys at 33-70% elsewhere in this project). pass2_confirmed = decoy-controlled Pass2 targeting. atlas_consensus = held across samples in the Atlas."
+          "description": "bare_proximity = ppm window + >=2 consecutive scans, no MS2, no decoy test. Its false-positive rate is not assumed: `control` carries the rate measured on THIS run by tools/proximity_control.py, and an export whose bare_proximity ions carry no control is rejected. pass2_confirmed = decoy-controlled Pass2 targeting. atlas_consensus = held across samples in the Atlas."
         },
         "decoy_controlled": {
           "type": "boolean"
@@ -385,6 +385,71 @@
             "string",
             "null"
           ]
+        },
+        "control": {
+          "type": "object",
+          "description": "Required when tier is bare_proximity. The measured false-positive rate of the window that admitted this ion, from querying coordinates that cannot be right through the same match function. Without it the tier is a confidence label with no measurement behind it. The rate here is for this ion's m/z stratum, not the cohort: crowding is not uniform across the m/z range, and one cohort number stamped on every ion is the same constant repeated. The cohort number lives in the manifest.",
+          "required": [
+            "arm",
+            "axes_matched",
+            "queried",
+            "matched"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "arm": {
+              "type": "string",
+              "description": "How the probe coordinates were built. `entrapment` = peptides that cannot be in the sample, at their own calculated m/z on a real target's charge and coordinates, corrected by the run's measured observed-minus-calculated offset. Reversed-tryptic decoys cannot appear here: reversal permutes residues and so preserves the peptide's mass exactly, which makes a reversed decoy match an m/z window 100% by construction."
+            },
+            "axes_matched": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "The axes the window actually compared, which is not the same as the axes the ion carries. --rt-tol has no default and a target list may carry rt_lo/rt_hi rather than an rt; in either case retention time is carried and never matched, and the rate is a global m/z-crowding rate rather than a rate at an occupied address. A rate that named a coordinate it did not match on would be a different quantity from the one it claims."
+            },
+            "queried": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Probes in this ion's m/z stratum. The counts are stored rather than the rate alone, because a rate without its denominator cannot be given an interval or audited, and this project has already corrected one derivation that hung on an unstated denominator."
+            },
+            "matched": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Of those probes, how many found a peak in the window that also cleared the consecutive-scan floor. A probe hit that would have been rejected as a real ion is not a false positive."
+            },
+            "stratum_false_rate": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "description": "matched/queried for this stratum. Null when nothing was queried, never zero: an unmeasured rate and a measured zero are different claims."
+            },
+            "stratum_ci": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 2,
+              "description": "95% Wilson score interval on stratum_false_rate. Wilson rather than Wald because k=0 is the expected outcome here and the most dangerous one, and Wald is wrong there."
+            },
+            "mz_lo": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "mz_hi": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          }
         }
       }
     },

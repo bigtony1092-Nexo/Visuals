@@ -17,6 +17,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 TOOL = ROOT / "tools" / "merge_exports.py"
+sys.path.insert(0, str(ROOT / "tools"))
+from ladder_stats import wilson  # noqa: E402
 
 
 def run(out, *dirs):
@@ -53,8 +55,27 @@ def ion(uid, sid, pep="LSIDSQSSSSGPR", z=2, tier="pass2_confirmed",
                                                          "drift": drift}}]}
 
 
+def control(ppm=10.0, rt_tol=0.5, axes=("mz", "charge", "rt"),
+            ent=(0, 40), tgt=(38, 40)):
+    """A proximity_control block in the shape aria_run writes."""
+    def arm(name, k_n):
+        k, n = k_n
+        lo, hi = wilson(k, n)
+        return {"arm": name, "queried": n, "matched": k, "rate": k / n,
+                "ci": [lo, hi], "distinct_peaks_matched": k,
+                "axes_matched": list(axes), "excluded": {}, "strata": []}
+    return {"axes_matched": list(axes), "precursor_ppm": ppm, "rt_tol": rt_tol,
+            "drift_tol": None, "min_scans": 2, "n_peaks_queryable": 100,
+            "mz_range": [400.0, 1200.0], "charges_seen": [2],
+            "calibration": {"offset_ppm": -0.8, "n_targets_used": 40,
+                            "spread_ppm": 2.1},
+            "arms": {"entrapment": arm("entrapment", ent),
+                     "target": arm("target", tgt)},
+            "cohort_false_rate": ent[0] / ent[1], "findings": []}
+
+
 def export(tmp, name, ions, kind="ion_mobility", method="HDMSE", warnings=(),
-           traces=None):
+           traces=None, proximity_control=None):
     d = Path(tmp) / name
     d.mkdir(parents=True, exist_ok=True)
     sids = sorted({i["sample_id"] for i in ions})
@@ -72,6 +93,8 @@ def export(tmp, name, ions, kind="ion_mobility", method="HDMSE", warnings=(),
            "counts": {"ions_total": len(ions), "ions_exported": len(ions),
                       "by_tier": tiers},
            "warnings": list(warnings)}
+    if proximity_control is not None:
+        man["proximity_control"] = proximity_control
     (d / "manifest.json").write_text(json.dumps(man))
     (d / "ions.jsonl").write_text("".join(json.dumps(i) + "\n" for i in ions))
     if traces:
@@ -223,7 +246,73 @@ def case_resolvability_needs_an_identity_and_a_charge(tmp):
     return bad
 
 
-CASES = [case_recurrence_is_reported_not_promoted,
+def case_controls_pool_only_when_the_window_is_the_same(tmp):
+    """The bare_proximity false-positive rate is a property of a WINDOW.
+
+    Summing probe counts across runs is legitimate when every run queried the
+    same window -- they are independent Bernoulli trials against one definition.
+    Runs with different tolerances, or one that compared retention time and one
+    that did not, measured different things, and their sum would be a rate for a
+    window nobody ran.
+    """
+    bad = []
+    a = export(tmp, "pc_a", [ion("a" * 16, "S1")], proximity_control=control())
+    b = export(tmp, "pc_b", [ion("b" * 16, "S2")], proximity_control=control())
+    rc, out, man = run(Path(tmp) / "pc_same", a, b)
+    pc = man.get("proximity_control")
+    if not pc:
+        bad.append("two runs with the same window produced no pooled control")
+    else:
+        e = pc["arms"]["entrapment"]
+        if (e["queried"], e["matched"]) != (80, 0):
+            bad.append("pooled entrapment is %d/%d, expected 0/80"
+                       % (e["matched"], e["queried"]))
+        if pc["arms"]["target"]["queried"] != 80:
+            bad.append("the target comparator did not pool with it")
+        if sorted(pc.get("pooled_from") or []) != ["pc_a", "pc_b"]:
+            bad.append("the pooled block does not name the runs it came from")
+
+    # Different window: must refuse, and say which runs disagreed.
+    c = export(tmp, "pc_c", [ion("c" * 16, "S3")],
+               proximity_control=control(ppm=20.0))
+    rc2, out2, man2 = run(Path(tmp) / "pc_diff", a, c)
+    if man2.get("proximity_control") is not None:
+        bad.append("runs with different precursor_ppm were pooled anyway")
+    if "DIFFERENT windows" not in out2:
+        bad.append("pooling was refused without saying the windows differed")
+
+    # Different axes is the same problem, and the easier one to miss.
+    d = export(tmp, "pc_d", [ion("d" * 16, "S4")],
+               proximity_control=control(axes=("mz", "charge")))
+    rc3, out3, man3 = run(Path(tmp) / "pc_axes", a, d)
+    if man3.get("proximity_control") is not None:
+        bad.append("a run that never compared rt was pooled with one that did")
+    return bad
+
+
+def case_a_run_with_no_control_leaves_the_cohort_without_one(tmp):
+    """A cohort rate cannot be assembled from runs that did not measure one.
+
+    Inventing one from the runs that did would report the measured runs' window
+    as the cohort's, which is how the borrowed 33-70% got into this project in
+    the first place.
+    """
+    bad = []
+    a = export(tmp, "nc_a", [ion("a" * 16, "S1")], proximity_control=control())
+    b = export(tmp, "nc_b", [ion("b" * 16, "S2")])          # never measured
+    rc, out, man = run(Path(tmp) / "nc_out", a, b)
+    if man.get("proximity_control") is not None:
+        bad.append("a cohort control was assembled although one run measured none")
+    if "carry no measured" not in out:
+        bad.append("the merge did not say which run carried no measured rate")
+    if "nc_b" not in out:
+        bad.append("the warning does not name the run that was missing it")
+    return bad
+
+
+CASES = [case_controls_pool_only_when_the_window_is_the_same,
+         case_a_run_with_no_control_leaves_the_cohort_without_one,
+         case_recurrence_is_reported_not_promoted,
          case_one_sample_id_two_acquisitions_is_refused,
          case_a_uid_collision_is_a_finding,
          case_mixed_drift_kinds_are_declared,

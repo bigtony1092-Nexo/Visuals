@@ -41,10 +41,13 @@ and may carry: drift, n_scans, score, score_kind, q_value, one_over_k0, ccs,
 peptide, protein, seq_start, mods.
 
 Tiers are not negotiable. An m/z window plus two consecutive scans is
-bare_proximity and nothing more -- that bare mechanism passed reversed-tryptic
-decoys at 33-70% elsewhere in this project. pass2_confirmed requires a
-decoy-controlled score under a declared cut. atlas_consensus requires agreement
-ACROSS samples, which a single-run spine cannot observe, so it never assigns it.
+bare_proximity and nothing more, and how often that window is wrong is MEASURED
+on each run rather than assumed: --entrapment queries peptides that cannot be in
+the sample through the same match function and stage 3b reports the rate. Without
+that list the rate is not measured, the tier carries no number, and
+validate_export rejects the export. pass2_confirmed requires a decoy-controlled
+score under a declared cut. atlas_consensus requires agreement ACROSS samples,
+which a single-run spine cannot observe, so it never assigns it.
 
 Exit status 0 when every stage that had inputs ran and passed, 1 when a gate
 failed or a stage reported findings, 2 when a stage could not be run at all.
@@ -514,6 +517,47 @@ def ppm(a, b):
     return abs(a - b) / b * 1e6
 
 
+def match_one(mz, z, rt, dr, targets, precursor_ppm, rt_tol, drift_tol, use_drift):
+    """Every target whose window contains this coordinate.
+
+    The ONLY place the match window is defined. The proximity control measures
+    its false-positive rate by calling this function, not a copy of it: a second
+    implementation would measure a different window, and the rate would then
+    describe code that never ran on the data.
+    """
+    hits = []
+    for t in targets:
+        if t["charge"] and t["charge"] != z:
+            continue
+        if ppm(mz, t["mz"]) > precursor_ppm:
+            continue
+        if rt_tol is not None and t["rt"] is not None and abs(rt - t["rt"]) > rt_tol:
+            continue
+        if use_drift and t["drift"] is not None and dr is not None \
+                and abs(dr - t["drift"]) > drift_tol:
+            continue
+        hits.append(t)
+    return hits
+
+
+def axes_participating(targets, rt_tol, drift_tol, use_drift):
+    """Which axes actually constrained anything, as opposed to being carried.
+
+    Two separate ways an axis sits out, and both have bitten this project:
+    the tolerance was never passed (--rt-tol has no default), or the target
+    column is null for every target (the shipped PAX8 list carries rt_lo and
+    rt_hi, neither of which is an `rt`). Either way the window is narrower than
+    its description, so anything reporting a rate "at a retention time" has to
+    name the axes that were really compared.
+    """
+    axes = ["mz", "charge"]
+    if rt_tol is not None and any(t.get("rt") is not None for t in targets):
+        axes.append("rt")
+    if use_drift and drift_tol is not None and any(t.get("drift") is not None for t in targets):
+        axes.append("drift")
+    return axes
+
+
 def tier_of(row, q_cut):
     """What the evidence on THIS row supports. Nothing more.
 
@@ -563,18 +607,8 @@ def stage_annotate(run, peaks, targets, vendor_rec, args):
             no_charge += 1
             unassigned += 1
             continue
-        hits = []
-        for t in targets:
-            if t["charge"] and t["charge"] != z:
-                continue
-            if ppm(mz, t["mz"]) > args.precursor_ppm:
-                continue
-            if args.rt_tol is not None and t["rt"] is not None and abs(rt - t["rt"]) > args.rt_tol:
-                continue
-            if use_drift and t["drift"] is not None and dr is not None \
-                    and abs(dr - t["drift"]) > args.drift_tol:
-                continue
-            hits.append(t)
+        hits = match_one(mz, z, rt, dr, targets, args.precursor_ppm,
+                         args.rt_tol, args.drift_tol, use_drift)
         if not hits:
             row["_match"] = None
             unassigned += 1
@@ -642,7 +676,78 @@ def looks_like_peg(mz, z):
     return k >= 3 and abs(neutral - k * PEG_SPACING) < PEG_TOL * z
 
 
-def stage_ionlist(run, peaks, vendor_rec, args, out_dir):
+def stage_control(run, peaks, targets, vendor_rec, args):
+    """Measure what share of coordinates that cannot be right still find a peak.
+
+    This runs in its own pass over a probe list that is never added to
+    `targets`, so a probe cannot win a peak from a real target on the
+    nearest-in-ppm tie-break and an entrapment sequence cannot reach the ion
+    list through the annotation path.
+    """
+    # Imported here, not at module scope: proximity_control imports match_one
+    # from this module, so a top-level import back would be a cycle. By the time
+    # a stage runs, this module is fully loaded.
+    import proximity_control
+    run.banner("3b CONTROL  measure the bare_proximity window's false-positive rate")
+    use_drift = (vendor_rec["drift_kind"] == "ion_mobility" and args.drift_tol is not None)
+    if not args.entrapment:
+        print("  no --entrapment list, so the rate was NOT measured.")
+        run.warn("the bare_proximity window's false-positive rate was not measured:"
+                 " no --entrapment list was given. The tier is then a confidence"
+                 " label with nothing behind it, and validate_export rejects the"
+                 " export. Pass peptides that cannot be in this sample.")
+        run.skip("3b CONTROL  bare_proximity false-positive rate",
+                 "no --entrapment list, so there was nothing to query")
+        return None
+    # No path here stops the run. An unmeasured rate is a state the ion list
+    # records and validate_export refuses; stopping instead would hide both the
+    # ions and the reason the rate is missing, and stage 3 already treats "no
+    # peak carried a charge" as a tracked state rather than a failed match.
+    try:
+        seqs = proximity_control.load_sequences(args.entrapment)
+    except OSError as exc:
+        run.warn("the bare_proximity window's false-positive rate was NOT measured:"
+                 " could not read %s (%s)." % (args.entrapment, exc))
+        run.findings("3b CONTROL  bare_proximity false-positive rate",
+                     "could not read %s: %s" % (args.entrapment, exc))
+        return None
+    if not seqs:
+        run.warn("the bare_proximity window's false-positive rate was NOT measured:"
+                 " no usable peptide sequence in %s." % args.entrapment)
+        run.findings("3b CONTROL  bare_proximity false-positive rate",
+                     "no usable peptide sequence in %s, so the rate the tier needs"
+                     " could not be measured" % args.entrapment)
+        return None
+    rep, err = proximity_control.run_control(
+        peaks, targets, seqs, args.precursor_ppm, args.rt_tol, args.drift_tol,
+        use_drift, args.min_scans)
+    if rep is None:
+        print("  %s, so the rate was NOT measured." % err)
+        run.warn("the bare_proximity window's false-positive rate was NOT measured:"
+                 " %s." % err)
+        run.skip("3b CONTROL  bare_proximity false-positive rate", err)
+        return None
+    print(proximity_control.render(rep))
+    print()
+    for f in rep["findings"]:
+        run.warn("proximity control: %s" % f)
+    ok, why = proximity_control.discriminated(rep)
+    if ok:
+        run.ok("3b CONTROL  bare_proximity false-positive rate", why)
+    else:
+        # Not a stop. The rate is written either way and validate_export is what
+        # refuses the export; stopping here would hide the number that says why.
+        run.warn("the bare_proximity window did not separate real coordinates from"
+                 " ones that cannot be right: %s. The measured rate is written to"
+                 " the manifest and onto every bare_proximity ion, and"
+                 " validate_export rejects an export whose window did not"
+                 " discriminate." % why)
+        run.findings("3b CONTROL  bare_proximity false-positive rate", why)
+    return rep
+
+
+def stage_ionlist(run, peaks, vendor_rec, args, out_dir, control_rep=None):
+    import proximity_control                  # see the note in stage_control
     run.banner("4 IONLIST   write the annotated ion list")
     drift_kind = vendor_rec["drift_kind"]
     sample_id = args.sample_id or Path(args.raw).name
@@ -782,18 +887,25 @@ def stage_ionlist(run, peaks, vendor_rec, args, out_dir):
 
         inten = field(row, "intensity")
         rank = field(row, "cluster_rank")
+        confidence = {"tier": tier, "decoy_controlled": bool(decoy),
+                      "ppm_error": row.get("_ppm"), "score": score,
+                      "score_kind": ((kind or "") +
+                                     ("" if row.get("_n_candidates", 1) < 2
+                                      else " (%d candidates in window)"
+                                      % row["_n_candidates"])) or None}
+        if tier == "bare_proximity" and control_rep is not None:
+            # This ion's own m/z stratum. decoy_controlled stays false: knowing
+            # the window's false-positive rate is not the same as this ion having
+            # been scored against decoys, and the contract is right to refuse an
+            # ion that claims otherwise.
+            confidence["control"] = proximity_control.control_for_ion(control_rep, mz)
         rec = {"ion_uid": uid, "sample_id": sample_id, "coord": coord,
                "intensity": {"matched_intensity": None if inten is None else float(inten),
                              "summed_precursor_intensity": None,
                              "cluster_rank": None if rank is None else int(rank),
                              "n_consecutive_scans": n_scans},
                "annotation": annotation,
-               "confidence": {"tier": tier, "decoy_controlled": bool(decoy),
-                              "ppm_error": row.get("_ppm"), "score": score,
-                              "score_kind": ((kind or "") +
-                                             ("" if row.get("_n_candidates", 1) < 2
-                                              else " (%d candidates in window)"
-                                              % row["_n_candidates"])) or None},
+               "confidence": confidence,
                "provenance": {"source_file": src,
                               "vendor": vendor_rec["vendor"],
                               "acquisition_method": vendor_rec["acquisition_method"],
@@ -921,10 +1033,20 @@ def stage_ionlist(run, peaks, vendor_rec, args, out_dir):
                  " 1/K0 value, so every mobility panel plots an empty axis. The"
                  " extractor has the number; it is not reaching the peak list.")
     if tiers["bare_proximity"] == len(kept):
+        if control_rep is None:
+            rate = ("That window's false-positive rate was NOT measured on this run,"
+                    " so there is no number behind the tier")
+        else:
+            e = control_rep["arms"]["entrapment"]
+            rate = ("That window's measured false-positive rate on this run is"
+                    " %.1f%% (%d of %d entrapment probes, 95%% CI %.1f-%.1f%%)"
+                    % (100 * e["rate"], e["matched"], e["queried"],
+                       100 * e["ci"][0], 100 * e["ci"][1])) if e.get("queried") else (
+                   "No entrapment probe survived construction, so the window's"
+                   " false-positive rate was not measured")
         run.warn("every ion is bare_proximity: an m/z window plus %d consecutive"
-                 " scans, with no decoy control. That mechanism passed"
-                 " reversed-tryptic decoys at 33-70%% elsewhere in this project."
-                 % args.min_scans)
+                 " scans, with no decoy control on the individual ion. %s."
+                 % (args.min_scans, rate))
     run.ok("4 IONLIST   annotated ions", "%d ions, %d rejected" % (len(kept), len(rejected)))
     return kept, tiers, True
 
@@ -965,7 +1087,8 @@ def resolve_is_usable(path, args):
 
 # ----------------------------------------------------------------- 5 EXPORT
 
-def stage_export(run, ions, tiers, vendor_rec, args, out_dir, peaks_n):
+def stage_export(run, ions, tiers, vendor_rec, args, out_dir, peaks_n,
+                 control_rep=None):
     run.banner("5 EXPORT    manifest")
     sample_id = args.sample_id or Path(args.raw).name
     drift_kind = vendor_rec["drift_kind"]
@@ -1003,6 +1126,10 @@ def stage_export(run, ions, tiers, vendor_rec, args, out_dir, peaks_n):
                    "fragment_hits": False},
         "counts": {"ions_total": peaks_n, "ions_exported": len(ions),
                    "by_tier": dict(tiers)},
+        # The cohort rate lives here rather than on every ion, because it is one
+        # number for the whole run. Absent means it was not measured, which is a
+        # different claim from a measured zero.
+        "proximity_control": control_rep,
         "decimation": {"strategy": "none", "kept": len(ions), "of": peaks_n, "seed": 0},
         "warnings": list(run.warnings),
     }
@@ -1127,6 +1254,13 @@ def main(argv=None):
     p.add_argument("--drift-tol", type=float, help="drift tolerance, same units as drift")
     p.add_argument("--q-cut", type=float, default=DEFAULT_Q_CUT)
     p.add_argument("--min-scans", type=int, default=MIN_CONSECUTIVE_SCANS)
+    p.add_argument("--entrapment",
+                   help="peptides that CANNOT be in this sample (a FASTA, a sequence"
+                        " list, or a table with a peptide column). Queried through the"
+                        " same match function as the targets to measure the"
+                        " bare_proximity window's false-positive rate. Without it the"
+                        " tier carries no measurement and validate_export rejects the"
+                        " export.")
     p.add_argument("--drop-z1", action="store_true", help="drop singly charged peaks")
     p.add_argument("--drop-peg", action="store_true", help="drop the PEG lattice")
     p.add_argument("--sigma-drift", type=float, help="drift resolution scale for the chain")
@@ -1218,11 +1352,13 @@ def main(argv=None):
         if not stage_annotate(run, peaks, targets, vendor_rec, args):
             return finish(4)
 
-    ions, tiers, ok = stage_ionlist(run, peaks, vendor_rec, args, out_dir)
+    control_rep = stage_control(run, peaks, targets, vendor_rec, args) if targets else None
+
+    ions, tiers, ok = stage_ionlist(run, peaks, vendor_rec, args, out_dir, control_rep)
     if not ok:
         return finish(5)
 
-    stage_export(run, ions, tiers, vendor_rec, args, out_dir, len(peaks))
+    stage_export(run, ions, tiers, vendor_rec, args, out_dir, len(peaks), control_rep)
 
     stage_check(run, out_dir, args)
     stage_panels(run, args.method, out_dir)

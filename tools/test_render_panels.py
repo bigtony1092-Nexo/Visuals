@@ -187,12 +187,17 @@ def case_points_a_log_axis_cannot_show_are_counted(tmp):
     return bad
 
 
-def case_an_all_bare_page_carries_the_decoy_warning(tmp):
+def case_an_all_bare_page_says_whether_the_rate_was_measured(tmp):
+    """The caption used to quote 33-70% from elsewhere in this project, which
+    described retired code. It now reads the rate out of the export, so a page
+    built from an export that never measured it has to say so rather than
+    borrow a number from a different run."""
     d = export(tmp, "bare", [ion("j" * 16, tier="bare_proximity")])
     rc, out, html = render(d)
     bad = []
-    if "33-70%" not in html:
-        bad.append("an all-bare_proximity page does not carry the decoy rate")
+    if "was NOT measured on this" not in html:
+        bad.append("the export carries no proximity_control and the page did not"
+                   " say the window's false-positive rate was unmeasured")
     if "no decoy control" not in html:
         bad.append("does not say the tier is uncontrolled")
     return bad
@@ -741,7 +746,7 @@ CASES = [case_sonar_drift_is_never_labelled_mobility,
          case_mixed_drift_kinds_refuse_a_shared_axis,
          case_a_blank_panel_is_drawn_not_omitted,
          case_points_a_log_axis_cannot_show_are_counted,
-         case_an_all_bare_page_carries_the_decoy_warning,
+         case_an_all_bare_page_says_whether_the_rate_was_measured,
          case_mixed_tiers_are_marked_and_announced,
          case_quant_is_relative_unless_a_standard_was_declared,
          case_decimation_is_on_the_page,

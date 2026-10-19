@@ -20,6 +20,13 @@ What it will not do, because each would be a quiet lie:
   runs are not normalised to each other and the merge is not the place to decide
   how they should be.
 
+  Pool proximity controls measured through different windows. The bare_proximity
+  false-positive rate is a property of a window; summing probe counts from runs
+  that used different tolerances, or compared different axes, would report a rate
+  for a window that never existed. Where the windows agree the counts pool, which
+  is what independent Bernoulli trials on one window allow; where they differ the
+  merged manifest carries no control and says which runs disagreed.
+
   Declare a table it did not write. tables{} comes from the files produced.
 
 Exit 0 on a clean merge, 1 on a finding, 2 if nothing could be merged.
@@ -27,12 +34,109 @@ Exit 0 on a clean merge, 1 on a finding, 2 if nothing could be merged.
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from ladder_stats import wilson, katz_ratio  # noqa: E402
 
 TABLES = ("ions", "spectra", "traces", "proteins", "fragment_hits")
 SAMPLE_KEYS = ("vendor", "acquisition_method", "drift_kind", "has_ims",
                "search_engine", "batch", "sample_class")
+
+
+# The window a proximity control measured. Two runs whose controls differ on any
+# of these measured different things, and their counts do not add.
+WINDOW_KEYS = ("precursor_ppm", "rt_tol", "drift_tol", "min_scans")
+
+
+def _label_findings(have):
+    """One finding per text, naming the runs that raised it when not all did."""
+    seen = {}
+    for name, pc in have:
+        for f in (pc.get("findings") or []):
+            seen.setdefault(f, []).append(name)
+    out = []
+    for f, runs in sorted(seen.items()):
+        out.append(f if len(runs) == len(have)
+                   else "%s [%s]" % (f, ", ".join(sorted(runs))))
+    return out
+
+
+def pool_proximity_control(manifests):
+    """Sum the control arms across runs, or refuse and say why.
+
+    Pooling k and n across runs is legitimate only when every run queried the
+    SAME window: the arms are counts of independent Bernoulli trials against one
+    window definition. Different tolerances, or a run where retention time was
+    compared and another where it was not, make the sum a rate for a window
+    nobody ran. Returns (pooled_or_None, note).
+    """
+    have = [(Path(d).name, (m.get("proximity_control") or None)) for d, m in manifests]
+    missing = [n for n, pc in have if not pc]
+    if missing:
+        return None, ("%d of %d run(s) carry no measured bare_proximity"
+                      " false-positive rate (%s), so the cohort has none. A"
+                      " cohort rate cannot be assembled from runs that did not"
+                      " measure one."
+                      % (len(missing), len(have), ", ".join(sorted(missing))))
+    windows = {}
+    for n, pc in have:
+        key = (tuple(pc.get(k) for k in WINDOW_KEYS),
+               tuple(pc.get("axes_matched") or []))
+        windows.setdefault(key, []).append(n)
+    if len(windows) > 1:
+        detail = "; ".join(
+            "%s on %s" % (", ".join("%s=%s" % (k, v) for k, v in zip(WINDOW_KEYS, key[0]))
+                          + " over " + "/".join(key[1]), ", ".join(sorted(runs)))
+            for key, runs in windows.items())
+        return None, ("the runs measured their bare_proximity false-positive rate"
+                      " through DIFFERENT windows, so the counts do not add and the"
+                      " cohort carries no control: %s" % detail)
+
+    (window_key, axes), _ = next(iter(windows.items())), None
+    arms = {}
+    for _, pc in have:
+        for name, a in (pc.get("arms") or {}).items():
+            if not a.get("queried"):
+                continue
+            acc = arms.setdefault(name, {"arm": name, "queried": 0, "matched": 0,
+                                         "distinct_peaks_matched": 0})
+            acc["queried"] += a["queried"]
+            acc["matched"] += a["matched"]
+            acc["distinct_peaks_matched"] += a.get("distinct_peaks_matched") or 0
+    if not arms:
+        return None, ("no run queried a single probe, so there is nothing to pool."
+                      " That is not a cohort rate of zero.")
+    for a in arms.values():
+        lo, hi = wilson(a["matched"], a["queried"])
+        a["rate"] = a["matched"] / a["queried"]
+        a["ci"] = [lo, hi]
+        a["axes_matched"] = list(axes)
+    tgt = arms.get("target")
+    for name, a in arms.items():
+        a["ratio_vs_target"] = None if (name == "target" or not tgt) else katz_ratio(
+            tgt["matched"], tgt["queried"], a["matched"], a["queried"])
+    pooled = {"pooled_from": sorted(n for n, _ in have),
+              "axes_matched": list(axes), "arms": arms,
+              "cohort_false_rate": (arms["entrapment"]["rate"]
+                                    if "entrapment" in arms else None),
+              # Carried from the runs rather than recomputed: the strata are
+              # per-run m/z quartiles and do not align across runs, so a pooled
+              # stratum would be a different partition from any ion's own.
+              "per_run": {n: {"arms": {k: {"queried": v.get("queried"),
+                                           "matched": v.get("matched")}
+                                       for k, v in (pc.get("arms") or {}).items()},
+                              "calibration": pc.get("calibration")}
+                          for n, pc in have},
+              # Labelled by run, the same way this tool collapses warnings: a
+              # finding that says "on this run" is misleading in a cohort
+              # manifest unless it names which run raised it.
+              "findings": _label_findings(have)}
+    for k, v in zip(WINDOW_KEYS, window_key):
+        pooled[k] = v
+    return pooled, None
 
 
 def read_jsonl(path):
@@ -147,6 +251,9 @@ def main(argv=None):
             " observation atlas_consensus is about, but this merge does not assign"
             " the tier: how many samples and how close is a rule, and it is not"
             " in this tool." % len(recurring))
+    pooled_control, control_note = pool_proximity_control(manifests)
+    if control_note:
+        warnings.append(control_note)
     unassigned = sum(1 for r in rows["ions"] if not (r.get("annotation") or {}))
     if unassigned == len(rows["ions"]) and rows["ions"]:
         warnings.append(
@@ -169,6 +276,7 @@ def main(argv=None):
         "tables": dict(tables, spectrum_kinds=kinds),
         "counts": {"ions_total": total_before or len(rows["ions"]),
                    "ions_exported": len(rows["ions"]), "by_tier": tiers},
+        "proximity_control": pooled_control,
         "decimation": {"strategy": "none", "kept": len(rows["ions"]),
                        "of": total_before or len(rows["ions"]), "seed": 0},
         "warnings": warnings,

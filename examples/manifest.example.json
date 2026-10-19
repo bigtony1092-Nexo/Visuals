@@ -111,6 +111,331 @@
       "atlas_consensus": 1789
     }
   },
+  "proximity_control": {
+    "axes_matched": [
+      "mz",
+      "charge",
+      "rt"
+    ],
+    "n_peaks_queryable": 37,
+    "mz_range": [
+      444.2202085,
+      1514.2602085
+    ],
+    "charges_seen": [
+      2
+    ],
+    "min_scans": 2,
+    "precursor_ppm": 10.0,
+    "rt_tol": 0.5,
+    "drift_tol": null,
+    "calibration": {
+      "offset_ppm": -0.01020824527795548,
+      "n_targets_used": 36,
+      "spread_ppm": 0.05195540378318495
+    },
+    "arms": {
+      "target": {
+        "arm": "target",
+        "queried": 37,
+        "matched": 37,
+        "rate": 1.0,
+        "ci": [
+          0.9059421728185314,
+          1.0
+        ],
+        "distinct_peaks_matched": 37,
+        "excluded": {
+          "no_charge": 0
+        },
+        "axes_matched": [
+          "mz",
+          "charge",
+          "rt"
+        ],
+        "strata": [
+          {
+            "stratum": 0,
+            "mz_lo": 444.2202,
+            "mz_hi": 566.7671,
+            "queried": 9,
+            "matched": 9,
+            "rate": 1.0,
+            "ci": [
+              0.700854948272956,
+              1.0
+            ]
+          },
+          {
+            "stratum": 1,
+            "mz_lo": 570.3031,
+            "mz_hi": 626.8799,
+            "queried": 9,
+            "matched": 9,
+            "rate": 1.0,
+            "ci": [
+              0.700854948272956,
+              1.0
+            ]
+          },
+          {
+            "stratum": 2,
+            "mz_lo": 660.8231,
+            "mz_hi": 844.9155,
+            "queried": 9,
+            "matched": 9,
+            "rate": 1.0,
+            "ci": [
+              0.700854948272956,
+              1.0
+            ]
+          },
+          {
+            "stratum": 3,
+            "mz_lo": 851.4565,
+            "mz_hi": 1514.2602,
+            "queried": 10,
+            "matched": 10,
+            "rate": 1.0,
+            "ci": [
+              0.7224671969739421,
+              1.0
+            ]
+          }
+        ],
+        "note": null,
+        "ratio_vs_target": null
+      },
+      "entrapment": {
+        "arm": "entrapment",
+        "queried": 41,
+        "matched": 0,
+        "rate": 0.0,
+        "ci": [
+          0.0,
+          0.08566757142012449
+        ],
+        "distinct_peaks_matched": 0,
+        "excluded": {
+          "out_of_range": 1,
+          "unseen_charge": 0,
+          "self_match": 0,
+          "degenerate_with_a_target": 0,
+          "unmassable": 0
+        },
+        "axes_matched": [
+          "mz",
+          "charge",
+          "rt"
+        ],
+        "strata": [
+          {
+            "stratum": 0,
+            "mz_lo": 491.28999848479117,
+            "mz_hi": 510.27962829094037,
+            "queried": 10,
+            "matched": 0,
+            "rate": 0.0,
+            "ci": [
+              0.0,
+              0.2775328030260577
+            ]
+          },
+          {
+            "stratum": 1,
+            "mz_lo": 514.2927382499736,
+            "mz_hi": 537.2922230151893,
+            "queried": 10,
+            "matched": 0,
+            "rate": 0.0,
+            "ci": [
+              0.0,
+              0.2775328030260577
+            ]
+          },
+          {
+            "stratum": 2,
+            "mz_lo": 537.2922230151893,
+            "mz_hi": 608.8302172849119,
+            "queried": 10,
+            "matched": 0,
+            "rate": 0.0,
+            "ci": [
+              0.0,
+              0.2775328030260577
+            ]
+          },
+          {
+            "stratum": 3,
+            "mz_lo": 608.8302172849119,
+            "mz_hi": 1106.055622209113,
+            "queried": 11,
+            "matched": 0,
+            "rate": 0.0,
+            "ci": [
+              0.0,
+              0.25883296999442634
+            ]
+          }
+        ],
+        "note": null,
+        "ratio_vs_target": null
+      },
+      "calc_target": {
+        "arm": "calc_target",
+        "queried": 36,
+        "matched": 35,
+        "rate": 0.9722222222222222,
+        "ci": [
+          0.8583028121147521,
+          0.9950795929146393
+        ],
+        "distinct_peaks_matched": 35,
+        "excluded": {
+          "no_sequence": 1,
+          "out_of_range": 0,
+          "unseen_charge": 0
+        },
+        "axes_matched": [
+          "mz",
+          "charge",
+          "rt"
+        ],
+        "strata": [
+          {
+            "stratum": 0,
+            "mz_lo": 444.2202085,
+            "mz_hi": 566.7670985000001,
+            "queried": 9,
+            "matched": 9,
+            "rate": 1.0,
+            "ci": [
+              0.700854948272956,
+              1.0
+            ]
+          },
+          {
+            "stratum": 1,
+            "mz_lo": 570.3031235000001,
+            "mz_hi": 660.8231335,
+            "queried": 9,
+            "matched": 9,
+            "rate": 1.0,
+            "ci": [
+              0.700854948272956,
+              1.0
+            ]
+          },
+          {
+            "stratum": 2,
+            "mz_lo": 665.8229285000001,
+            "mz_hi": 851.4565035,
+            "queried": 9,
+            "matched": 8,
+            "rate": 0.8888888888888888,
+            "ci": [
+              0.565000291629209,
+              0.9801091125830901
+            ]
+          },
+          {
+            "stratum": 3,
+            "mz_lo": 859.9446435000001,
+            "mz_hi": 1514.2602085,
+            "queried": 9,
+            "matched": 9,
+            "rate": 1.0,
+            "ci": [
+              0.700854948272956,
+              1.0
+            ]
+          }
+        ],
+        "note": null,
+        "ratio_vs_target": [
+          0.9733175838542818,
+          1.0869619548883644
+        ]
+      },
+      "swap": {
+        "arm": "swap",
+        "queried": 37,
+        "matched": 0,
+        "rate": 0.0,
+        "ci": [
+          0.0,
+          0.09405782718146873
+        ],
+        "distinct_peaks_matched": 0,
+        "excluded": {
+          "no_distant_partner": 0,
+          "no_coordinate": 0
+        },
+        "axes_matched": [
+          "mz",
+          "charge",
+          "rt"
+        ],
+        "strata": [
+          {
+            "stratum": 0,
+            "mz_lo": 444.2202,
+            "mz_hi": 566.7671,
+            "queried": 9,
+            "matched": 0,
+            "rate": 0.0,
+            "ci": [
+              0.0,
+              0.2991450517270439
+            ]
+          },
+          {
+            "stratum": 1,
+            "mz_lo": 570.3031,
+            "mz_hi": 626.8799,
+            "queried": 9,
+            "matched": 0,
+            "rate": 0.0,
+            "ci": [
+              0.0,
+              0.2991450517270439
+            ]
+          },
+          {
+            "stratum": 2,
+            "mz_lo": 660.8231,
+            "mz_hi": 844.9155,
+            "queried": 9,
+            "matched": 0,
+            "rate": 0.0,
+            "ci": [
+              0.0,
+              0.2991450517270439
+            ]
+          },
+          {
+            "stratum": 3,
+            "mz_lo": 851.4565,
+            "mz_hi": 1514.2602,
+            "queried": 10,
+            "matched": 0,
+            "rate": 0.0,
+            "ci": [
+              0.0,
+              0.2775328030260577
+            ]
+          }
+        ],
+        "note": null,
+        "ratio_vs_target": null
+      }
+    },
+    "expected_by_chance": 1.63076608995498e-05,
+    "cohort_false_rate": 0.0,
+    "findings": [
+      "Chance alone would have put only 0.00163% of these probes on a peak, from this run's peak-window geometry. A low measured rate therefore says very little: on a peak table this sparse almost any probe set clears the bar. The number to read is the target arm beside it, not this one."
+    ]
+  },
   "decimation": {
     "strategy": "grid_density",
     "kept": 60000,

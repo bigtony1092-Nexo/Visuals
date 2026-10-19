@@ -1048,10 +1048,24 @@ def build(manifest, method, ions, catalog, selected, tables=None):
                       " carry %s only and say how many ions they excluded."
                       % (", ".join(sorted(set(kinds))), one_kind))
     if tiers_present == ["bare_proximity"]:
+        # The rate is read from the export, never asserted. A caption that
+        # quoted a figure from elsewhere would be describing a different run,
+        # and for most of this project's life it described retired code.
+        pc = manifest.get("proximity_control") or {}
+        ent = ((pc.get("arms") or {}).get("entrapment") or {}) if pc else {}
+        if ent.get("queried"):
+            axes = ", ".join(pc.get("axes_matched") or []) or "unstated axes"
+            tail = ("That window's false-positive rate, measured on this run by"
+                    " querying peptides that cannot be in the sample, is %.1f%%"
+                    " (%d of %d probes, 95%% CI %.1f-%.1f%%), on %s."
+                    % (100 * ent["rate"], ent["matched"], ent["queried"],
+                       100 * ent["ci"][0], 100 * ent["ci"][1], axes))
+        else:
+            tail = ("That window's false-positive rate was NOT measured on this"
+                    " run, so nothing here says how often it is wrong.")
         alerts.append("Every ion drawn is bare_proximity: an m/z window plus"
-                      " consecutive scans, with no decoy control. That bare"
-                      " mechanism passed reversed-tryptic decoys at 33-70%"
-                      " elsewhere in this project.")
+                      " consecutive scans, with no decoy control on the"
+                      " individual ion. " + tail)
     elif len(tiers_present) > 1:
         alerts.append("Several confidence tiers are drawn together (%s). They are"
                       " marked differently; read the legend before comparing"
@@ -1066,7 +1080,7 @@ def build(manifest, method, ions, catalog, selected, tables=None):
         # Skip a manifest warning the page has already made in its own words.
         # Two sources for one fact reads as two problems.
         if any(mark in w and any(mark in a for a in alerts)
-               for mark in ("33-70%", "RELATIVE abundance", "quadrupole")):
+               for mark in ("false-positive rate", "RELATIVE abundance", "quadrupole")):
             continue
         if w not in alerts:
             alerts.append(esc(w))

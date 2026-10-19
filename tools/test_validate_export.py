@@ -220,6 +220,78 @@ def coelution_over_one_scan(manifest, tables):
     _hit(tables)["coelution"]["consecutive_scans"] = 1
 
 
+def _bare_annotated(tables):
+    """Turn the annotated ion into an annotated bare_proximity one.
+
+    The example's own bare_proximity ion carries no annotation, so it claims no
+    identity and correctly needs no control. These cases are about an ion that
+    DOES claim one.
+    """
+    ion = tables["ions"][0]
+    ctrl = dict((tables["ions"][1]["confidence"].get("control") or {}))
+    ion["confidence"] = {"tier": "bare_proximity", "decoy_controlled": False,
+                         "ppm_error": 0.4, "score": None, "score_kind": None,
+                         "control": ctrl}
+    return ion
+
+
+def an_annotated_bare_ion_with_no_control(manifest, tables):
+    """Section 4: the tier admits the most ions and had never had its own
+    false-positive rate measured. An annotation resting on it with no measured
+    rate is a confidence label with nothing behind it."""
+    _bare_annotated(tables)["confidence"].pop("control", None)
+
+
+def a_control_whose_rate_disagrees_with_its_counts(manifest, tables):
+    """k and n are stored so the rate can be recomputed. If it cannot be
+    reproduced from them, one of the three is wrong."""
+    _bare_annotated(tables)["confidence"]["control"].update(
+        {"queried": 11, "matched": 0, "stratum_false_rate": 0.5})
+
+
+def a_control_that_names_no_axes(manifest, tables):
+    """A rate measured on m/z alone is a global crowding rate, not a rate at an
+    occupied coordinate. Without axes_matched there is no telling which."""
+    _bare_annotated(tables)["confidence"]["control"]["axes_matched"] = []
+
+
+def a_window_that_did_not_discriminate(manifest, tables):
+    """The bar-a-decoy-clears gate in interval form. Entrapment coordinates
+    matching as often as real ones means the window separated nothing."""
+    _bare_annotated(tables)
+    arms = manifest["proximity_control"]["arms"]
+    arms["entrapment"].update({"queried": 40, "matched": 38, "rate": 0.95,
+                               "ci": [0.84, 0.99]})
+
+
+def a_control_with_too_few_probes(manifest, tables):
+    """A near-zero rate from a handful of probes certifies nothing: at n=20,
+    k=0 the 95% upper bound is still about 16%."""
+    _bare_annotated(tables)
+    manifest["proximity_control"]["arms"]["entrapment"].update(
+        {"queried": 5, "matched": 0, "rate": 0.0, "ci": [0.0, 0.522]})
+
+
+def a_control_with_no_target_comparator(manifest, tables):
+    """A probe rate alone cannot tell a good window from a thin peak table.
+    The comparator has to be computed in the same (probe) direction."""
+    _bare_annotated(tables)
+    manifest["proximity_control"]["arms"].pop("target", None)
+
+
+def a_control_whose_targets_matched_nothing(manifest, tables):
+    """Nothing matched at all, so a zero probe rate is not good news."""
+    _bare_annotated(tables)
+    manifest["proximity_control"]["arms"]["target"].update(
+        {"matched": 0, "rate": 0.0, "ci": [0.0, 0.094]})
+
+
+def a_manifest_with_no_proximity_control(manifest, tables):
+    """The whole measurement missing, with annotations resting on it."""
+    _bare_annotated(tables)
+    manifest.pop("proximity_control", None)
+
+
 def unmutated(manifest, tables):
     """The control. The shipped examples must validate clean."""
 
@@ -297,6 +369,16 @@ CASES = [
     (candidate_needs_a_residue_the_peptide_lacks, "carries none of them", 1),
     (fragment_cites_an_absent_ion, "is not an ion in ions.jsonl", 1),
     (coelution_over_one_scan, "A single scan is a blip", 1),
+    # Section 4. bare_proximity had carried a borrowed figure about retired code
+    # instead of a measured rate; these are the gates that replaced it.
+    (an_annotated_bare_ion_with_no_control, "no confidence.control", 1),
+    (a_control_whose_rate_disagrees_with_its_counts, "stratum_false_rate", 1),
+    (a_control_that_names_no_axes, "names no axes_matched", 1),
+    (a_window_that_did_not_discriminate, "intervals overlap", 1),
+    (a_control_with_too_few_probes, "entrapment probe(s)", 1),
+    (a_control_with_no_target_comparator, "no target comparator", 1),
+    (a_control_whose_targets_matched_nothing, "no real target matched either", 1),
+    (a_manifest_with_no_proximity_control, "carries no proximity_control", 1),
     (unmutated, "", 0),
 ]
 

@@ -353,7 +353,12 @@ def case_no_scan_count_is_rejected(tmp):
     return bad
 
 
-def case_all_bare_warns_about_the_decoy_rate(tmp):
+def case_all_bare_says_whether_the_rate_was_measured(tmp):
+    """The warning used to quote 33-70% from elsewhere in this project. That
+    figure described the retired cube pathway, not this matcher, so the warning
+    now has to say what THIS run measured -- or say plainly that it measured
+    nothing. The case exists to stop the statement being dropped silently, which
+    is why it is asserted in the output AND in manifest.warnings."""
     raw = waters(tmp, "l.raw")
     out_dir = Path(tmp) / "out_l"
     peaks = jsonl(Path(tmp) / "pk_l.jsonl",
@@ -361,13 +366,32 @@ def case_all_bare_warns_about_the_decoy_rate(tmp):
     rc, out = run("--raw", raw, "--peaks", peaks, "--out", out_dir,
                   "--targets", jsonl(Path(tmp) / "t_l.jsonl", [TARGET]), "--drift-tol", 0.02)
     bad = []
-    if "33-70%" not in out:
-        bad.append("an all-bare_proximity export did not carry the decoy warning")
+    mark = "false-positive rate was NOT measured"
+    if mark not in out:
+        bad.append("no --entrapment was given and the export did not say the"
+                   " window's false-positive rate was unmeasured")
     man = json.loads((out_dir / "manifest.json").read_text())
-    if not any("33-70%" in w for w in man["warnings"]):
-        bad.append("the warning did not reach manifest.warnings")
+    if not any(mark in w for w in man["warnings"]):
+        bad.append("the statement did not reach manifest.warnings")
     if man["counts"]["by_tier"]["pass2_confirmed"]:
         bad.append("counted a pass2 ion that does not exist")
+    if man.get("proximity_control") is not None:
+        bad.append("a proximity_control block was written although no entrapment"
+                   " list was given")
+    # And with a list, the same warning must name the measured number instead.
+    ent = Path(tmp) / "ent_l.txt"
+    ent.write_text("\n".join(["AAVLTSHGK", "LTDAEVNSVLR", "GVDTSLIER"]) + "\n")
+    out2_dir = Path(tmp) / "out_l2"
+    rc2, out2 = run("--raw", raw, "--peaks", peaks, "--out", out2_dir,
+                    "--targets", jsonl(Path(tmp) / "t_l.jsonl", [TARGET]),
+                    "--drift-tol", 0.02, "--entrapment", ent)
+    man2 = json.loads((out2_dir / "manifest.json").read_text())
+    if man2.get("proximity_control") is None:
+        bad.append("an entrapment list was given and no proximity_control was"
+                   " written to the manifest")
+    if "measured false-positive rate" not in out2 and mark in out2:
+        bad.append("an entrapment list was given and the run still reported the"
+                   " rate as unmeasured")
     return bad
 
 
@@ -845,7 +869,7 @@ CASES = [case_no_extractor_refuses, case_unknown_drift_kind_is_a_gate,
          case_empty_peak_list_is_a_gate, case_peak_without_a_coordinate_cannot_be_identified,
          case_ion_uid_is_content_addressed, case_sonar_drift_is_carried_but_never_matched,
          case_dda_drift_is_null, case_tiers_follow_the_evidence,
-         case_no_scan_count_is_rejected, case_all_bare_warns_about_the_decoy_rate,
+         case_no_scan_count_is_rejected, case_all_bare_says_whether_the_rate_was_measured,
          case_counts_match_what_was_written,
          case_resolvability_is_not_fed_from_one_observation,
          case_mobility_without_a_tolerance_says_so,

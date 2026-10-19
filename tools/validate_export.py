@@ -66,6 +66,12 @@ WATER = 18.010565
 CARBAMIDOMETHYL = 57.02146
 DELTA_TOL = 0.01
 
+# Fewer probes than this and the Wilson upper bound is wider than any claim it
+# could support: at n=20, k=0 the bound is still about 16%. Defined here rather
+# than in proximity_control because that module already imports this one, and a
+# second copy of a shared number is how WATER came to be defined twice.
+MIN_CONTROL_PROBES = 30
+
 
 def required_residues(residues):
     """Split a candidate's `residues` into (single residues, positional terms).
@@ -387,14 +393,68 @@ def check_ion(report, where, line, ion, samples, seen_uids):
                 report.error(
                     where,
                     f"{at}: tier bare_proximity with decoy_controlled=true. That tier is a"
-                    " ppm window plus consecutive scans with no MS2; the same mechanism"
-                    " passed reversed-tryptic decoys at 33-70% in this project",
+                    " ppm window plus consecutive scans with no MS2, so no decoy was run"
+                    " against THIS ion. Knowing the window's measured false-positive rate"
+                    " (confidence.control) is a property of the window, not of the ion,"
+                    " and does not make the ion decoy-controlled",
                 )
             else:
                 report.error(
                     where,
                     f"{at}: tier {tier} with decoy_controlled=false — the tier is defined"
                     " by being decoy-controlled",
+                )
+
+    # Section 4. bare_proximity is a ppm window, a charge and consecutive scans.
+    # Its false-positive rate is not a property anyone can assume, so the tier
+    # requires the rate MEASURED on this run. Note that decoy_controlled stays
+    # false either way: knowing the window's false-positive rate is not the same
+    # as this ion having been scored against decoys, and the check above is right
+    # to refuse an ion that claims otherwise.
+    # Only an ion that CLAIMS an identity. An unassigned detection with no
+    # annotation -- an unresolved isotope envelope, say, which has no determined
+    # charge and so matched nothing -- makes no claim a decoy could be wrong
+    # about. The contract tracks those on purpose, and requiring a
+    # false-positive rate for a match that was never asserted would be a
+    # category error that makes a real, documented case unexportable.
+    if tier == "bare_proximity" and ion.get("annotation"):
+        ctrl = conf.get("control")
+        if not isinstance(ctrl, dict):
+            report.error(
+                where,
+                f"{at}: tier bare_proximity with no confidence.control. The tier is a ppm"
+                " window plus consecutive scans with no MS2; without the window's measured"
+                " false-positive rate it is a confidence label with nothing behind it."
+                " Run tools/aria_run.py with --entrapment",
+            )
+        else:
+            n, k = ctrl.get("queried"), ctrl.get("matched")
+            if not isinstance(n, int) or not isinstance(k, int):
+                report.error(
+                    where,
+                    f"{at}: confidence.control carries no queried/matched counts. A rate"
+                    " without its denominator cannot be given an interval or audited",
+                )
+            elif k > n:
+                report.error(
+                    where,
+                    f"{at}: confidence.control matched {k} of {n} queried",
+                )
+            elif n:
+                rate = ctrl.get("stratum_false_rate")
+                if isinstance(rate, (int, float)) and abs(rate - k / n) > 1e-9:
+                    report.error(
+                        where,
+                        f"{at}: confidence.control.stratum_false_rate is {rate} but"
+                        f" {k}/{n} is {k / n}",
+                    )
+            axes = ctrl.get("axes_matched")
+            if not isinstance(axes, list) or not axes:
+                report.error(
+                    where,
+                    f"{at}: confidence.control names no axes_matched, so there is no way to"
+                    " tell which window the rate describes. A rate measured on m/z alone is"
+                    " a global crowding rate, not a rate at an occupied coordinate",
                 )
 
     # Section 2. Isotopes ride on the precursor; k=0 is the monoisotopic peak at coord.mz
@@ -507,6 +567,7 @@ def check_ions(report, path, samples, validators, limit):
     tiers = Counter()
     annotated_peptides = set()
     n = 0
+    n_bare_annotated = 0
     for line, ion in read_jsonl(path, limit):
         if isinstance(ion, json.JSONDecodeError):
             report.error(where, f"line {line}: not valid JSON — {ion.msg}")
@@ -522,10 +583,12 @@ def check_ions(report, path, samples, validators, limit):
         tier = check_ion(report, where, line, ion, samples, seen_uids)
         if tier:
             tiers[tier] += 1
+            if tier == "bare_proximity" and ion.get("annotation"):
+                n_bare_annotated += 1
         pep = (ion.get("annotation") or {}).get("peptide_sequence")
         if isinstance(pep, str) and pep:
             annotated_peptides.add(pep)
-    return n, seen_uids, tiers, annotated_peptides
+    return n, seen_uids, tiers, annotated_peptides, n_bare_annotated
 
 
 # ------------------------------------------------------------------ spectra and traces
@@ -817,6 +880,113 @@ def check_proteins(report, path, samples, peptides, validators, limit, excerpt):
 # ------------------------------------------------------------------------ cross-checks
 
 
+def check_proximity_control(report, manifest, n_bare_annotated, where):
+    """The cohort gate on the bare_proximity window, deliberately two-sided.
+
+    A rule of the form "fail when the measured false-positive rate exceeds a
+    cut" passes most easily when the control is broken, because every way of
+    breaking it drives the rate toward zero: a calculated probe m/z against an
+    uncorrected calibration offset, a charge no peak carries, probes outside the
+    acquired range, a thin peak table. Such a rule would reward all of them. So
+    a low rate is accepted only alongside the structure that makes it mean
+    something -- a comparator in the same direction, enough probes for the
+    bound, and intervals that actually separate.
+    """
+    n_bare = n_bare_annotated
+    if not n_bare:
+        # Either no bare_proximity ions, or none of them claims an identity.
+        return
+    pc = manifest.get("proximity_control")
+    if not isinstance(pc, dict):
+        report.error(
+            where,
+            f"{n_bare:,} annotated ion(s) are bare_proximity but the manifest carries"
+            " no proximity_control. The tier's false-positive rate was never measured on"
+            " this run, so every one of those annotations rests on a window whose error"
+            " rate is unknown. Run tools/aria_run.py with --entrapment",
+        )
+        return
+
+    arms = pc.get("arms")
+    if not isinstance(arms, dict):
+        report.error(where, "proximity_control carries no arms")
+        return
+    ent, tgt = arms.get("entrapment") or {}, arms.get("target") or {}
+
+    if not tgt.get("queried"):
+        report.error(
+            where,
+            "proximity_control has no target comparator. The rate aria_run prints for the"
+            " match is peak-direction (for each peak, scan targets) and the control is"
+            " probe-direction (for each probe, find a peak); those have different"
+            " denominators, so the comparison is only meaningful computed in the same"
+            " direction as the probes",
+        )
+        return
+
+    n, k = ent.get("queried"), ent.get("matched")
+    if not isinstance(n, int) or not isinstance(k, int):
+        report.error(where, "proximity_control.arms.entrapment carries no queried/matched"
+                            " counts, so its rate cannot be checked or re-intervalled")
+        return
+    if not n:
+        report.error(
+            where,
+            "proximity_control queried no entrapment probes. No probe survived"
+            " construction, which is not a measured rate of zero — it is no measurement",
+        )
+        return
+    if n < MIN_CONTROL_PROBES:
+        hi = (ent.get("ci") or [None, None])[1]
+        report.error(
+            where,
+            f"proximity_control queried only {n} entrapment probe(s)"
+            + (f"; the 95% upper bound is {100 * hi:.1f}%" if isinstance(hi, (int, float)) else "")
+            + f". Below {MIN_CONTROL_PROBES} the bound is wider than any claim it could"
+              " support, so this cannot certify the window",
+        )
+
+    axes = pc.get("axes_matched")
+    if not isinstance(axes, list) or not axes:
+        report.error(where, "proximity_control names no axes_matched")
+    elif "rt" not in axes and "drift" not in axes:
+        report.warn(
+            where,
+            "proximity_control compared only " + ", ".join(axes) + ", so its rate is a"
+            " GLOBAL m/z-crowding rate rather than a rate at an occupied coordinate."
+            " A probe given a target's retention time was given a field nothing looked"
+            " at. --rt-tol has no default, and a target list carrying rt_lo/rt_hi"
+            " carries no rt",
+        )
+
+    # The bar-a-decoy-clears gate, in interval form: overlapping intervals mean
+    # the window did not separate coordinates that can be right from ones that
+    # cannot, whichever way the point estimates happen to fall.
+    e_ci, t_ci = ent.get("ci"), tgt.get("ci")
+    if isinstance(e_ci, list) and isinstance(t_ci, list) and len(e_ci) == 2 == len(t_ci):
+        if e_ci[1] >= t_ci[0]:
+            report.error(
+                where,
+                f"proximity_control: entrapment matched at {100 * e_ci[0]:.1f}-"
+                f"{100 * e_ci[1]:.1f}% against targets at {100 * t_ci[0]:.1f}-"
+                f"{100 * t_ci[1]:.1f}%. The intervals overlap, so the window did not"
+                " discriminate: a bar a decoy clears is not a bar, and the"
+                f" {n_bare:,} bare_proximity ion(s) resting on it do not stand",
+            )
+
+    if not tgt.get("matched"):
+        report.error(
+            where,
+            "proximity_control: no real target matched either, so a low entrapment rate"
+            " says the peak table is thin, not that the window is good",
+        )
+
+    # Findings the control raised about itself are not decoration: each one names
+    # a reason its own number may be a floor rather than an estimate.
+    for f in (pc.get("findings") or []):
+        report.warn(where, "proximity_control: " + str(f))
+
+
 def check_totals(report, manifest, n_ions, tiers, kinds, limited, excerpt, where):
     counts = manifest.get("counts") or {}
     exported = counts.get("ions_exported")
@@ -945,9 +1115,9 @@ def main():
         report, manifest, export_dir, validators, names, manifest_path.name
     )
 
-    n_ions, uids, tiers, peptides = 0, {}, Counter(), set()
+    n_ions, uids, tiers, peptides, n_bare_annotated = 0, {}, Counter(), set(), 0
     if (export_dir / names["ions"]).exists():
-        n_ions, uids, tiers, peptides = check_ions(
+        n_ions, uids, tiers, peptides, n_bare_annotated = check_ions(
             report, export_dir / names["ions"], samples, validators, args.limit
         )
 
@@ -971,6 +1141,9 @@ def main():
     check_totals(report, manifest, n_ions, tiers, kinds,
                  limited=args.limit is not None, excerpt=args.excerpt,
                  where=manifest_path.name)
+
+    check_proximity_control(report, manifest, n_bare_annotated,
+                            where=manifest_path.name)
 
     report.print()
 

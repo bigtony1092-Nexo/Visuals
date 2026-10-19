@@ -151,6 +151,14 @@
         }
       }
     },
+    "proximity_control": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "The measured false-positive rate of the bare_proximity match window on THIS run, from tools/proximity_control.py. Null or absent means it was not measured, which is a different claim from a measured zero. The cohort rate lives here because it is one number for the whole run; each bare_proximity ion carries its own m/z stratum's rate instead. Every arm stores k and n, not just a rate, so the interval can be recomputed and the denominator audited.",
+      "additionalProperties": true
+    },
     "counts": {
       "type": "object",
       "required": [
