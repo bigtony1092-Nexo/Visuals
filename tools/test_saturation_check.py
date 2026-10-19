@@ -322,18 +322,62 @@ def refuses_no_flags(tmp):
     return bad
 
 
-def the_real_pax8_export_is_refused(tmp):
-    """The shipped data: it cannot answer this and must not appear to."""
-    pat = "/tmp/tmpdirq513q/x/apex/*/Summary/*_ApexRT_temp1.csv"
-    import glob as _g
-    if not _g.glob(pat):
-        return []
-    rc, out = run(pat)
+def a_zero_intensity_does_not_abort_the_run(tmp):
+    """math.log(0) raised ValueError and took the whole tool down.
+
+    Worse than a crash: the traceback exits 1, which is the same code the tool
+    uses for "ran and found something", so extract_profiles' self-check printed
+    "reads it" and aria_check recorded a finding.
+    """
+    f = os.path.join(tmp, "zero.csv")
+    rows = cohort(os.path.join(tmp, "_z.csv"), "source", seed=19)
+    rows = [(s_, m, c, i, t, g) for (s_, m, c, i, t, g) in rows]
+    rows[len(rows) // 2] = (rows[len(rows) // 2][0], rows[len(rows) // 2][1],
+                            rows[len(rows) // 2][2], 0.0,
+                            rows[len(rows) // 2][4], rows[len(rows) // 2][5])
+    write(f, rows)
+    rc, out = run(f)
+    bad = []
+    if "Traceback" in out or "math domain error" in out:
+        bad.append("one zero-intensity row aborted the run")
+    if rc not in (0, 1, 2):
+        bad.append("exit %d" % rc)
+    if rc != 2 and "zero or less" not in out:
+        bad.append("the ion carrying it was dropped without saying so")
+    return bad
+
+
+def an_export_with_the_pax8_defects_is_refused(tmp):
+    """The shipped PAX8 export, reproduced from what was measured in it.
+
+    This used to glob a path under /tmp. That directory existed in the session
+    that wrote the test and nowhere else, so on any other machine the glob
+    matched nothing, the case returned no complaints, and it reported ok
+    WITHOUT RUNNING THE TOOL -- a test that cannot fail, guarding the rule that
+    a tool must be able to fail.
+
+    The defects are planted instead, exactly as they were counted in the real
+    file: Counts the single value 119 while Intensity spans 733x, one intensity
+    repeated across every scan of a peak group, and IsSaturated separating
+    intensity with no overlap.
+    """
+    f = os.path.join(tmp, "pax8_shape.csv")
+    rng = random.Random(31)
+    rows = []
+    for g in range(96):
+        inten = math.exp(rng.uniform(math.log(9.0e4), math.log(6.6e7)))
+        sat = inten > 6.48e6                     # a pure threshold, as measured
+        for k in range(3):                       # three scans, one intensity
+            rows.append((110 + g * 10 + k, 400.0 + g, 119, inten, sat, g))
+    write(f, rows)
+    rc, out = run(f)
     bad = []
     if rc != 2:
-        bad.append("exit %d on the PAX8 export, expected a refusal" % rc)
+        bad.append("exit %d on an export with the PAX8 defects, expected 2" % rc)
     if "CANNOT RUN" not in out:
-        bad.append("did not refuse the PAX8 export")
+        bad.append("did not refuse it")
+    if "not a count" not in out:
+        bad.append("did not name the constant Counts column")
     return bad
 
 
@@ -347,7 +391,8 @@ CASES = [source_level_is_identified,
          refuses_flat_profiles,
          refuses_threshold_flag,
          refuses_no_flags,
-         the_real_pax8_export_is_refused]
+         a_zero_intensity_does_not_abort_the_run,
+         an_export_with_the_pax8_defects_is_refused]
 
 
 def main():

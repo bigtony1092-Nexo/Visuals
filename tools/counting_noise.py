@@ -173,8 +173,12 @@ def runs_of_consecutive(pts, minlen=3):
     return out
 
 
-def refuse_if_unusable(y, chan, run, out, pooled=False):
+def refuse_if_unusable(y, chan, run, out, pooled=False, soft=False):
+    """soft: a series too short to pool is skipped by the pooling loop, so one
+    of them must not refuse the whole file."""
     floor = MIN_SCANS_POOLED if pooled else MIN_SCANS
+    if len(y) < floor and soft:
+        return
     if len(y) < floor:
         raise Unusable("%s/%s has %d scan(s), below the %d needed%s"
                        % (run, chan, len(y), floor,
@@ -377,6 +381,16 @@ def main(argv=None):
         if (args.part is None) != (args.whole is None):
             raise Unusable("--part and --whole go together; one alone cannot "
                            "say what contains what")
+        if args.part or args.whole:
+            missing = [n for n in (args.part, args.whole)
+                       if n and n not in chans]
+            if missing:
+                raise Unusable(
+                    "--part/--whole name channel(s) not being read: %s. The "
+                    "channels in play are %s; with --channel given, only those "
+                    "are parsed, and the shared-term test would silently find "
+                    "nothing to pair"
+                    % (", ".join(missing), ", ".join(chans)))
 
         out("INPUT   %d scan row(s) from %d file(s)" % (len(rows), len(paths)))
         series = {c: series_of(rows, c) for c in chans}
@@ -386,7 +400,16 @@ def main(argv=None):
         for run in runs:
             for c in chans:
                 if run in series[c]:
-                    refuse_if_unusable(values(series[c][run]), c, run, out, args.pool)
+                    refuse_if_unusable(values(series[c][run]), c, run, out,
+                                       args.pool, soft=args.pool)
+        if args.pool:
+            for c in chans:
+                long_enough = [r for r in runs
+                               if len(series[c].get(r) or []) >= MIN_SCANS_POOLED]
+                if not long_enough:
+                    raise Unusable(
+                        "no %s series reaches %d scans, so there is nothing to "
+                        "pool" % (c, MIN_SCANS_POOLED))
 
         # --- A. counting ------------------------------------------------
         out("")
@@ -431,10 +454,27 @@ def main(argv=None):
             for run in runs:
                 for c in chans:
                     pts = series[c].get(run)
-                    if pts:
-                        y = values(pts)
-                        plan.append((run, c, fano_by_level(y),
-                                     fano_by_level([poisson(t, rng) for t in smooth(y)])))
+                    if not pts:
+                        continue
+                    # Gaps matter here too. A series with a hole was differenced
+                    # straight across it, where a step is a jump in retention
+                    # time rather than noise: planted Poisson with one dropped
+                    # block read as 12x counting noise and the tool then
+                    # prescribed the wrong form of tolerance band.
+                    stretches = runs_of_consecutive(pts)
+                    if not stretches:
+                        continue
+                    trend = smooth(values(pts))
+                    at = {sc: t for (sc, _), t in zip(pts, trend)}
+                    po, pn = [], []
+                    for st in stretches:
+                        y = values(st)
+                        po += [(m, d) for d, m in second_differences(y) if m > 0]
+                        sy = [poisson(at[sc], rng) for sc, _ in st]
+                        pn += [(m, d) for d, m in second_differences(sy) if m > 0]
+                    if po:
+                        plan.append((run, c, fano_from_pairs(po),
+                                     fano_from_pairs(pn)))
         for run, c, obs, nul in plan:
             if not obs or not nul:
                 continue
@@ -460,6 +500,21 @@ def main(argv=None):
             byc[c].append((m, ratio))
         for c, pts in sorted(byc.items()):
             pts.sort()
+            # A null Fano of 0 gives a nan ratio, which compares false against
+            # both bounds: those bins vanished from the split AND from the
+            # min/max, so the verdict quoted a range that excluded the rows
+            # printed above it.
+            bad_bins = [m for m, r in pts if r != r]
+            pts = [(m, r) for m, r in pts if r == r]
+            if bad_bins:
+                out("   %s: %d level(s) could not be evaluated (the Poisson null"
+                    % (c, len(bad_bins)))
+                out("   came out zero there), and are left out of the verdict"
+                    " below.")
+            if not pts:
+                out("   %s: no level could be evaluated at all." % c)
+                rc = 1
+                continue
             near = [m for m, r in pts if r <= COUNTING_RATIO]
             far = [m for m, r in pts if r > COUNTING_RATIO]
             if near and far:

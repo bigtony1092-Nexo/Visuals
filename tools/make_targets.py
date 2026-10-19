@@ -163,13 +163,24 @@ def join(psms, feats, out):
     out("joined %d of %d PSM(s) to a feature (%.0f%%) -> %d distinct ion(s)"
         % (hits, len(psms), 100 * share, len(by)))
     if share < MIN_JOIN_SHARE:
-        near = sum(1 for p in psms
-                   if any(abs(f["mz"] - p["mz"]) <= p["mz"] * JOIN_PPM / 1e6
-                          for f in feats))
+        # Reuse the sorted index the join itself uses. Scanning every feature
+        # per PSM was quadratic and looked like a hang on real inputs -- on the
+        # very path that exists to explain why nothing joined. Count only PSMs
+        # that did NOT join, or the number overstates what retention rejected.
+        joined_keys = {(i["pep"], i["z"]) for i in by.values()} if by else set()
+        near = 0
+        for p_ in psms:
+            if (p_["pep"], p_["z"]) in joined_keys:
+                continue
+            tol2 = p_["mz"] * JOIN_PPM / 1e6
+            a = bisect.bisect_left(mzs, p_["mz"] - tol2)
+            b = bisect.bisect_right(mzs, p_["mz"] + tol2)
+            if b > a:
+                near += 1
         extra = ""
-        if near > hits:
-            extra = (". %d PSM(s) DID match on m/z and were rejected on "
-                     "retention alone, so check the units: --psm-rt-units "
+        if near:
+            extra = (". %d unjoined PSM(s) DID match on m/z and were rejected "
+                     "on retention alone, so check the units: --psm-rt-units "
                      "sec or min" % near)
         raise Unusable(
             "only %.0f%% of PSMs found a feature within %g ppm and %g min. The "

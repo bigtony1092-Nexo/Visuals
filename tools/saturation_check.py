@@ -37,8 +37,9 @@ selection effect and not a suppression.
   python3 tools/saturation_check.py 'apex/*/Summary/*_ApexRT_temp1.csv'
 
 Input is ApexRT-style CSV: ScanIndex, Mz, Counts, Intensity, IsSaturated,
-PeakGroupIndex. Exit 0 if the tests ran and found a scan-level effect, 1 if
-they ran and did not, 2 if the input cannot support them.
+PeakGroupIndex. Exit 0 if the tests ran and found nothing to act on, 1 if they
+ran and found a suppression effect of either kind, 2 if the input cannot
+support them -- the repository's convention, where 1 means findings.
 """
 
 import argparse
@@ -143,8 +144,8 @@ def refuse_if_unusable(rows, out):
     bygroup = collections.defaultdict(set)
     for r in rows:
         bygroup[(r["run"], r["group"])].add(r["inten"])
-    multi = [k for k, v in bygroup.items()
-             if len([1 for r in rows if (r["run"], r["group"]) == k]) > 1]
+    sizes = collections.Counter((r["run"], r["group"]) for r in rows)
+    multi = [k for k in bygroup if sizes[k] > 1]
     varying = [k for k in multi if len(bygroup[k]) > 1]
     if multi:
         share = float(len(varying)) / len(multi)
@@ -277,6 +278,11 @@ def log_debiased(r):
     the ion sitting ABOVE its own profile. That is a false positive for
     additive interference, manufactured by the logarithm.
     """
+    if r["inten"] <= 0:
+        # Not a measurement to take a log of. Returning None lets the caller
+        # drop the scan; raising took the whole run down with a ValueError
+        # whose exit 1 is indistinguishable from "ran and found nothing".
+        return None
     y = math.log(r["inten"])
     if r["counts"] and r["counts"] > 0:
         y += 0.5 / r["counts"]
@@ -324,6 +330,12 @@ def profile_departure(rows, marked_for, thresh, out, label, why, mode="dim"):
 
     deltas, skipped = [], collections.Counter()
     for key, rs in bygroup.items():
+        if any(r["inten"] <= 0 for r in rs):
+            # One unusable scan makes the ion's profile unusable; dropping the
+            # ion is honest where dropping the scan would silently change the
+            # shape being fitted.
+            skipped["an intensity of zero or less"] += 1
+            continue
         peak_max = max(r["inten"] for r in rs)
         if mode == "dim":
             # Dim and never flagged: dead time cannot reach these, so a fall

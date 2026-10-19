@@ -354,9 +354,20 @@ def main(argv=None):
     if offset_found:
         out.append("")
         out.append("WHAT MORE SAMPLES WOULD DO")
-        need = int(math.ceil((between / args.target) ** 2)) if args.target > 0 else 0
-        out.append("  SE is %.3f/sqrt(n), so %d run(s) reach the %.2f ppm target."
-                   % (between, need, args.target))
+        # A target of zero is not reachable at any n, and the old arithmetic
+        # printed "0 run(s) reach the 0.00 ppm target" and then skipped the
+        # explanation entirely -- on the exact command this repository's own
+        # documentation gives.
+        if args.target <= 0:
+            need = 0
+            out.append("  A target of %.2f ppm is not a target: no n makes"
+                       " SE = %.3f/sqrt(n) reach zero." % (args.target, between))
+            out.append("  Pass a positive --target to see how many runs it would")
+            out.append("  take. The shift below does not shrink with n either way.")
+        else:
+            need = int(math.ceil((between / args.target) ** 2))
+            out.append("  SE is %.3f/sqrt(n), so %d run(s) reach the %.2f ppm target."
+                       % (between, need, args.target))
         if need > 1:
             se_at = between / math.sqrt(need)
             sigmas = abs(t["mean"]) / se_at if se_at else float("inf")

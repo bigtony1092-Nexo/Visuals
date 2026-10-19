@@ -233,6 +233,52 @@ def a_gap_is_not_differenced_across(tmp):
     return bad
 
 
+def a_gap_is_not_differenced_across_unpooled(tmp):
+    """The same gap rule, on the path the shipped HeLa analysis uses.
+
+    runs_of_consecutive was applied only under --pool, so the default path
+    differenced straight across a hole: planted Poisson with one dropped block
+    read as 12x counting noise, and the tool then prescribed a flat percentage
+    where 1/sqrt(N) was right.
+    """
+    f = os.path.join(tmp, "gapped_unpooled.jsonl")
+    rng = random.Random(29)
+    t = trend(900, 80, 4000)
+    rows = []
+    for i, v in enumerate(t):
+        if 300 <= i <= 340:          # a block the extraction's floor would drop
+            continue
+        rows.append({"run": "g", "scan": i, "sig": pois(v, rng)})
+    write(f, rows)
+    rc, out = run(f)
+    bad = []
+    if "counting describes it at every level" not in out:
+        bad.append("Poisson data with one gap was not read as counting noise; "
+                   "the difference is spanning the gap")
+    if rc != 0:
+        bad.append("exit %d on gapped Poisson data" % rc)
+    return bad
+
+
+def part_and_whole_must_name_parsed_channels(tmp):
+    """--channel bpi --part bpi --whole tic printed UNDECIDED instead of
+    erroring, because tic was never parsed."""
+    f = os.path.join(tmp, "chan.jsonl")
+    rng = random.Random(5)
+    rows = []
+    for i in range(300):
+        rows.append({"run": "r", "scan": i, "bpi": pois(400, rng),
+                     "tic": pois(90000, rng)})
+    write(f, rows)
+    rc, out = run(f, "--channel", "bpi", "--part", "bpi", "--whole", "tic")
+    bad = []
+    if rc != 2:
+        bad.append("exit %d when --whole names an unparsed channel, expected 2" % rc)
+    if "not being read" not in out:
+        bad.append("did not say the channel is not among those parsed")
+    return bad
+
+
 def the_crossover_is_found(tmp):
     f = os.path.join(tmp, "mixed.jsonl")
     mixed_series(f)
@@ -400,7 +446,10 @@ def the_real_hela_runs_are_usable(tmp):
     all the way to a verdict on them.
     """
     if not os.path.exists(HELA):
-        return []
+        # Not a pass. A missing fixture means this assertion did not run, and
+        # reporting ok for that is how a test becomes decorative.
+        return ["the shipped HeLa example is missing at %s, so the only "
+                "real-instrument assertion in this file did not run" % HELA]
     rc, out = run(HELA, "--part", "bpi", "--whole", "tic")
     bad = []
     if rc == 2:
@@ -418,6 +467,8 @@ CASES = [pure_counting_reads_as_counting,
          multiplicative_reads_as_flat,
          the_null_lands_at_one_on_counting,
          the_crossover_is_found,
+         a_gap_is_not_differenced_across_unpooled,
+         part_and_whole_must_name_parsed_channels,
          per_ion_profiles_pool_correctly,
          a_gap_is_not_differenced_across,
          common_mode_is_identified,

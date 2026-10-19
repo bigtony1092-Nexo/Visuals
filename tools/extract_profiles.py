@@ -46,8 +46,10 @@ TOOLS = os.path.dirname(os.path.abspath(__file__))
 # every variance.
 MIN_COUNTS = 3
 
-# An ion needs this many scans for the leave-one-out reference the tests build.
-MIN_SCANS = 6
+# An ion needs this many scans for the leave-one-out reference the tests build,
+# and at least counting_noise.MIN_SCANS_POOLED so the file does not carry ions
+# its own consumer will skip.
+MIN_SCANS = 8
 
 
 class DemoReader:
