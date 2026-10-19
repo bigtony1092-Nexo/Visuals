@@ -157,6 +157,61 @@ charge, which matched nothing — makes no claim a decoy could be wrong about. T
 contract tracks those on purpose, and demanding a false-positive rate for a
 match that was never asserted would be a category error.
 
+## The one number this has measured on real data
+
+The calibration arm needs only a target list, so it runs on
+`examples/pax8-targets.csv` — 45 real measured m/z values with real sequences —
+without any peak table at all:
+
+| | |
+|---|---|
+| median observed − calculated, 37 usable ions | **−1.401 ppm** |
+| mean | −1.130 ppm |
+| 95% CI on the mean | −1.747 to −0.513 ppm |
+| excluded, unrecorded modification | **8 of 45** |
+
+`docs/atlas-convergence.md` records **−1.570 ppm** (CI −1.841 to −1.299) from
+1,262 PSMs over 24 Colorado runs, by a different route: per-PSM ppm as the
+search engine reported it, rather than observed m/z against a mass this
+repository computes from the sequence. The intervals overlap substantially.
+
+**That is a consistency check, not independent confirmation.** The PAX8 list
+carries `seen_in_runs` up to 22 against that 24-run set, so this is very likely
+the same acquisition measured twice by two computations. What it establishes is
+that the −1.57 ppm is not an artefact of how the search engine reports ppm —
+which is worth having, and is the first cross-check the figure has had.
+
+One statistic deliberately does **not** reproduce. `atlas-convergence.md` rests
+heavily on 24 of 24 run means sharing a sign; here it is 24 of 37 ions, which is
+a sign test at p ≈ 0.09 and proves nothing. That is expected rather than
+contradictory: those were per-RUN means, where a −1.5 ppm offset stands clear of
+the between-run SD of 0.643 ppm, and these are per-ION errors scattering by 1.9
+ppm. The comparable quantity is the mean, not the sign. Reading the sign test
+here as disagreement would be comparing two different things.
+
+### What it found in the target list
+
+Eight of the 45 shipped PAX8 targets are further from their stated sequence than
+any calibration could explain. Six are **+15.995 Da** — oxidised methionine, and
+every one of those sequences contains an M. One is **+0.984 Da**, deamidation.
+One sits 0.0128 Da from oxidation, outside the 0.008 Da tolerance
+`probe_consensus.py` uses, and is reported as **unexplained** rather than named:
+that tolerance exists because 0.02 Da is wide enough to merge deamidation with an
+A1 isotope pick 0.0193 Da away, and past it a difference falls into "unexplained"
+rather than being mislabelled.
+
+`pax8-targets.csv` has no `mods` column, so each of those eight is an ion whose
+stated sequence does not match its stated mass. That is worth fixing at the
+source, and the control says so rather than only working around it.
+
+It also found a bug in this tool. Leaving those eight in moved the measured
+offset from −1.401 to **−0.787 ppm** — a 44% error in the quantity every probe is
+then corrected by, and in the same direction as the bias the correction exists to
+remove. A median is robust to a few wild outliers in *value* but still counts
+them in *rank*, and that is the part that bit. They are now excluded from the
+calibration and from the `calc_target` arm, named where a known modification
+fits, and counted in the report either way.
+
 ## What the shipped target list reports
 
 On `examples/pax8-targets.csv` with a synthetic peak table at the listed
@@ -257,12 +312,16 @@ any ion's own; `per_run` keeps each run's counts and calibration instead.
 
 ## What is not established
 
-**The rate has not been measured on real data.** Everything above is the
-machinery and its refusals, exercised against planted fixtures: 18 cases in
+**The false-positive rate itself has not been measured on real data** — only
+the calibration arm has, above. The rate needs a real peak table, including the
+unassigned peaks, and the repository has none: `hela-scans.example.jsonl` is
+6,947 real Waters scans but carries only run/scan/bpi/tic, with no per-ion m/z.
+Everything else below is the machinery and its refusals, exercised against
+planted fixtures: 21 cases in
 `test_proximity_control.py`, 8 in `test_validate_export.py`, 8 in
-`test_make_entrapment.py` and 2 in `test_merge_exports.py` — 280 in the suite
+`test_make_entrapment.py` and 2 in `test_merge_exports.py` — 283 in the suite
 against a 244 baseline — each one shown to fail against a deliberately broken
-implementation before it was kept, 40 mutations in all.
+implementation before it was kept, 44 mutations in all.
 
 Four of those cases could not fail as first written, which is the defect this
 whole exercise is about. An 8 ppm planted calibration offset still lands inside
@@ -275,7 +334,7 @@ cut before proline: once a peptide the case claimed two proteomes shared was cut
 through in both, once a `K|P` site was the only internal one. All four now assert
 that the fixture produced the condition under test.
 
-`tools/mutation_check.py` holds all 40 and runs them on demand (81 seconds; it
+`tools/mutation_check.py` holds all 44 and runs them on demand (84 seconds; it
 runs a suite per mutation, so it is not wired into the per-file suites). Three
 properties make it worth having rather than a record in a commit message. A
 mutation whose anchor text no longer appears exactly once is reported as a

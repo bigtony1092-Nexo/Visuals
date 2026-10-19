@@ -86,11 +86,25 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from aria_run import (PROTON, field, match_one, axes_participating,  # noqa: E402
                       load_targets, read_peaks, ppm)
 from ladder_stats import wilson, katz_ratio  # noqa: E402
+# The modification table and its tolerance live in probe_consensus, which chose
+# TOL = 0.008 because 0.02 is wide enough to merge deamidation (+0.984016) with
+# an A1 isotope pick (+1.003355), only 0.019339 Da apart. Reusing them rather
+# than picking a tolerance here, which is how that mistake gets made twice.
+from probe_consensus import MODS, TOL  # noqa: E402
 # MIN_CONTROL_PROBES lives in validate_export because that is where it is
 # enforced, and this module already imports that one for the residue table. A
 # second copy of a shared number is how WATER came to be defined twice here.
 from validate_export import peptide_mass, MIN_CONTROL_PROBES  # noqa: E402
 
+# Beyond this, observed-minus-calculated is not a calibration offset. A real
+# instrument offset is single-digit ppm; this project's documented one is 1.570
+# ppm. A target 16 Da from its own sequence is carrying a modification the target
+# list does not record, and averaging it into the calibration measures the
+# modification. On the shipped PAX8 list 8 of 45 targets are in this state --
+# seven oxidised methionines and one deamidation -- and leaving them in moved the
+# measured offset from -1.401 to -0.787 ppm, a 44% error against the quantity
+# being corrected for.
+MAX_CALIBRATION_PPM = 50.0
 # A probe whose m/z is this close to its paired target's is testing the target.
 SELF_PPM_FACTOR = 1.0
 
@@ -157,26 +171,54 @@ def mz_of(seq, z):
     return (m + z * PROTON) / z
 
 
+def modification_like(delta):
+    """The name of the modification this neutral-mass difference matches.
+
+    Tested against modifications before isotopes, as probe_consensus does: a
+    calculated m/z that omits a peptide's modification produces an offset that
+    says nothing about isotope selection.
+    """
+    for name, mass in MODS:
+        if abs(delta - mass) <= TOL:
+            return name
+    return None
+
+
 def calibration_offset(targets):
     """Observed minus calculated m/z, in ppm, from targets that carry a sequence.
 
     This is the quantity that would otherwise bias every probe downward. It is
-    measured as a median so one mis-annotated target cannot set it. Returns
-    (offset_ppm, n_used, spread_ppm).
+    measured as a median so one mis-annotated target cannot set it.
+
+    Targets whose observed mass is further from their sequence than any
+    calibration could explain are excluded first, because the median is not
+    robust enough on its own: on the shipped PAX8 list 8 of 45 carry an
+    unrecorded modification, and their presence moved the median by 0.6 ppm --
+    44% of the value being measured. A median survives a few wild outliers in
+    VALUE but still counts them in RANK, which is the part that bit here.
+
+    Returns (offset_ppm, n_used, spread_ppm, excluded), where excluded is a list
+    of (sequence, charge, neutral delta, modification name or None).
     """
-    errs = []
+    errs, excluded = [], []
     for t in targets:
         seq = t.get("peptide")
         if not seq or not t.get("charge"):
             continue
-        calc = mz_of(str(seq).strip().upper(), t["charge"])
+        seq = str(seq).strip().upper()
+        calc = mz_of(seq, t["charge"])
         if calc is None:
             continue
-        errs.append((t["mz"] - calc) / calc * 1e6)
+        err = (t["mz"] - calc) / calc * 1e6
+        if abs(err) > MAX_CALIBRATION_PPM:
+            delta = (t["mz"] - calc) * t["charge"]
+            excluded.append((seq, t["charge"], delta, modification_like(delta)))
+            continue
+        errs.append(err)
     if len(errs) < 3:
-        return None, len(errs), None
+        return None, len(errs), None, excluded
     spread = st.median([abs(e - st.median(errs)) for e in errs]) * 1.4826
-    return st.median(errs), len(errs), spread
+    return st.median(errs), len(errs), spread, excluded
 
 
 def peak_rows(peaks):
@@ -327,7 +369,7 @@ def build_entrapment(seqs, targets, offset_ppm, mz_lo, mz_hi, ppm_tol, charges):
     return probes, excluded
 
 
-def build_calc_target(targets, mz_lo, mz_hi, charges):
+def build_calc_target(targets, mz_lo, mz_hi, charges, skip=()):
     """The real targets, m/z recomputed from their own sequences.
 
     Everything else about these probes is the real target. If this arm's rate is
@@ -335,13 +377,24 @@ def build_calc_target(targets, mz_lo, mz_hi, charges):
     using a calculated m/z, and it bounds how much of the entrapment arm's
     shortfall is calibration rather than window.
     """
-    probes, excluded = [], {"no_sequence": 0, "out_of_range": 0, "unseen_charge": 0}
+    probes = []
+    excluded = {"no_sequence": 0, "out_of_range": 0, "unseen_charge": 0,
+                "unrecorded_modification": 0}
+    skip = set(skip)
     for t in targets:
         seq = t.get("peptide")
         if not seq or not t.get("charge"):
             excluded["no_sequence"] += 1
             continue
-        mz = mz_of(str(seq).strip().upper(), t["charge"])
+        seq = str(seq).strip().upper()
+        if (seq, t["charge"]) in skip:
+            # Its sequence-derived mass is wrong for a composition reason, so it
+            # measures a missing modification, not the price of a calculated
+            # coordinate. Left in, these drag this arm down and the report calls
+            # the entrapment rate a floor for the wrong reason.
+            excluded["unrecorded_modification"] += 1
+            continue
+        mz = mz_of(seq, t["charge"])
         if mz is None:
             excluded["no_sequence"] += 1
             continue
@@ -507,14 +560,18 @@ def run_control(peaks, targets, seqs, ppm_tol, rt_tol, drift_tol, use_drift, min
     mz_hi = max(p["mz"] for p in prows)
     charges = {p["z"] for p in prows}
     axes = axes_participating(targets, rt_tol, drift_tol, use_drift)
-    offset, n_off, spread = calibration_offset(targets)
+    offset, n_off, spread, mod_excluded = calibration_offset(targets)
 
     rep = {"axes_matched": axes, "n_peaks_queryable": len(prows),
            "mz_range": [mz_lo, mz_hi], "charges_seen": sorted(charges),
            "min_scans": min_scans, "precursor_ppm": ppm_tol,
            "rt_tol": rt_tol, "drift_tol": drift_tol if use_drift else None,
            "calibration": {"offset_ppm": offset, "n_targets_used": n_off,
-                           "spread_ppm": spread},
+                           "spread_ppm": spread,
+                           "excluded_unrecorded_modification": [
+                               {"peptide": seq, "charge": z, "delta_da": d,
+                                "looks_like": name}
+                               for seq, z, d, name in mod_excluded]},
            "arms": {}}
 
     index = index_peaks(prows)
@@ -540,7 +597,8 @@ def run_control(peaks, targets, seqs, ppm_tol, rt_tol, drift_tol, use_drift, min
     ep, eex = build_entrapment(seqs or [], targets, offset, mz_lo, mz_hi, ppm_tol, charges)
     arm("entrapment", ep, eex,
         None if seqs else "no entrapment sequences were supplied")
-    cp, cex = build_calc_target(targets, mz_lo, mz_hi, charges)
+    cp, cex = build_calc_target(targets, mz_lo, mz_hi, charges,
+                                skip=[(seq, z) for seq, z, _, _ in mod_excluded])
     arm("calc_target", cp, cex)
     if "rt" in axes or "drift" in axes:
         sp, sex = build_swap(targets, rt_tol, drift_tol, use_drift)
@@ -594,6 +652,16 @@ def findings(rep):
                    % (rep["calibration"]["offset_ppm"],
                       100 * abs(rep["calibration"]["offset_ppm"]) / rep["precursor_ppm"],
                       rep["precursor_ppm"]))
+    mx = rep["calibration"].get("excluded_unrecorded_modification") or []
+    n_seq = (rep["calibration"]["n_targets_used"] or 0) + len(mx)
+    if mx and n_seq and len(mx) / n_seq > 0.10:
+        out.append("%d of %d target(s) with a sequence carry a modification the target"
+                   " list does not record (%s). They are excluded from the calibration"
+                   " and from the calc_target arm, but a list this incomplete about its"
+                   " own modifications is worth fixing at the source: every one of them"
+                   " is an ion whose stated sequence does not match its stated mass."
+                   % (len(mx), n_seq,
+                      ", ".join(sorted({e["looks_like"] or "unexplained" for e in mx}))))
     if t.get("queried") and c.get("queried") and t["rate"] and c["rate"] is not None:
         if c["rate"] < 0.75 * t["rate"]:
             out.append("The same targets queried on CALCULATED m/z match at %.1f%%"
@@ -659,6 +727,18 @@ def render(rep):
                % (rep["n_peaks_queryable"], rep["mz_range"][0], rep["mz_range"][1],
                   "/".join(str(c) for c in rep["charges_seen"]), rep["min_scans"]))
     cal = rep["calibration"]
+    mx = cal.get("excluded_unrecorded_modification") or []
+    if mx:
+        named = {}
+        for e in mx:
+            named[e["looks_like"] or "unexplained"] = named.get(
+                e["looks_like"] or "unexplained", 0) + 1
+        out.append("  %d target(s) excluded from the calibration: observed mass further"
+                   " from the sequence" % len(mx))
+        out.append("  than any calibration explains, so the target list does not record"
+                   " their")
+        out.append("  modification -- %s. Averaging those in measures the modification."
+                   % ", ".join("%d %s" % (n, k) for k, n in sorted(named.items())))
     if cal["offset_ppm"] is None:
         out.append("  calibration: NOT MEASURED (%d target(s) carried a usable sequence)"
                    % cal["n_targets_used"])

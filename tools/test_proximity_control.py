@@ -976,7 +976,125 @@ def case_the_candidate_index_changes_no_answer(tmp):
     return bad
 
 
-CASES = [case_the_candidate_index_changes_no_answer,
+OXIDATION = 15.994915
+DEAMIDATION = 0.984016
+
+
+def case_an_unrecorded_modification_is_kept_out_of_the_calibration(tmp):
+    """A target 16 Da from its own sequence is not a calibration offset.
+
+    Found on the shipped PAX8 list, which does not record modifications: 8 of
+    its 45 targets are 16 Da (oxidised methionine) or 1 Da (deamidation) from
+    the mass their stated sequence implies. Averaging them in moved the measured
+    offset from -1.401 to -0.787 ppm -- a 44% error in the quantity every probe
+    is then corrected by. A median survives a few wild outliers in VALUE but
+    still counts them in RANK, which is the part that bit.
+    """
+    bad = []
+    # Twenty clean targets at a planted -3 ppm, plus six carrying +16 Da.
+    lines = ["peptide,charge,mz,rt,drift"]
+    clean = [h for h in HUMAN if "M" not in h][:20]
+    oxid = [h for h in HUMAN if "M" in h][:6]
+    for i, sq in enumerate(clean):
+        lines.append("%s,2,%.6f,%.3f,%.3f" % (sq, mz(sq, 2, -3.0), 5.0 + i, 50.0 + i))
+    for j, sq in enumerate(oxid):
+        m = peptide_mass(sq) + OXIDATION
+        lines.append("%s,2,%.6f,%.3f,%.3f"
+                     % (sq, (m + 2 * PROTON) / 2, 40.0 + j, 90.0 + j))
+    tg = Path(tmp) / "t18.csv"
+    tg.write_text("\n".join(lines) + "\n")
+    pk = peaks_file(tmp, "p18.jsonl", peaks_for(clean, ppm_off=-3.0))
+    rep, _ = control(tmp, pk, tg, ppm_tol=10.0, rt_tol=0.2)
+    cal = rep["calibration"]
+    ex = cal.get("excluded_unrecorded_modification") or []
+    if len(ex) != len(oxid):
+        bad.append("planted %d modified targets, %d were excluded"
+                   % (len(oxid), len(ex)))
+    if cal["n_targets_used"] != len(clean):
+        bad.append("the calibration used %s targets, expected the %d clean ones"
+                   % (cal["n_targets_used"], len(clean)))
+    if cal["offset_ppm"] is None or abs(cal["offset_ppm"] + 3.0) > 0.3:
+        bad.append("planted a -3 ppm offset on the clean targets, measured %s"
+                   % cal["offset_ppm"])
+    if not all(e["looks_like"] == "oxidation" for e in ex):
+        bad.append("a +%.4f Da difference was not named as oxidation: %r"
+                   % (OXIDATION, [e["looks_like"] for e in ex]))
+    # And the calc_target arm must drop them too, or it reports a missing
+    # modification as the price of a calculated coordinate.
+    if (rep["arms"]["calc_target"]["excluded"].get("unrecorded_modification")
+            != len(oxid)):
+        bad.append("the calc_target arm did not exclude the modified targets")
+    return bad
+
+
+def case_a_difference_that_matches_nothing_is_not_named(tmp):
+    """probe_consensus keeps TOL at 0.008 because 0.02 merges deamidation with
+    an A1 isotope pick, 0.0193 Da away. Past the tolerance a difference falls
+    into `unexplained` rather than being mislabelled, so the failure is loud --
+    and one target on the real PAX8 list lands there."""
+    bad = []
+    lines = ["peptide,charge,mz,rt,drift"]
+    clean = [h for h in HUMAN if "M" not in h][:20]
+    for i, sq in enumerate(clean):
+        lines.append("%s,2,%.6f,%.3f,%.3f" % (sq, mz(sq, 2), 5.0 + i, 50.0 + i))
+    # 7.5 Da off: far beyond calibration, and not any modification in the table.
+    odd = [h for h in HUMAN if "M" in h][0]
+    lines.append("%s,2,%.6f,99.0,99.0"
+                 % (odd, (peptide_mass(odd) + 7.5 + 2 * PROTON) / 2))
+    tg = Path(tmp) / "t19.csv"
+    tg.write_text("\n".join(lines) + "\n")
+    pk = peaks_file(tmp, "p19.jsonl", peaks_for(clean))
+    rep, _ = control(tmp, pk, tg, ppm_tol=10.0, rt_tol=0.2)
+    ex = rep["calibration"].get("excluded_unrecorded_modification") or []
+    if len(ex) != 1:
+        return ["expected exactly one excluded target, got %d" % len(ex)]
+    if ex[0]["looks_like"] is not None:
+        bad.append("a 7.5 Da difference matching no modification was named %r"
+                   % ex[0]["looks_like"])
+    # A deamidation-sized one, by contrast, must be named -- and must not be
+    # confused with the A1 isotope 0.0193 Da away.
+    lines.append("%s,3,%.6f,98.0,98.0"
+                 % (clean[0], (peptide_mass(clean[0]) + DEAMIDATION + 3 * PROTON) / 3))
+    tg.write_text("\n".join(lines) + "\n")
+    rep2, _ = control(tmp, pk, tg, ppm_tol=10.0, rt_tol=0.2)
+    names = {e["looks_like"] for e in
+             (rep2["calibration"].get("excluded_unrecorded_modification") or [])}
+    if "deamidation" not in names:
+        bad.append("a +%.4f Da difference was not named as deamidation: %r"
+                   % (DEAMIDATION, names))
+    return bad
+
+
+def case_a_list_careless_about_its_modifications_is_declared(tmp):
+    """Excluding them silently would hide that the target list is wrong about
+    its own ions: each one's stated sequence does not match its stated mass."""
+    bad = []
+    lines = ["peptide,charge,mz,rt,drift"]
+    clean = [h for h in HUMAN if "M" not in h][:10]
+    oxid = [h for h in HUMAN if "M" in h][:6]
+    for i, sq in enumerate(clean):
+        lines.append("%s,2,%.6f,%.3f,%.3f" % (sq, mz(sq, 2), 5.0 + i, 50.0 + i))
+    for j, sq in enumerate(oxid):
+        m = peptide_mass(sq) + OXIDATION
+        lines.append("%s,2,%.6f,%.3f,%.3f"
+                     % (sq, (m + 2 * PROTON) / 2, 40.0 + j, 90.0 + j))
+    tg = Path(tmp) / "t20.csv"
+    tg.write_text("\n".join(lines) + "\n")
+    pk = peaks_file(tmp, "p20.jsonl", peaks_for(clean))
+    rep, _ = control(tmp, pk, tg, ppm_tol=10.0, rt_tol=0.2)
+    if not any("does not record" in f for f in rep["findings"]):
+        bad.append("%d of %d targets carried an unrecorded modification and the"
+                   " report did not say so"
+                   % (len(oxid), len(oxid) + len(clean)))
+    if "excluded from the calibration" not in pc.render(rep):
+        bad.append("the exclusions are not shown in the report")
+    return bad
+
+
+CASES = [case_an_unrecorded_modification_is_kept_out_of_the_calibration,
+         case_a_difference_that_matches_nothing_is_not_named,
+         case_a_list_careless_about_its_modifications_is_declared,
+         case_the_candidate_index_changes_no_answer,
          case_a_sparse_table_says_clearing_the_bar_means_little,
          case_a_planted_rate_is_recovered,
          case_a_window_that_does_not_discriminate_is_refused,
