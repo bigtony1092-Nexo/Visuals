@@ -475,6 +475,12 @@ def main(argv=None):
                     if po:
                         plan.append((run, c, fano_from_pairs(po),
                                      fano_from_pairs(pn)))
+        if not plan:
+            raise Unusable(
+                "no series yielded a usable stretch: a second difference needs "
+                "three CONSECUTIVE scans, and every series here is too short, "
+                "too gapped, or steps its scan index by more than one. Nothing "
+                "was measured, which is not the same as nothing being wrong")
         for run, c, obs, nul in plan:
             if not obs or not nul:
                 continue
@@ -512,9 +518,11 @@ def main(argv=None):
                 out("   came out zero there), and are left out of the verdict"
                     " below.")
             if not pts:
-                out("   %s: no level could be evaluated at all." % c)
-                rc = 1
-                continue
+                # Could not be measured, which the repository spells 2. Exit 1
+                # is "ran and found something", and aria_check gates on it.
+                raise Unusable(
+                    "%s: every level's Poisson null came out zero, so no Fano "
+                    "ratio could be evaluated at any level" % c)
             near = [m for m, r in pts if r <= COUNTING_RATIO]
             far = [m for m, r in pts if r > COUNTING_RATIO]
             if near and far:

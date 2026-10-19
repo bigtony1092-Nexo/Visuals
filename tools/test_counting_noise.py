@@ -260,6 +260,32 @@ def a_gap_is_not_differenced_across_unpooled(tmp):
     return bad
 
 
+def a_series_with_no_usable_stretch_is_refused(tmp):
+    """Silence must not read as success.
+
+    A second difference needs three CONSECUTIVE scans. A table whose scan index
+    steps by two -- MS1-only rows from a DDA run -- yields no stretch at all,
+    and the verdict loop simply never ran: the column header printed, nothing
+    under it, exit 0. aria_check recorded step 7 as passed and the extractor's
+    self-check said "reads it".
+    """
+    f = os.path.join(tmp, "stride2.jsonl")
+    rng = random.Random(13)
+    t = trend(400, 100, 3000)
+    write(f, [{"run": "d", "scan": i * 2, "sig": pois(v, rng)}
+              for i, v in enumerate(t)])
+    rc, out = run(f)
+    bad = []
+    if rc != 2:
+        bad.append("exit %d on a series with no consecutive stretch, expected 2"
+                   % rc)
+    if "CONSECUTIVE" not in out:
+        bad.append("did not say why nothing could be measured")
+    if "counting describes it" in out or "nowhere does counting" in out:
+        bad.append("reported a verdict with nothing measured")
+    return bad
+
+
 def part_and_whole_must_name_parsed_channels(tmp):
     """--channel bpi --part bpi --whole tic printed UNDECIDED instead of
     erroring, because tic was never parsed."""
@@ -469,6 +495,7 @@ CASES = [pure_counting_reads_as_counting,
          the_crossover_is_found,
          a_gap_is_not_differenced_across_unpooled,
          part_and_whole_must_name_parsed_channels,
+         a_series_with_no_usable_stretch_is_refused,
          per_ion_profiles_pool_correctly,
          a_gap_is_not_differenced_across,
          common_mode_is_identified,

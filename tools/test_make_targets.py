@@ -23,7 +23,7 @@ def run(*a):
     return p.returncode, p.stdout + p.stderr
 
 
-def make_run(tmp, name, n=400, seed=1, shift_mz=0.0):
+def make_run(tmp, name, n=400, seed=1, shift_mz=0.0, psms_per_pep=None):
     """A matched psm.tsv and feature table describing one run."""
     rng = random.Random(seed)
     psm = os.path.join(tmp, name + "_psm.tsv")
@@ -40,7 +40,8 @@ def make_run(tmp, name, n=400, seed=1, shift_mz=0.0):
         w.writerow(["Spectrum", "Peptide", "Charge", "Retention",
                     "Calculated M/Z", "Qvalue", "Is Decoy"])
         for i in ions:
-            for _ in range(rng.randint(1, 3)):
+            reps = psms_per_pep if psms_per_pep else rng.randint(1, 3)
+            for _ in range(reps):
                 w.writerow(["s", i["pep"], i["z"], "%.3f" % i["rt"],
                             "%.4f" % i["mz"], "0.001", "false"])
         for k in range(30):                       # decoys that must be dropped
@@ -191,6 +192,45 @@ def seconds_and_minutes_are_reconciled(tmp):
     return bad
 
 
+def the_units_hint_survives_many_psms_per_peptide(tmp):
+    """The hint has to reach a real table.
+
+    The unjoined-PSM count was keyed by (peptide, charge), so an unjoined PSM
+    sharing a peptide and charge with any joined one was skipped. On a table
+    with ten PSMs per peptide the count collapsed to zero and the "check the
+    units" hint -- the entire reason that branch exists -- disappeared.
+    a_real_unit_mismatch_still_names_units misses it because its fixture writes
+    one to three PSMs per peptide and the RT is wrong for all of them.
+    """
+    psm, apex, _ = make_run(tmp, "manypsm", n=100, seed=37, psms_per_pep=10)
+    bad_rt = os.path.join(tmp, "manypsm_badrt_psm.tsv")
+    with open(psm, newline="") as fh:
+        rows = list(csv.reader(fh, delimiter="\t"))
+    hdr, body = rows[0], rows[1:]
+    rt = hdr.index("Retention")
+    with open(bad_rt, "w", newline="") as fh:
+        w = csv.writer(fh, delimiter="\t")
+        w.writerow(hdr)
+        for n_, r in enumerate(body):
+            r = list(r)
+            # Nine of every ten PSMs get a bad retention. The join share then
+            # falls under the refusal threshold, while each peptide still has
+            # ONE joined PSM -- which is exactly the shape that made a
+            # peptide-keyed count report zero unjoined.
+            if n_ % 10:
+                r[rt] = "%.3f" % (float(r[rt]) * 7.0)
+            w.writerow(r)
+    rc, out = run("--psm", bad_rt, "--apex", apex, "--out",
+                  os.path.join(tmp, "t_many.csv"), "--bins", "5",
+                  "--per-bin", "20")
+    bad = []
+    if "check the units" not in out:
+        bad.append("the units hint vanished on a table with several PSMs per "
+                   "peptide; the unjoined count is keyed by peptide rather "
+                   "than by PSM")
+    return bad
+
+
 def a_real_unit_mismatch_still_names_units(tmp):
     """When m/z agrees and retention does not, say so rather than blaming the
     files for being different runs."""
@@ -288,6 +328,7 @@ CASES = [builds_a_list_stratified_by_mz,
          accepts_intensity_from_a_different_run,
          seconds_and_minutes_are_reconciled,
          a_real_unit_mismatch_still_names_units,
+         the_units_hint_survives_many_psms_per_peptide,
          refuses_mismatched_files,
          reports_a_narrow_intensity_span,
          the_output_feeds_the_extractor]

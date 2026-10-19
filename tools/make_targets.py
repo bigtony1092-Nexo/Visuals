@@ -152,6 +152,7 @@ def join(psms, feats, out):
         if best is None:
             continue
         hits += 1
+        p["_joined"] = True
         f = best[1]
         key = (p["pep"], p["z"])
         e = by.setdefault(key, {"pep": p["pep"], "z": p["z"], "mz": [], "rt": [],
@@ -167,10 +168,9 @@ def join(psms, feats, out):
         # per PSM was quadratic and looked like a hang on real inputs -- on the
         # very path that exists to explain why nothing joined. Count only PSMs
         # that did NOT join, or the number overstates what retention rejected.
-        joined_keys = {(i["pep"], i["z"]) for i in by.values()} if by else set()
         near = 0
         for p_ in psms:
-            if (p_["pep"], p_["z"]) in joined_keys:
+            if p_.get("_joined"):
                 continue
             tol2 = p_["mz"] * JOIN_PPM / 1e6
             a = bisect.bisect_left(mzs, p_["mz"] - tol2)

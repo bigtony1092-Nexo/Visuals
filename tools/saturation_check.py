@@ -38,8 +38,9 @@ selection effect and not a suppression.
 
 Input is ApexRT-style CSV: ScanIndex, Mz, Counts, Intensity, IsSaturated,
 PeakGroupIndex. Exit 0 if the tests ran and found nothing to act on, 1 if they
-ran and found a suppression effect of either kind, 2 if the input cannot
-support them -- the repository's convention, where 1 means findings.
+ran and produced a finding -- a suppression effect of either kind, or too few
+usable ions to decide, which is equally a reason not to apply a correction --
+and 2 if the input cannot support the tests at all.
 """
 
 import argparse
@@ -653,6 +654,7 @@ def main(argv=None):
         out("  unmarked scans to predict from, under either conditioner, so")
         out("  neither mechanism is supported. Do not apply a per-scan")
         out("  correction on this evidence.")
+        print("\n".join(lines))
         return 1
 
     rc = 0
