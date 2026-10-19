@@ -275,6 +275,20 @@ cut before proline: once a peptide the case claimed two proteomes shared was cut
 through in both, once a `K|P` site was the only internal one. All four now assert
 that the fixture produced the condition under test.
 
+`tools/mutation_check.py` holds all 40 and runs them on demand (81 seconds; it
+runs a suite per mutation, so it is not wired into the per-file suites). Three
+properties make it worth having rather than a record in a commit message. A
+mutation whose anchor text no longer appears exactly once is reported as a
+FAILURE, not skipped — rewording a line detaches it, which happened twice while
+this was being written, and detached it silently proves nothing. The baseline is
+run unmutated first and a red one stops the run, because against a failing suite
+every mutation is reported as caught. And every file is restored from memory in
+a `finally` block and compared byte for byte afterwards.
+
+The uniqueness check earned itself immediately: `per-ion control requirement
+disabled` anchored on a line that appears twice in `validate_export.py`, and the
+ad-hoc script it replaced had been mutating whichever came first.
+
 The number the control produces on a real run is unknown until it runs on one,
 and
 `atlas-convergence.md` is the standing warning about what a confidently
