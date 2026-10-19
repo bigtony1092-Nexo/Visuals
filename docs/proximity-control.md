@@ -157,6 +157,56 @@ charge, which matched nothing — makes no claim a decoy could be wrong about. T
 contract tracks those on purpose, and demanding a false-positive rate for a
 match that was never asserted would be a category error.
 
+## What it reports on real data
+
+963 real PSMs with observed m/z, charge, retention time and drift, from 20
+60-minute PAX8 runs, matched as the pipeline does: cross-run median coordinates
+as the targets, each run's own observations as that run's peaks. Not circular —
+the target is a consensus, the peak is a single measurement.
+
+| arm | | |
+|---|---|---|
+| `target` | 674 / 900 | **74.9%** (CI 72.0–77.6) |
+| `calc_target` | 417 / 542 | 76.9% (CI 73.2–80.3) |
+| the same 542 on **observed** m/z | 417 / 542 | 76.9% |
+| `swap` | 0 / 900 | **0.0%** (CI 0.0–0.43) |
+
+**A quarter of consensus targets do not find their own peak** at 10 ppm, 0.5 min
+and 3 drift bins. That is a recall figure for the window on real data, and it is
+the first one.
+
+**The calculated coordinate costs nothing here** — 417/542 either way. That
+bounds the bias the calibration correction exists to remove: at a −1 ppm offset
+against a 10 ppm window, a calculated probe m/z lands where an observed one does.
+
+**`swap` found nothing in 900 trials.** Target A's m/z at target B's retention
+time and drift never matched. Read carefully, that says less than it looks: with
+45 ions over 450–1210 m/z a 10 ppm window is almost unique on m/z alone, so the
+swap had little chance of colliding regardless. It establishes that rt and drift
+are not merely carried here. It does not establish a false-positive rate, and on
+a dense peak table it would not hold.
+
+The entrapment arm did not run: it needs a list, and none exists yet.
+
+### Two flaws in this tool that only real data exposed
+
+**The calibration was the consensus, not the run.** Measured from the target
+list it cannot vary between runs by construction, and it did not: the identical
+−1.401 ppm, twenty times, each labelled as that run's own. It now comes from
+each run's own matched peaks and varies as it should — median −1.05 ppm, SD 0.43,
+range −1.70 to −0.32, still 20 of 20 below zero — with the fallback to the
+consensus declared in the report when too little matches to measure. Which
+target contradicts its own sequence is a property of the *list*, so that stays
+audited against the list; deriving it from the matches too hid every bad target
+that found no peak, which three cases caught.
+
+**`calc_target` was compared against the wrong population.** The target arm
+queries every target with a charge; `calc_target` drops those with no sequence,
+outside the acquired range, or contradicting their own mass — 542 probes against
+900 here. Comparing the two rates compared different populations, and made the
+calculated coordinate look *better* than the observed one. The arm now carries
+the same probes' observed-m/z rate beside it and the finding compares those.
+
 ## The one number this has measured on real data
 
 The calibration arm needs only a target list, so it runs on
@@ -170,6 +220,21 @@ without any peak table at all:
 | 95% CI on the mean | −1.747 to −0.513 ppm |
 | excluded, unrecorded modification | **8 of 45** |
 
+Computed per run over the 963 PSMs instead, which is the level
+`atlas-convergence.md` works at, every statistic reproduces:
+
+| | this computation | `atlas-convergence.md` |
+|---|---|---|
+| mean of run means | **−1.327 ppm** | −1.570 ppm |
+| 95% CI | −1.547 to −1.107 | −1.841 to −1.299 |
+| run means below zero | **20 of 20** | 24 of 24 |
+| t against zero | −11.81 / 19 df | −11.96 / 23 df |
+| between-run SD | 0.502 ppm | 0.643 ppm |
+| pooled within-run SD | 2.198 ppm | 2.277 ppm |
+
+126 of the 963 PSMs (13%) were excluded as carrying a modification the data does
+not record: 104 oxidation, 5 deamidation, 17 unexplained.
+
 `docs/atlas-convergence.md` records **−1.570 ppm** (CI −1.841 to −1.299) from
 1,262 PSMs over 24 Colorado runs, by a different route: per-PSM ppm as the
 search engine reported it, rather than observed m/z against a mass this
@@ -181,13 +246,12 @@ the same acquisition measured twice by two computations. What it establishes is
 that the −1.57 ppm is not an artefact of how the search engine reports ppm —
 which is worth having, and is the first cross-check the figure has had.
 
-One statistic deliberately does **not** reproduce. `atlas-convergence.md` rests
-heavily on 24 of 24 run means sharing a sign; here it is 24 of 37 ions, which is
-a sign test at p ≈ 0.09 and proves nothing. That is expected rather than
-contradictory: those were per-RUN means, where a −1.5 ppm offset stands clear of
-the between-run SD of 0.643 ppm, and these are per-ION errors scattering by 1.9
-ppm. The comparable quantity is the mean, not the sign. Reading the sign test
-here as disagreement would be comparing two different things.
+The sign test is the one to be careful with. Over the 45 target coordinates it
+is 24 of 37 below zero — p ≈ 0.09, proving nothing — which looks like a failure
+to reproduce the documented 24 of 24. It is not: those were per-RUN means, where
+a −1.5 ppm offset stands clear of a 0.643 ppm between-run SD, and 24 of 37 is
+per-ION errors scattering by 1.9 ppm. Computed at the document's own level it is
+**20 of 20**. The lesson is the comparison level, not the data.
 
 ### What it found in the target list
 
@@ -312,16 +376,16 @@ any ion's own; `per_run` keeps each run's counts and calibration instead.
 
 ## What is not established
 
-**The false-positive rate itself has not been measured on real data** — only
-the calibration arm has, above. The rate needs a real peak table, including the
+**The false-positive rate itself is still unmeasured** — the entrapment arm
+needs a list and none exists. The arms that did run on real data are above. The rate needs a real peak table, including the
 unassigned peaks, and the repository has none: `hela-scans.example.jsonl` is
 6,947 real Waters scans but carries only run/scan/bpi/tic, with no per-ion m/z.
 Everything else below is the machinery and its refusals, exercised against
-planted fixtures: 21 cases in
+planted fixtures: 22 cases in
 `test_proximity_control.py`, 8 in `test_validate_export.py`, 8 in
-`test_make_entrapment.py` and 2 in `test_merge_exports.py` — 283 in the suite
+`test_make_entrapment.py` and 2 in `test_merge_exports.py` — 284 in the suite
 against a 244 baseline — each one shown to fail against a deliberately broken
-implementation before it was kept, 44 mutations in all.
+implementation before it was kept, 47 mutations in all.
 
 Four of those cases could not fail as first written, which is the defect this
 whole exercise is about. An 8 ppm planted calibration offset still lands inside
@@ -334,7 +398,7 @@ cut before proline: once a peptide the case claimed two proteomes shared was cut
 through in both, once a `K|P` site was the only internal one. All four now assert
 that the fixture produced the condition under test.
 
-`tools/mutation_check.py` holds all 44 and runs them on demand (84 seconds; it
+`tools/mutation_check.py` holds all 47 and runs them on demand (about 90 seconds; it
 runs a suite per mutation, so it is not wired into the per-file suites). Three
 properties make it worth having rather than a record in a commit message. A
 mutation whose anchor text no longer appears exactly once is reported as a
